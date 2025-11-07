@@ -12,7 +12,7 @@ const Instance = require('./src/models/Instance');
 const Patient = require('./src/models/Patient');
 
 const REMOTE_ORTHANC = {
-    url: 'http://69.62.70.102:8042',
+    url: 'http://54.160.225.145:8042',
     username: 'orthanc',
     password: 'orthanc_secure_2024'
 };
