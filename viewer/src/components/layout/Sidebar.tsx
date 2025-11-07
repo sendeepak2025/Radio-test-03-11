@@ -21,6 +21,10 @@ import {
   Analytics,
   People,
   CalendarToday,
+  Security,
+  AdminPanelSettings,
+  VpnLock,
+  Storage,
 } from '@mui/icons-material'
 import { useAppSelector } from '../../store/hooks'
 import { selectSidebarOpen, selectSidebarWidth } from '../../store/slices/uiSlice'
@@ -40,42 +44,73 @@ const navigationItems: NavigationItem[] = [
     id: 'dashboard',
     label: 'Dashboard',
     icon: <Dashboard />,
-    path: '/dashboard',
+    path: '/app/dashboard',
   },
   {
     id: 'worklist',
     label: 'Worklist',
     icon: <ListIcon />,
-    path: '/worklist',
+    path: '/app/worklist',
     permission: 'studies:read',
   },
   {
     id: 'patients',
     label: 'Patients',
     icon: <People />,
-    path: '/patients',
+    path: '/app/patients',
     permission: 'studies:read',
   },
   {
     id: 'followups',
     label: 'Follow-ups',
     icon: <CalendarToday />,
-    path: '/followups',
+    path: '/app/followups',
     permission: 'studies',
   },
   {
     id: 'viewer',
     label: 'Viewer',
     icon: <Visibility />,
-    path: '/viewer',
+    path: '/app/viewer',
     permission: 'studies:read',
   },
   {
     id: 'analytics',
     label: 'Analytics',
     icon: <Analytics />,
-    path: '/analytics',
+    path: '/app/analytics',
     permission: 'analytics:read',
+  },
+  {
+    id: 'audit-logs',
+    label: 'Audit Logs',
+    icon: <Security />,
+    path: '/app/audit-logs',
+    permission: 'audit:read',
+  },
+]
+
+const adminItems: NavigationItem[] = [
+  {
+    id: 'anonymization',
+    label: 'Anonymization',
+    icon: <AdminPanelSettings />,
+    path: '/app/admin/anonymization',
+    permission: 'admin:manage',
+  },
+  {
+    id: 'ip-whitelist',
+    label: 'IP Whitelist',
+    icon: <VpnLock />,
+    path: '/app/admin/ip-whitelist',
+    permission: 'admin:manage',
+  },
+  {
+    id: 'data-retention',
+    label: 'Data Retention',
+    icon: <Storage />,
+    path: '/app/admin/data-retention',
+    permission: 'admin:manage',
   },
 ]
 
@@ -84,13 +119,13 @@ const userItems: NavigationItem[] = [
     id: 'profile',
     label: 'Profile',
     icon: <Person />,
-    path: '/profile',
+    path: '/app/profile',
   },
   {
     id: 'settings',
     label: 'Settings',
     icon: <Settings />,
-    path: '/settings',
+    path: '/app/settings',
   },
 ]
 
@@ -242,6 +277,83 @@ export const Sidebar: React.FC = () => {
 
       {/* Spacer */}
       <Box sx={{ flexGrow: 1 }} />
+
+      {/* Admin Section */}
+      {adminItems.filter(isItemVisible).length > 0 && (
+        <Box>
+          <Divider sx={{ mx: 1 }} />
+          {sidebarOpen && (
+            <Typography
+              variant="caption"
+              sx={{
+                px: 3,
+                py: 1,
+                display: 'block',
+                color: 'text.secondary',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                letterSpacing: 1,
+              }}
+            >
+              Admin
+            </Typography>
+          )}
+          <List sx={{ px: 1, py: 1 }}>
+            {adminItems
+              .filter(isItemVisible)
+              .map((item) => (
+                <ListItem key={item.id} disablePadding sx={{ mb: 0.5 }}>
+                  <ListItemButton
+                    onClick={() => handleNavigation(item.path)}
+                    selected={isItemActive(item.path)}
+                    sx={{
+                      minHeight: 48,
+                      justifyContent: sidebarOpen ? 'initial' : 'center',
+                      px: 2.5,
+                      borderRadius: 1,
+                      '&.Mui-selected': {
+                        backgroundColor: theme.palette.primary.main,
+                        color: theme.palette.primary.contrastText,
+                        '&:hover': {
+                          backgroundColor: theme.palette.primary.dark,
+                        },
+                        '& .MuiListItemIcon-root': {
+                          color: theme.palette.primary.contrastText,
+                        },
+                      },
+                      '&:hover': {
+                        backgroundColor: theme.palette.action.hover,
+                      },
+                    }}
+                  >
+                    <ListItemIcon
+                      sx={{
+                        minWidth: 0,
+                        mr: sidebarOpen ? 3 : 'auto',
+                        justifyContent: 'center',
+                        color: isItemActive(item.path)
+                          ? theme.palette.primary.contrastText
+                          : theme.palette.text.secondary,
+                      }}
+                    >
+                      {item.icon}
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={item.label}
+                      sx={{
+                        opacity: sidebarOpen ? 1 : 0,
+                        '& .MuiListItemText-primary': {
+                          fontSize: '0.875rem',
+                          fontWeight: isItemActive(item.path) ? 600 : 400,
+                        },
+                      }}
+                    />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+          </List>
+        </Box>
+      )}
 
       {/* User Section */}
       <Box>

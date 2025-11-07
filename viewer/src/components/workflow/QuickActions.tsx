@@ -32,12 +32,11 @@ const QuickActions: React.FC<QuickActionsProps> = ({
   const navigate = useNavigate();
 
   const actions = [
-    { icon: <DashboardIcon />, name: 'Dashboard', path: '/dashboard', key: 'dashboard' },
-    { icon: <PatientsIcon />, name: 'Patients', path: '/patients', key: 'patients' },
-    { icon: <WorklistIcon />, name: 'Worklist', path: '/worklist', key: 'worklist' },
-    { icon: <FollowUpIcon />, name: 'Follow-ups', path: '/followups', key: 'followups' },
-    { icon: <ReportIcon />, name: 'Reporting', path: '/reporting', key: 'reporting' },
-    { icon: <BillingIcon />, name: 'Billing', path: '/billing', key: 'billing' },
+    { icon: <DashboardIcon />, name: 'Dashboard', path: '/app/dashboard', key: 'dashboard' },
+    { icon: <PatientsIcon />, name: 'Patients', path: '/app/patients', key: 'patients' },
+    { icon: <WorklistIcon />, name: 'Worklist', path: '/app/worklist', key: 'worklist' },
+    { icon: <FollowUpIcon />, name: 'Follow-ups', path: '/app/followups', key: 'followups' },
+    { icon: <BillingIcon />, name: 'Billing', path: '/app/billing', key: 'billing' },
   ].filter(action => !excludeActions.includes(action.key));
 
   return (

@@ -6,28 +6,28 @@
 export const getRoleBasedRedirect = (role: string | null, roles: string[] = []): string => {
   // Check primary role first
   if (role === 'superadmin') {
-    return '/superadmin'
+    return '/app/superadmin'
   }
   
   // Check roles array as fallback
   if (roles.includes('system:admin') || roles.includes('super_admin')) {
-    return '/superadmin'
+    return '/app/superadmin'
   }
   
   if (role === 'admin' || roles.includes('admin')) {
-    return '/dashboard'
+    return '/app/dashboard'
   }
   
   if (role === 'radiologist' || roles.includes('radiologist')) {
-    return '/dashboard'
+    return '/app/dashboard'
   }
   
   if (role === 'staff' || roles.includes('staff')) {
-    return '/dashboard'
+    return '/app/dashboard'
   }
   
   // Default redirect
-  return '/dashboard'
+  return '/app/dashboard'
 }
 
 export const getRoleName = (role: string | null): string => {

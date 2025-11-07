@@ -10,6 +10,7 @@ const router = express.Router();
 const Study = require('../models/Study');
 const Instance = require('../models/Instance');
 const { getUnifiedOrthancService } = require('../services/unified-orthanc-service');
+const worklistService = require('../services/worklist-service');
 
 /**
  * Webhook endpoint - Called by Orthanc when new instance is stored
@@ -124,6 +125,33 @@ async function processNewInstance(orthancInstanceId, studyInstanceUID, seriesIns
     console.log(`✅ Created ${frameCount} instance records`);
     console.log(`✅ Processing complete for ${orthancInstanceId}`);
     console.log(`   - Orthanc: ${frameCount} frames`);
+    
+    // ✅ WORKLIST EMPTY FIX: Upsert worklist row on study-created with tenant's hospitalId
+    try {
+      const WorklistItem = require('../models/WorklistItem');
+      
+      // Upsert worklist item (create if not exists)
+      await WorklistItem.updateOne(
+        { studyInstanceUID: studyInstanceUID },
+        {
+          $setOnInsert: {
+            studyInstanceUID: studyInstanceUID,
+            patientID: metadata.PatientID,
+            hospitalId: study.hospitalId || null,
+            status: 'pending',
+            priority: 'routine',
+            reportStatus: 'none',
+            scheduledFor: new Date(),
+            createdAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      console.log(`✅ Worklist item upserted for study: ${studyInstanceUID}`);
+    } catch (error) {
+      console.error(`⚠️ Failed to upsert worklist item for ${studyInstanceUID}:`, error.message);
+      // Don't fail the webhook if worklist update fails
+    }
     
     // Emit event for real-time updates (if you have WebSocket)
     if (global.io) {

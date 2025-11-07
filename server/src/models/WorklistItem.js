@@ -46,16 +46,19 @@ const WorklistItemSchema = new mongoose.Schema({
   notes: String,
   
   // Hospital Reference
+  // ✅ WORKLIST EMPTY FIX: Make hospitalId optional to allow migration of existing items
   hospitalId: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'User', 
     index: true,
-    required: true
+    required: false // Changed from true to allow fixing existing items
   }
 }, { timestamps: true });
 
-// Compound indexes for efficient worklist queries
-WorklistItemSchema.index({ hospitalId: 1, status: 1, priority: -1, scheduledFor: 1 });
+// ✅ WORKLIST EMPTY FIX: Indexes for efficient worklist queries
+// { hospitalId:1, status:1, updatedAt:-1 }, { studyInstanceUID:1 } unique
+WorklistItemSchema.index({ hospitalId: 1, status: 1, updatedAt: -1 });
+WorklistItemSchema.index({ studyInstanceUID: 1 }, { unique: true });
 WorklistItemSchema.index({ assignedTo: 1, status: 1, priority: -1 });
 WorklistItemSchema.index({ hospitalId: 1, hasCriticalFindings: 1, criticalFindingsNotified: 1 });
 

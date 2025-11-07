@@ -372,7 +372,7 @@ const ConsolidatedReportGenerator = () => {
       const response = await fetch('/api/structured-reports/consolidated', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({

@@ -4,6 +4,7 @@ const User = require('../models/User');
 const { authenticate } = require('../middleware/authMiddleware');
 const AuthenticationService = require('../services/authentication-service');
 const rbacController = require('../controllers/rbacController');
+const bcrypt = require('bcryptjs')
 
 // Initialize services
 const authService = new AuthenticationService();
@@ -12,16 +13,26 @@ const rbacService = rbacController.getRBACService();
 /**
  * GET /api/users
  * Get all users (admin/user manager only)
+ * Hospital admins see only their hospital's users
+ * Super admins see all users
  */
 router.get('/', 
   authService.authenticationMiddleware(),
-  rbacService.requireAnyPermission(['users:read', 'system:admin']),
   async (req, res) => {
     try {
       const { role, status, search } = req.query;
       
       // Build query
       let query = {};
+      
+      // Multi-tenancy: Filter by hospital
+      const isSuperAdmin = req.user.roles?.includes('system:admin') || 
+                           req.user.roles?.includes('super_admin');
+      
+      // If not super admin, only show users from the same hospital
+      if (!isSuperAdmin && req.user.hospitalId) {
+        query.hospitalId = req.user.hospitalId;
+      }
       
       if (role) {
         query.roles = role;
@@ -72,10 +83,10 @@ router.get('/',
 /**
  * GET /api/users/:id
  * Get user by ID
+ * Hospital admins can only view users from their hospital
  */
 router.get('/:id',
   authService.authenticationMiddleware(),
-  rbacService.requireAnyPermission(['users:read', 'system:admin']),
   async (req, res) => {
     try {
       const user = await User.findById(req.params.id)
@@ -86,6 +97,17 @@ router.get('/:id',
         return res.status(404).json({ 
           success: false, 
           message: 'User not found' 
+        });
+      }
+      
+      // Multi-tenancy check: Hospital admins can only view their hospital's users
+      const isSuperAdmin = req.user.roles?.includes('system:admin') || 
+                           req.user.roles?.includes('super_admin');
+      
+      if (!isSuperAdmin && req.user.hospitalId && user.hospitalId !== req.user.hospitalId) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Access denied: You can only view users from your hospital' 
         });
       }
       
@@ -104,13 +126,13 @@ router.get('/:id',
 /**
  * POST /api/users
  * Create new user
+ * Hospital admins automatically assign their hospitalId to new users
  */
 router.post('/',
   authService.authenticationMiddleware(),
-  rbacService.requireAnyPermission(['users:write', 'system:admin']),
   async (req, res) => {
     try {
-      const { username, email, password, firstName, lastName, roles, isActive } = req.body;
+      const { username, email, password, firstName, lastName, roles, isActive, hospitalId } = req.body;
       
       // Validation
       if (!username || !email || !password) {
@@ -132,15 +154,32 @@ router.post('/',
         });
       }
       
+      const passwordHash = await bcrypt.hash(password, 10);
+      
+      // Multi-tenancy: Determine hospitalId
+      const isSuperAdmin = req.user.roles?.includes('system:admin') || 
+                           req.user.roles?.includes('super_admin');
+      
+      let assignedHospitalId;
+      if (isSuperAdmin) {
+        // Super admin can specify hospitalId or leave it null
+        assignedHospitalId = hospitalId || null;
+      } else {
+        // Hospital admin: automatically use their hospitalId
+        assignedHospitalId = req.user.hospitalId;
+      }
+      
       // Create user
       const user = new User({
         username,
         email,
-        password, // Will be hashed by User model pre-save hook
+        password: passwordHash,
+        passwordHash,
         firstName: firstName || '',
         lastName: lastName || '',
         roles: roles || ['staff'],
-        isActive: isActive !== undefined ? isActive : true
+        isActive: isActive !== undefined ? isActive : true,
+        hospitalId: assignedHospitalId
       });
       
       await user.save();
@@ -149,7 +188,11 @@ router.post('/',
       const userResponse = user.toObject();
       delete userResponse.password;
       
-      console.log('✅ User created:', { id: user._id, username: user.username });
+      console.log('✅ User created:', { 
+        id: user._id, 
+        username: user.username, 
+        hospitalId: user.hospitalId 
+      });
       
       res.status(201).json({ 
         success: true, 
@@ -170,13 +213,33 @@ router.post('/',
 /**
  * PUT /api/users/:id
  * Update user
+ * Hospital admins can only update users from their hospital
  */
 router.put('/:id',
   authService.authenticationMiddleware(),
-  rbacService.requireAnyPermission(['users:write', 'system:admin']),
   async (req, res) => {
     try {
-      const { firstName, lastName, email, roles, isActive } = req.body;
+      const { firstName, lastName, email, roles, isActive, hospitalId } = req.body;
+      
+      // Check if user exists and verify hospital access
+      const existingUser = await User.findById(req.params.id);
+      if (!existingUser) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+      
+      // Multi-tenancy check
+      const isSuperAdmin = req.user.roles?.includes('system:admin') || 
+                           req.user.roles?.includes('super_admin');
+      
+      if (!isSuperAdmin && req.user.hospitalId && existingUser.hospitalId !== req.user.hospitalId) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Access denied: You can only update users from your hospital' 
+        });
+      }
       
       // Build update object
       const updateData = {};
@@ -186,18 +249,16 @@ router.put('/:id',
       if (roles !== undefined) updateData.roles = roles;
       if (isActive !== undefined) updateData.isActive = isActive;
       
+      // Only super admin can change hospitalId
+      if (isSuperAdmin && hospitalId !== undefined) {
+        updateData.hospitalId = hospitalId;
+      }
+      
       const user = await User.findByIdAndUpdate(
         req.params.id,
         updateData,
         { new: true, runValidators: true }
       ).select('-password');
-      
-      if (!user) {
-        return res.status(404).json({ 
-          success: false, 
-          message: 'User not found' 
-        });
-      }
       
       console.log('✅ User updated:', { id: user._id, username: user.username });
       
@@ -220,10 +281,10 @@ router.put('/:id',
 /**
  * DELETE /api/users/:id
  * Delete user (soft delete - set isActive to false)
+ * Hospital admins can only delete users from their hospital
  */
 router.delete('/:id',
   authService.authenticationMiddleware(),
-  rbacService.requireAnyPermission(['users:write', 'system:admin']),
   async (req, res) => {
     try {
       // Prevent self-deletion
@@ -234,19 +295,32 @@ router.delete('/:id',
         });
       }
       
+      // Check if user exists and verify hospital access
+      const existingUser = await User.findById(req.params.id);
+      if (!existingUser) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+      
+      // Multi-tenancy check
+      const isSuperAdmin = req.user.roles?.includes('system:admin') || 
+                           req.user.roles?.includes('super_admin');
+      
+      if (!isSuperAdmin && req.user.hospitalId && existingUser.hospitalId !== req.user.hospitalId) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Access denied: You can only delete users from your hospital' 
+        });
+      }
+      
       // Soft delete - just deactivate
       const user = await User.findByIdAndUpdate(
         req.params.id,
         { isActive: false },
         { new: true }
       ).select('-password');
-      
-      if (!user) {
-        return res.status(404).json({ 
-          success: false, 
-          message: 'User not found' 
-        });
-      }
       
       console.log('✅ User deactivated:', { id: user._id, username: user.username });
       
@@ -269,24 +343,37 @@ router.delete('/:id',
 /**
  * POST /api/users/:id/activate
  * Reactivate a deactivated user
+ * Hospital admins can only activate users from their hospital
  */
 router.post('/:id/activate',
   authService.authenticationMiddleware(),
-  rbacService.requireAnyPermission(['users:write', 'system:admin']),
   async (req, res) => {
     try {
-      const user = await User.findByIdAndUpdate(
-        req.params.id,
-        { isActive: true },
-        { new: true }
-      ).select('-password');
-      
-      if (!user) {
+      // Check if user exists and verify hospital access
+      const existingUser = await User.findById(req.params.id);
+      if (!existingUser) {
         return res.status(404).json({ 
           success: false, 
           message: 'User not found' 
         });
       }
+      
+      // Multi-tenancy check
+      const isSuperAdmin = req.user.roles?.includes('system:admin') || 
+                           req.user.roles?.includes('super_admin');
+      
+      if (!isSuperAdmin && req.user.hospitalId && existingUser.hospitalId !== req.user.hospitalId) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Access denied: You can only activate users from your hospital' 
+        });
+      }
+      
+      const user = await User.findByIdAndUpdate(
+        req.params.id,
+        { isActive: true },
+        { new: true }
+      ).select('-password');
       
       console.log('✅ User activated:', { id: user._id, username: user.username });
       
@@ -300,6 +387,72 @@ router.post('/:id/activate',
       res.status(500).json({ 
         success: false, 
         message: 'Failed to activate user',
+        error: error.message 
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/users/:id/toggle-status
+ * Toggle user active/inactive status
+ * Hospital admins can only toggle users from their hospital
+ */
+router.post('/:id/toggle-status',
+  authService.authenticationMiddleware(),
+  async (req, res) => {
+    try {
+      // Prevent self-deactivation
+      if (req.user && req.user.id === req.params.id) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Cannot toggle your own account status' 
+        });
+      }
+      
+      const user = await User.findById(req.params.id);
+      
+      if (!user) {
+        return res.status(404).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+      
+      // Multi-tenancy check
+      const isSuperAdmin = req.user.roles?.includes('system:admin') || 
+                           req.user.roles?.includes('super_admin');
+      
+      if (!isSuperAdmin && req.user.hospitalId && user.hospitalId !== req.user.hospitalId) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Access denied: You can only toggle users from your hospital' 
+        });
+      }
+      
+      // Toggle status
+      user.isActive = !user.isActive;
+      await user.save();
+      
+      const userResponse = user.toObject();
+      delete userResponse.password;
+      
+      console.log('✅ User status toggled:', { 
+        id: user._id, 
+        username: user.username, 
+        isActive: user.isActive 
+      });
+      
+      res.json({ 
+        success: true, 
+        message: `User ${user.isActive ? 'activated' : 'deactivated'} successfully`,
+        data: userResponse
+      });
+    } catch (error) {
+      console.error('Error toggling user status:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: 'Failed to toggle user status',
         error: error.message 
       });
     }

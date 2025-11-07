@@ -44,6 +44,8 @@ class AuthService {
       // Persist tokens and user data
       const storage = credentials.rememberMe ? localStorage : sessionStorage
       storage.setItem('accessToken', accessToken)
+      localStorage.setItem('accessToken', accessToken)
+      localStorage.setItem('refreshToken', refreshToken)
       storage.setItem('refreshToken', refreshToken)
       storage.setItem('user', JSON.stringify(user))
 

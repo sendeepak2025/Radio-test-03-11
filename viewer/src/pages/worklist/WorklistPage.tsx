@@ -115,7 +115,7 @@ const WorklistPage: React.FC = () => {
   }
 
   const handleViewStudy = (study: Study) => {
-    navigate(`/viewer/${study.studyInstanceUID}`)
+    navigate(`/app/viewer/${study.studyInstanceUID}`)
   }
 
   const handleMarkComplete = async (study: Study) => {
@@ -353,7 +353,7 @@ const WorklistPage: React.FC = () => {
           Open in Viewer
         </MenuItem>
         <MenuItem onClick={() => {
-          if (selectedStudy) navigate(`/viewer/${selectedStudy.studyInstanceUID}?tab=3`)
+          if (selectedStudy) navigate(`/app/viewer/${selectedStudy.studyInstanceUID}?tab=3`)
           setAnchorEl(null)
         }}>
           <ReportIcon fontSize="small" sx={{ mr: 1 }} />

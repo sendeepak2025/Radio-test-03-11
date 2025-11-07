@@ -9,7 +9,7 @@ Token `token` ke naam se nahi, `accessToken` ke naam se save ho raha tha localSt
 localStorage.setItem('accessToken', token);
 
 // ReportEditor was looking for:
-localStorage.getItem('token');  // ❌ Returns null!
+localStorage.getItem('accessToken');  // ❌ Returns null!
 ```
 
 ---
@@ -22,14 +22,14 @@ localStorage.getItem('token');  // ❌ Returns null!
 const getAuthToken = (): string | null => {
   return localStorage.getItem('accessToken') ||      // ← Primary
          sessionStorage.getItem('accessToken') ||    // ← Fallback
-         localStorage.getItem('token');              // ← Legacy support
+         localStorage.getItem('accessToken');              // ← Legacy support
 };
 ```
 
 ### Updated All Functions:
 ```typescript
 // Before:
-const token = localStorage.getItem('token');
+const token = localStorage.getItem('accessToken');
 
 // After:
 const token = getAuthToken();  // Checks all possible locations

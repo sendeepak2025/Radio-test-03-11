@@ -1,10 +1,19 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
+// import { visualizer } from 'vite-plugin-bundle-analyzer' // Commented out - package not installed
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // Bundle analyzer - only in analyze mode (commented out - package not installed)
+    // process.env.ANALYZE === '1' && visualizer({
+    //   open: true,
+    //   gzipSize: true,
+    //   brotliSize: true,
+    // }),
+  ].filter(Boolean),
   resolve: {
     alias: {
       '@': resolve(__dirname, './src'),
@@ -52,13 +61,15 @@ export default defineConfig({
         ws: true,
         configure: (proxy, _options) => {
           proxy.on('error', (err, _req, _res) => {
-            console.log('proxy error', err);
+            console.error('❌ Proxy error:', err.message);
           });
           proxy.on('proxyReq', (proxyReq, req, _res) => {
-            console.log('Sending Request to the Target:', req.method, req.url);
+            console.log(`🔄 Proxying: ${req.method} ${req.url} → ${process.env.VITE_BACKEND_URL || 'http://localhost:8001'}${req.url}`);
           });
           proxy.on('proxyRes', (proxyRes, req, _res) => {
-            console.log('Received Response from the Target:', proxyRes.statusCode, req.url);
+            const status = proxyRes.statusCode;
+            const icon = status >= 200 && status < 300 ? '✅' : status >= 400 ? '❌' : '⚠️';
+            console.log(`${icon} Response: ${status} ${req.url}`);
           });
         }
       },
@@ -72,6 +83,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
         manualChunks: {
@@ -80,6 +92,16 @@ export default defineConfig({
           redux: ['@reduxjs/toolkit', 'react-redux'],
           // Separate VTK.js into its own chunk for lazy loading
           vtk: ['@kitware/vtk.js'],
+          // Separate reporting components for code splitting
+          'reporting-editor': [
+            './src/components/reports/UnifiedReportEditor.tsx',
+            './src/components/reporting/TemplateSelectorUnified.tsx',
+          ],
+          cornerstone: [
+            '@cornerstonejs/core',
+            '@cornerstonejs/tools',
+            '@cornerstonejs/dicom-image-loader',
+          ],
         },
       },
     },

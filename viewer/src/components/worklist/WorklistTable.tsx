@@ -46,8 +46,10 @@ const priorityColors = {
   LOW: 'default',
 } as const
 
+// ✅ WORKLIST EMPTY FIX: Update status colors to match new status values
 const statusColors = {
-  SCHEDULED: 'info',
+  ALL: 'default',
+  PENDING: 'default',
   IN_PROGRESS: 'warning',
   COMPLETED: 'success',
   CANCELLED: 'default',
@@ -200,9 +202,10 @@ export const WorklistTable: React.FC<WorklistTableProps> = ({
           </TableRow>
         </TableHead>
         <TableBody>
+          {/* ✅ WORKLIST EMPTY FIX: Render rows keyed by worklistId || studyInstanceUID */}
           {studies.map((study) => (
             <TableRow
-              key={study.studyInstanceUID}
+              key={(study as any).worklistId || study.studyInstanceUID}
               hover
               selected={selectedStudyId === study.studyInstanceUID}
               onMouseEnter={() => setHoveredRow(study.studyInstanceUID)}

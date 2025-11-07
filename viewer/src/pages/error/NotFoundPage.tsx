@@ -49,7 +49,7 @@ const NotFoundPage: React.FC = () => {
           <Button
             variant="contained"
             startIcon={<Home />}
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate('/app/dashboard')}
           >
             Go Home
           </Button>

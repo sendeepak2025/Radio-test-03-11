@@ -107,10 +107,10 @@ import {
   Psychology as AIIcon,
   AutoAwesome as MagicIcon,
 } from '@mui/icons-material'
-import StructuredReporting from '../reporting/StructuredReporting'
-import SimpleReportExport from '../reporting/SimpleReportExport'
+import { StructuredReportingUnified } from '../reporting'
+import { ProductionReportEditor } from '../reports'
 import ReportExportService from '../../services/ReportExportService'
-import StructuredReportingService from '../../services/StructuredReportingService'
+import { reportsApi } from '../../services/ReportsApi'
 import ApiService from '../../services/ApiService'
 import WindowLevelPresets, { WINDOW_LEVEL_PRESETS, WindowLevelPreset } from './WindowLevelPresets'
 import CineControls from './CineControls'
@@ -444,7 +444,6 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
 
   // Structured Reporting
   const reportExportService = ReportExportService.getInstance()
-  const structuredReportingService = StructuredReportingService.getInstance()
   const [currentReport, setCurrentReport] = useState<any>(null)
   const [currentReportId, setCurrentReportId] = useState<string | null>(null)
   const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -3797,16 +3796,16 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
 
         console.log('💾 Saving final report to backend:', saveData)
 
-        const result = await structuredReportingService.saveReport(saveData)
+        const result = await reportsApi.upsert(saveData)
 
-        if (result.success) {
-          setCurrentReportId(result.data?.reportId)
-          alert(`✅ Report finalized and saved!\n\nReport ID: ${result.data?.reportId}`)
+        if (result.success && result.report) {
+          setCurrentReportId(result.report.reportId)
+          alert(`✅ Report finalized and saved!\n\nReport ID: ${result.report.reportId}`)
           setShowStructuredReporting(false)
-          console.log('✅ Report saved successfully:', result.data)
+          console.log('✅ Report saved successfully:', result.report)
         } else {
-          alert(`❌ Failed to save report: ${result.error}`)
-          console.error('❌ Save failed:', result.error)
+          alert(`❌ Failed to save report`)
+          console.error('❌ Save failed')
         }
       } catch (error) {
         console.error('Error saving report:', error)
@@ -3817,7 +3816,7 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
       setShowStructuredReporting(false)
       setShowFinalizeDialog(true)
     }
-  }, [measurements, annotations, currentStudyId, metadata, radiologistSignature, structuredReportingService])
+  }, [measurements, annotations, currentStudyId, metadata, radiologistSignature])
 
   // AI Analysis Handler - DIRECT MODE (Opens AutoAnalysisPopup)
   const handleAIAnalysis = useCallback(async () => {
@@ -4304,25 +4303,29 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
         reportId: currentReportId
       })
 
-      const result = await structuredReportingService.autoSaveReport(
-        currentStudyId,
+      const reportData = {
+        studyInstanceUID: currentStudyId,
         patientID,
-        formattedMeasurements,
-        formattedAnnotations,
-        currentReportId || undefined
-      )
+        patientName: metadata?.patient_info?.name || 'Unknown',
+        modality: metadata?.study_info?.Modality || 'XA',
+        measurements: formattedMeasurements,
+        findings: formattedAnnotations,
+        reportStatus: 'draft' as const
+      };
 
-      if (result.success) {
+      const result = await reportsApi.upsert(reportData)
+
+      if (result.success && result.report) {
         setAutoSaveStatus('saved')
-        if (result.data?.reportId && !currentReportId) {
-          setCurrentReportId(result.data.reportId)
+        if (result.report.reportId && !currentReportId) {
+          setCurrentReportId(result.report.reportId)
         }
-        console.log('✅ Manual save successful:', result.data?.reportId)
-        alert(`✅ Report saved successfully!\nReport ID: ${result.data?.reportId}`)
+        console.log('✅ Manual save successful:', result.report.reportId)
+        alert(`✅ Report saved successfully!\nReport ID: ${result.report.reportId}`)
       } else {
         setAutoSaveStatus('error')
-        console.error('❌ Manual save failed:', result.error)
-        alert(`❌ Failed to save report: ${result.error}`)
+        console.error('❌ Manual save failed')
+        alert(`❌ Failed to save report`)
       }
 
       setTimeout(() => setAutoSaveStatus('idle'), 2000)
@@ -4332,7 +4335,7 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
       alert('❌ An error occurred while saving')
       setTimeout(() => setAutoSaveStatus('idle'), 2000)
     }
-  }, [measurements, annotations, currentStudyId, metadata, currentReportId, structuredReportingService])
+  }, [measurements, annotations, currentStudyId, metadata, currentReportId])
 
   // Capture snapshot of current frame with annotations for report
   const handleCaptureSnapshot = useCallback(() => {
@@ -4445,54 +4448,14 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
       console.log('📊 Total measurements:', formattedMeasurements.length)
       console.log('📝 Total annotations:', formattedAnnotations.length)
 
-      // If we have a reportId, finalize existing report
-      if (currentReportId) {
-        const result = await structuredReportingService.finalizeReport(
-          currentReportId,
-          radiologistSignature,
-          {
-            measurements: formattedMeasurements,
-            annotations: formattedAnnotations,
-            ...currentReport
-          }
-        )
-
-        if (result.success) {
-          alert(`✅ Report finalized successfully!\n\nReport ID: ${result.data?.reportId}\nSignature: ${radiologistSignature}`)
-          setShowFinalizeDialog(false)
-          setRadiologistSignature('')
-          console.log('✅ Report finalized:', result.data)
-        } else {
-          alert(`❌ Failed to finalize report: ${result.error}`)
-        }
-      } else {
-        // Create new report and finalize
-        const saveResult = await structuredReportingService.saveReport({
-          studyInstanceUID: currentStudyId,
-          patientID,
-          reportStatus: 'final',
-          radiologistSignature,
-          measurements: formattedMeasurements,
-          annotations: formattedAnnotations,
-          findings: [],
-          ...currentReport
-        })
-
-        if (saveResult.success) {
-          setCurrentReportId(saveResult.data?.reportId)
-          alert(`✅ Report created and finalized!\n\nReport ID: ${saveResult.data?.reportId}\nSignature: ${radiologistSignature}`)
-          setShowFinalizeDialog(false)
-          setRadiologistSignature('')
-          console.log('✅ New report finalized:', saveResult.data)
-        } else {
-          alert(`❌ Failed to create report: ${saveResult.error}`)
-        }
-      }
+      // Note: Use ProductionReportEditor dialog for full reporting functionality
+      alert('Please use the Report Editor dialog for creating and finalizing reports')
+      setShowFinalizeDialog(false)
     } catch (error) {
       console.error('Error finalizing report:', error)
       alert('❌ An error occurred while finalizing the report')
     }
-  }, [currentReportId, radiologistSignature, structuredReportingService, measurements, annotations, currentStudyId, metadata, currentReport])
+  }, [currentReportId, radiologistSignature, measurements, annotations, currentStudyId, metadata, currentReport])
 
   // Handle drag and drop
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -4613,26 +4576,9 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
           existingReportId: currentReportId
         })
 
-        const result = await structuredReportingService.autoSaveReport(
-          currentStudyId,
-          patientID,
-          formattedMeasurements,
-          formattedAnnotations,
-          currentReportId || undefined
-        )
-
-        if (result.success) {
-          setAutoSaveStatus('saved')
-          // Store the report ID for future updates
-          if (result.data?.reportId && !currentReportId) {
-            setCurrentReportId(result.data.reportId)
-            console.log('📝 New report ID stored:', result.data.reportId)
-          }
-          console.log('✅ Auto-saved structured report:', result.data?.reportId)
-        } else {
-          setAutoSaveStatus('error')
-          console.error('❌ Auto-save failed:', result.error)
-        }
+        // Auto-save disabled - use ProductionReportEditor for full reporting
+        console.log('Auto-save skipped - use Report Editor dialog for saving reports')
+        setAutoSaveStatus('idle')
 
         // Reset status after 2 seconds
         setTimeout(() => setAutoSaveStatus('idle'), 2000)
@@ -4648,7 +4594,7 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
         clearTimeout(autoSaveTimerRef.current)
       }
     }
-  }, [measurements, annotations, currentStudyId, metadata, currentReportId, structuredReportingService])
+  }, [measurements, annotations, currentStudyId, metadata, currentReportId])
 
   // Redraw when measurements or preview changes
   useEffect(() => {
@@ -7072,59 +7018,15 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
         }}
       >
         <DialogContent sx={{ p: 0, height: '100%' }}>
-          <StructuredReporting
-            studyData={{
-              studyInstanceUID: studyInstanceUID,
-              patientName: studyInstanceUID?.includes('DEMO') ? 'Rubo^DEMO' : studyInstanceUID?.includes('Free') ? 'Free.Max_Head' : 'Doe^John',
+          <ProductionReportEditor
+            studyInstanceUID={studyInstanceUID}
+            patientInfo={{
               patientID: studyInstanceUID?.includes('DEMO') ? 'DEMO001' : studyInstanceUID?.includes('Free') ? 'FREE001' : 'DOE001',
-              studyDate: metadata?.study_info?.StudyDate || '20240101',
-              studyTime: metadata?.study_info?.StudyTime || '120000',
+              patientName: studyInstanceUID?.includes('DEMO') ? 'Rubo^DEMO' : studyInstanceUID?.includes('Free') ? 'Free.Max_Head' : 'Doe^John',
               modality: metadata?.study_info?.Modality || 'XA',
-              studyDescription: metadata?.study_info?.StudyDescription || 'Medical Imaging Study',
-              numberOfInstances: totalFrames
+              studyDate: metadata?.study_info?.StudyDate || '20240101'
             }}
-            measurements={measurements.map(m => ({
-              id: m.id,
-              type: m.type,
-              value: m.value,
-              unit: m.unit,
-              location: `Frame ${m.frameIndex}`,
-              frameIndex: m.frameIndex
-            }))}
-            annotations={annotations.filter(a => a.category === 'finding')}
-            capturedImages={screenshotService.exportForReport()}
-            onSaveReport={handleSaveReport}
-            onExportReport={handleExportReport}
-            onSignatureSave={async (signatureDataUrl) => {
-              try {
-                console.log('📤 Uploading signature to filesystem...')
-                const response = await fetch('/api/signature/upload', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    signatureDataUrl,
-                    reportId: currentReportId,
-                    radiologistName: 'Test Radiologist'
-                  }),
-                })
-
-                const result = await response.json()
-
-                if (result.success) {
-                  console.log('✅ Signature uploaded:', result.data.signatureUrl)
-                  setRadiologistSignature(result.data.signatureUrl)
-                  alert(`✅ Signature uploaded successfully!\nURL: ${result.data.signatureUrl}`)
-                } else {
-                  console.error('❌ Signature upload failed:', result.error)
-                  alert(`❌ Failed to upload signature: ${result.error}`)
-                }
-              } catch (error) {
-                console.error('Error uploading signature:', error)
-                alert('❌ An error occurred while uploading signature')
-              }
-            }}
+            onClose={() => setShowReportDialog(false)}
           />
         </DialogContent>
       </Dialog>
@@ -7278,27 +7180,7 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
         </DialogActions>
       </Dialog>
 
-      {/* Simple Export Dialog */}
-      <SimpleReportExport
-        open={showExportDialog}
-        onClose={() => setShowExportDialog(false)}
-        reportData={{
-          sections: {},
-          findings: annotations.filter(a => a.category === 'finding'),
-          measurements: measurements,
-          status: 'final'
-        }}
-        studyData={{
-          studyInstanceUID: studyInstanceUID,
-          patientName: studyInstanceUID?.includes('DEMO') ? 'Rubo^DEMO' : studyInstanceUID?.includes('Free') ? 'Free.Max_Head' : 'Doe^John',
-          patientID: studyInstanceUID?.includes('DEMO') ? 'DEMO001' : studyInstanceUID?.includes('Free') ? 'FREE001' : 'DOE001',
-          studyDate: metadata?.study_info?.StudyDate || new Date().toISOString().split('T')[0].replace(/-/g, ''),
-          studyTime: metadata?.study_info?.StudyTime || '120000',
-          modality: metadata?.study_info?.Modality || 'XA',
-          studyDescription: metadata?.study_info?.StudyDescription || 'Medical Imaging Study'
-        }}
-        measurements={measurements}
-      />
+      {/* Simple Export Dialog - Removed (use ProductionReportEditor export feature) */}
 
       {/* DICOM Study Upload Dialog */}
       <Dialog

@@ -116,7 +116,7 @@ const EnhancedWorklistPage: React.FC = () => {
     try {
       const response = await fetch('/api/worklist', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         }
       })
       const data = await response.json()
@@ -135,7 +135,7 @@ const EnhancedWorklistPage: React.FC = () => {
     try {
       const response = await fetch('/api/worklist/stats', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         }
       })
       const data = await response.json()
@@ -198,7 +198,7 @@ const EnhancedWorklistPage: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         },
         body: JSON.stringify({ status: 'in_progress' })
       })
@@ -218,7 +218,7 @@ const EnhancedWorklistPage: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         },
         body: JSON.stringify({ status: 'completed' })
       })
@@ -237,7 +237,7 @@ const EnhancedWorklistPage: React.FC = () => {
       const response = await fetch('/api/worklist/sync', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         }
       })
       

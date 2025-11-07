@@ -34,6 +34,7 @@ import {
   Storage as StorageIcon
 } from '@mui/icons-material'
 import { Helmet } from 'react-helmet-async'
+import { MFASettings } from '../../components/settings/MFASettings'
 
 interface TabPanelProps {
   children?: React.ReactNode
@@ -340,6 +341,10 @@ const SettingsPage: React.FC = () => {
                     )}
                   </CardContent>
                 </Card>
+              </Grid>
+
+              <Grid item xs={12} md={6}>
+                <MFASettings />
               </Grid>
             </Grid>
           </TabPanel>

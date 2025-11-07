@@ -54,7 +54,9 @@ function authenticate(req, res, next) {
     
     next();
   } catch (e) {
-    // Handle specific JWT errors
+    console.log(e,"ERROR AUTH")
+    // Handle speci
+    // fic JWT errors
     let message = 'Invalid or expired token';
     let error = 'INVALID_TOKEN';
 

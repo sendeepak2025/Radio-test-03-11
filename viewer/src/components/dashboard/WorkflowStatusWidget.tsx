@@ -192,7 +192,7 @@ const WorkflowStatusWidget: React.FC = () => {
                 fullWidth
                 size="small"
                 endIcon={<ArrowForward />}
-                onClick={() => navigate('/worklist')}
+                onClick={() => navigate('/app/worklist')}
                 sx={{ mt: 1 }}
               >
                 Open Worklist
@@ -270,7 +270,7 @@ const WorkflowStatusWidget: React.FC = () => {
           <Button
             size="small"
             startIcon={<People />}
-            onClick={() => navigate('/patients')}
+            onClick={() => navigate('/app/patients')}
             variant="outlined"
           >
             Patients
@@ -278,10 +278,10 @@ const WorkflowStatusWidget: React.FC = () => {
           <Button
             size="small"
             startIcon={<Assignment />}
-            onClick={() => navigate('/reporting')}
+            onClick={() => navigate('/app/worklist')}
             variant="outlined"
           >
-            Reports
+            Worklist
           </Button>
           <Button
             size="small"

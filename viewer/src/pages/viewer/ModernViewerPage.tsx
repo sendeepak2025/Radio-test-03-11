@@ -24,6 +24,7 @@ import { VolumeViewer3D } from '../../components/viewer/VolumeViewer3D'
 import { ProductionReportEditor } from '../../components/reports'
 import SmartModalityViewer from '../../components/viewer/SmartModalityViewer'
 import ApiService from '../../services/ApiService'
+import { ViewReportButton } from '../../components/viewer/ViewReportButton'
 import {
     ArrowBack,
     Layers,
@@ -173,7 +174,7 @@ const ModernViewerPage: React.FC = () => {
                     <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
                         {error}
                     </Typography>
-                    <IconButton onClick={() => navigate('/dashboard')} sx={{ bgcolor: 'primary.main', color: 'white' }}>
+                    <IconButton onClick={() => navigate('/app/dashboard')} sx={{ bgcolor: 'primary.main', color: 'white' }}>
                         <ArrowBack />
                     </IconButton>
                 </Paper>
@@ -216,7 +217,7 @@ const ModernViewerPage: React.FC = () => {
                             <Stack direction="row" spacing={2} alignItems="center">
                                 <Tooltip title="Back">
                                     <IconButton
-                                        onClick={() => navigate('/dashboard')}
+                                        onClick={() => navigate('/app/dashboard')}
                                         sx={{
                                             color: 'white',
                                             bgcolor: alpha('#fff', 0.1),
@@ -296,6 +297,18 @@ const ModernViewerPage: React.FC = () => {
 
                             {/* Right Section - Actions */}
                             <Stack direction="row" spacing={1}>
+                                {/* View/Create Report Button */}
+                                {studyInstanceUID && studyData && (
+                                    <ViewReportButton
+                                        studyInstanceUID={studyInstanceUID}
+                                        patientID={studyData.patientID}
+                                        patientName={studyData.patientName}
+                                        modality={studyData.modality}
+                                    />
+                                )}
+                                
+                                <Divider orientation="vertical" flexItem sx={{ bgcolor: alpha('#fff', 0.1), mx: 0.5 }} />
+                                
                                 {panels.map((panel) => (
                                     <Tooltip key={panel.id} title={panel.label}>
                                         <IconButton

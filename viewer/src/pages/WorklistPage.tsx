@@ -80,41 +80,77 @@ const WorklistPage: React.FC = () => {
 
   /**
    * Load studies from backend
+   * // ✅ WORKLIST EMPTY FIX: Call with status='ALL', from=now-90d
    */
   const loadStudies = async () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
       
-      const response = await axios.get(`${API_URL}/api/worklist/studies`, {
+      // ✅ WORKLIST EMPTY FIX: Default date range = last 90 days
+      const now = new Date();
+      const from = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      
+      const response = await axios.get(`${API_URL}/api/worklist`, {
         headers: { Authorization: `Bearer ${token}` },
         params: {
-          status: statusFilter !== 'all' ? statusFilter : undefined,
-          modality: modalityFilter !== 'all' ? modalityFilter : undefined,
-          priority: priorityFilter !== 'all' ? priorityFilter : undefined
+          // ✅ WORKLIST EMPTY FIX: If status missing → treat as ALL (no filter by status)
+          status: statusFilter !== 'all' ? statusFilter : 'ALL',
+          priority: priorityFilter !== 'all' ? priorityFilter : undefined,
+          startDate: from.toISOString(),
+          endDate: now.toISOString()
         }
       });
 
-      const studiesData = response.data.studies || [];
+      const studiesData = response.data.items || [];
       setStudies(studiesData);
       setFilteredStudies(studiesData);
       
       console.log('📋 Loaded', studiesData.length, 'studies');
+      
+      // ✅ WORKLIST EMPTY FIX: If 0 results, automatically call POST /api/worklist/sync
+      if (studiesData.length === 0) {
+        console.log('📋 No studies found, triggering sync...');
+        await syncWorklist();
+      }
     } catch (error) {
       console.error('❌ Failed to load studies:', error);
     } finally {
       setLoading(false);
     }
   };
+  
+  /**
+   * Sync worklist from studies
+   * // ✅ WORKLIST EMPTY FIX: Auto-sync when empty
+   */
+  const syncWorklist = async () => {
+    try {
+      const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+      
+      const response = await axios.post(`${API_URL}/api/worklist/sync`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      console.log('✅ Sync complete:', response.data);
+      
+      // Reload studies after sync
+      await loadStudies();
+    } catch (error) {
+      console.error('❌ Failed to sync worklist:', error);
+    }
+  };
 
   /**
    * Initial load and auto-refresh
+   * // ✅ WORKLIST EMPTY FIX: On mount: call with status='ALL', from=now-90d
    */
   useEffect(() => {
     loadStudies();
 
+    // ✅ WORKLIST EMPTY FIX: Live updates fallback - poll every 15s only when tab is active
     if (autoRefresh) {
-      const interval = setInterval(loadStudies, 30000); // Refresh every 30s
+      const interval = setInterval(loadStudies, 15000); // Poll every 15s
       return () => clearInterval(interval);
     }
   }, [statusFilter, modalityFilter, priorityFilter, autoRefresh]);
@@ -229,6 +265,21 @@ const WorklistPage: React.FC = () => {
               </IconButton>
             </Tooltip>
             
+            {/* ✅ WORKLIST EMPTY FIX: Add visible "Reset Filters" button */}
+            <Button
+              variant="outlined"
+              onClick={() => {
+                setSearchTerm('');
+                setStatusFilter('all');
+                setModalityFilter('all');
+                setPriorityFilter('all');
+                loadStudies();
+              }}
+              disabled={loading}
+            >
+              Reset Filters
+            </Button>
+            
             <Button
               variant="contained"
               startIcon={<RefreshIcon />}
@@ -236,6 +287,16 @@ const WorklistPage: React.FC = () => {
               disabled={loading}
             >
               Refresh
+            </Button>
+            
+            {/* ✅ WORKLIST EMPTY FIX: Sync Studies button */}
+            <Button
+              variant="contained"
+              color="secondary"
+              onClick={syncWorklist}
+              disabled={loading}
+            >
+              Sync Studies
             </Button>
           </Box>
         </Box>
@@ -305,10 +366,11 @@ const WorklistPage: React.FC = () => {
                 label="Status"
                 onChange={(e) => setStatusFilter(e.target.value)}
               >
+                {/* ✅ WORKLIST EMPTY FIX: Add "All" option alongside Pending/In-Progress/Completed */}
                 <MenuItem value="all">All</MenuItem>
                 <MenuItem value="pending">Pending</MenuItem>
-                <MenuItem value="draft">Draft</MenuItem>
-                <MenuItem value="final">Final</MenuItem>
+                <MenuItem value="in_progress">In Progress</MenuItem>
+                <MenuItem value="completed">Completed</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -365,9 +427,18 @@ const WorklistPage: React.FC = () => {
           </Box>
         ) : filteredStudies.length === 0 ? (
           <Box p={5} textAlign="center">
-            <Alert severity="info">
-              No studies found. Try adjusting your filters or check PACS connection.
+            {/* ✅ WORKLIST EMPTY FIX: Show empty state with "Sync Studies" CTA */}
+            <Alert severity="info" sx={{ mb: 2 }}>
+              No studies found. Try adjusting your filters or sync studies from PACS.
             </Alert>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={syncWorklist}
+              disabled={loading}
+            >
+              Sync Studies from PACS
+            </Button>
           </Box>
         ) : (
           <TableContainer>

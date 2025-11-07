@@ -61,7 +61,7 @@ const PriorStudiesPanel: React.FC<PriorStudiesPanelProps> = ({ patientID, curren
     try {
       const response = await fetch(`/api/reports/patient/${patientID}?limit=10`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         }
       })
       const data = await response.json()

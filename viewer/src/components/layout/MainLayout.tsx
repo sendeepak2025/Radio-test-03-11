@@ -44,6 +44,8 @@ import {
 import { useAppDispatch } from '../../store/hooks'
 import { logout } from '../../store/slices/authSlice'
 import { Calendar1Icon } from 'lucide-react'
+import { NotificationBell } from '../notifications/NotificationBell'
+import { useAuth } from '../../hooks/useAuth'
 
 const drawerWidth = 280
 
@@ -51,19 +53,40 @@ interface MainLayoutProps {
   children: React.ReactNode
 }
 
+interface SubMenuItem {
+  text: string
+  icon: React.ReactElement
+  path: string
+}
+
+interface MenuItem {
+  text: string
+  icon: React.ReactElement
+  path?: string
+  requiredRoles?: string[]
+  requiredPermissions?: string[]
+  submenu?: SubMenuItem[]
+}
+
+interface MenuSection {
+  title: string
+  items: MenuItem[]
+}
+
 export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const navigate = useNavigate()
   const location = useLocation()
   const dispatch = useAppDispatch()
+  const { user, hasRole, hasAnyRole, hasPermission } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null)
   const [usersMenuOpen, setUsersMenuOpen] = useState(false)
 
-  // Mock user data - replace with actual auth context
+  // Get current user info from auth
   const currentUser = {
-    name: 'Dr. John Smith',
-    role: 'Radiologist',
-    email: 'john.smith@hospital.com',
+    name: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.username : 'User',
+    role: user?.roles?.[0] || 'User',
+    email: user?.email || '',
     avatar: '/avatar.jpg'
   }
 
@@ -94,26 +117,56 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return location.pathname === path
   }
 
-  const menuItems = [
+  // Check if user can access menu item based on roles/permissions
+  const canAccessMenuItem = (item: MenuItem): boolean => {
+    // If no requiredRoles or requiredPermissions specified, allow access
+    if (!item.requiredRoles && !item.requiredPermissions) {
+      return true
+    }
+
+    // Check roles
+    if (item.requiredRoles && hasAnyRole(item.requiredRoles)) {
+      return true
+    }
+
+    // Check permissions
+    if (item.requiredPermissions && item.requiredPermissions.some((p: string) => hasPermission(p))) {
+      return true
+    }
+
+    return false
+  }
+
+  const menuItems: MenuSection[] = [
     {
       title: 'Main',
       items: [
-        { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
-        { text: 'Worklist', icon: <AssignmentIcon />, path: '/worklist' },
-        { text: 'Patients', icon: <PeopleIcon />, path: '/patients' },
-        { text: 'Follow Ups', icon: <Calendar1Icon />, path: '/followups' },
-        { text: 'Studies', icon: <FolderIcon />, path: '/orthanc' },
-        { text: 'AI Analysis', icon: <AIIcon />, path: '/ai-analysis' },
-        { text: 'Prior Auth', icon: <MedicalIcon />, path: '/prior-auth' },
-        { text: 'Billing', icon: <BillingIcon />, path: '/billing' },
+        { text: 'Dashboard', icon: <DashboardIcon />, path: '/app/dashboard' },
+        { text: 'Worklist', icon: <AssignmentIcon />, path: '/app/worklist' },
+        { text: 'Patients', icon: <PeopleIcon />, path: '/app/patients' },
+        { text: 'Follow Ups', icon: <Calendar1Icon />, path: '/app/followups' },
+        { text: 'Studies', icon: <FolderIcon />, path: '/app/orthanc' },
+        // { text: 'AI Analysis', icon: <AIIcon />, path: '/app/ai-analysis' },
+        { text: 'Prior Auth', icon: <MedicalIcon />, path: '/app/prior-auth' },
+        { text: 'Billing', icon: <BillingIcon />, path: '/app/billing' },
       ]
     },
     {
       title: 'System',
       items: [
-        { text: 'System Monitoring', icon: <ComputerIcon />, path: '/system-monitoring' },
-        { text: 'Device to PACS Setup', icon: <ConnectionIcon />, path: '/connection-manager' },
-        { text: 'Reports', icon: <AssessmentIcon />, path: '/reports' },
+        { 
+          text: 'System Monitoring', 
+          icon: <ComputerIcon />, 
+          path: '/app/system-monitoring',
+          requiredRoles: ['admin', 'system:admin']
+        },
+        { 
+          text: 'Device to PACS Setup', 
+          icon: <ConnectionIcon />, 
+          path: '/app/connection-manager',
+          requiredRoles: ['admin', 'system:admin', 'technician']
+        },
+        { text: 'Reports', icon: <AssessmentIcon />, path: '/app/reports' },
       ]
     },
     {
@@ -121,19 +174,27 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       items: [
         { 
           text: 'User Management', 
-          icon: <GroupIcon />, 
+          icon: <GroupIcon />,
+          requiredRoles: ['admin', 'system:admin'],
+          requiredPermissions: ['users:read', 'users:write'],
           submenu: [
-            { text: 'All Users', icon: <PeopleIcon />, path: '/users' },
-            { text: 'Providers', icon: <MedicalIcon />, path: '/users/providers' },
-            { text: 'Staff', icon: <HospitalIcon />, path: '/users/staff' },
-            { text: 'Technicians', icon: <ScienceIcon />, path: '/users/technicians' },
-            { text: 'Administrators', icon: <AdminIcon />, path: '/users/admins' },
+            { text: 'All Users', icon: <PeopleIcon />, path: '/app/users' },
+            { text: 'Providers', icon: <MedicalIcon />, path: '/app/users/providers' },
+            { text: 'Staff', icon: <HospitalIcon />, path: '/app/users/staff' },
+            { text: 'Technicians', icon: <ScienceIcon />, path: '/app/users/technicians' },
+            { text: 'Administrators', icon: <AdminIcon />, path: '/app/users/admins' },
           ]
         },
         { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
       ]
     },
   ]
+
+  // Filter menu items based on user permissions
+  const filteredMenuItems = menuItems.map(section => ({
+    ...section,
+    items: section.items.filter(item => canAccessMenuItem(item))
+  })).filter(section => section.items.length > 0) // Remove empty sections
 
   const drawer = (
     <Box>
@@ -169,7 +230,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
       {/* Navigation Menu */}
       <List sx={{ px: 1 }}>
-        {menuItems.map((section, sectionIndex) => (
+        {filteredMenuItems.map((section, sectionIndex) => (
           <Box key={sectionIndex}>
             <ListItem sx={{ pt: 2, pb: 0.5 }}>
               <Typography variant="caption" color="text.secondary" fontWeight="bold">
@@ -250,7 +311,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 )}
               </Box>
             ))}
-            {sectionIndex < menuItems.length - 1 && <Divider sx={{ my: 1 }} />}
+            {sectionIndex < filteredMenuItems.length - 1 && <Divider sx={{ my: 1 }} />}
           </Box>
         ))}
       </List>
@@ -277,16 +338,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             <MenuIcon />
           </IconButton>
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            {location.pathname === '/dashboard' && 'Dashboard'}
-            {location.pathname === '/worklist' && 'Study Worklist'}
-            {location.pathname === '/patients' && 'Patients'}
-            {location.pathname === '/followups' && 'Follow Ups'}
-            {location.pathname === '/system-monitoring' && 'System Monitoring'}
-            {location.pathname === '/orthanc' && 'Studies'}
-            {location.pathname === '/billing' && 'Billing & Superbills'}
-            {location.pathname.startsWith('/users') && 'User Management'}
-            {location.pathname === '/settings' && 'Settings'}
+            {location.pathname === '/app/dashboard' && 'Dashboard'}
+            {location.pathname === '/app/worklist' && 'Study Worklist'}
+            {location.pathname === '/app/patients' && 'Patients'}
+            {location.pathname === '/app/followups' && 'Follow Ups'}
+            {location.pathname === '/app/system-monitoring' && 'System Monitoring'}
+            {location.pathname === '/app/orthanc' && 'Studies'}
+            {location.pathname === '/app/billing' && 'Billing & Superbills'}
+            {location.pathname.startsWith('/app/users') && 'User Management'}
+            {location.pathname === '/app/settings' && 'Settings'}
           </Typography>
+          <NotificationBell />
           <IconButton
             onClick={handleUserMenuOpen}
             size="small"

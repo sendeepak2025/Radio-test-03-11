@@ -48,9 +48,8 @@ import { useAuth } from '../../hooks/useAuth'
 import { MedicalImageViewer } from '../../components/viewer/MedicalImageViewer'
 import Cornerstone3DViewer from '../../components/viewer/Cornerstone3DViewer'
 import { VolumeViewer3D } from '../../components/viewer/VolumeViewer3D'
-import { ReportingInterface } from '../../components/reporting/ReportingInterface'
+import { ViewReportButton } from '../../components/viewer/ViewReportButton'
 import SmartModalityViewer from '../../components/viewer/SmartModalityViewer'
-import EnhancedReportingInterface from '../../components/reporting/EnhancedReportingInterface'
 import { PatientContextPanel } from '../../components/worklist/PatientContextPanel'
 import ApiService from '../../services/ApiService'
 import { SeriesSelector } from '../../components/viewer/SeriesSelector'
@@ -311,7 +310,7 @@ const ViewerPage: React.FC = () => {
             <Button
               variant="contained"
               startIcon={<ArrowBack />}
-              onClick={() => navigate('/dashboard')}
+              onClick={() => navigate('/app/dashboard')}
             >
               Back to Dashboard
             </Button>
@@ -356,7 +355,7 @@ const ViewerPage: React.FC = () => {
               <Stack direction="row" spacing={2} alignItems="center">
                 <Tooltip title="Back to Dashboard">
                   <IconButton
-                    onClick={() => navigate('/dashboard')}
+                    onClick={() => navigate('/app/dashboard')}
                     sx={{
                       color: 'white',
                       bgcolor: alpha('#fff', 0.1),
@@ -511,6 +510,16 @@ const ViewerPage: React.FC = () => {
 
               {/* Right Section - Actions */}
               <Stack direction="row" spacing={1}>
+                {/* View/Create Report Button */}
+                {studyData?.studyInstanceUID && (
+                  <ViewReportButton
+                    studyInstanceUID={studyData.studyInstanceUID}
+                    patientID={studyData.patientID}
+                    patientName={studyData.patientName}
+                    modality={studyData.modality}
+                  />
+                )}
+                
                 <Tooltip title="Share Study">
                   <IconButton
                     sx={{
@@ -701,14 +710,25 @@ const ViewerPage: React.FC = () => {
 
               <TabPanel value={activeTab} index={3}>
                 {studyData ? (
-                  <EnhancedReportingInterface
-                    studyInstanceUID={studyData.studyInstanceUID}
-                    patientId={studyData.patientID}
-                    onReportFinalized={(report) => {
-                      console.log('Report finalized:', report)
-                      // Could show success message or navigate
-                    }}
-                  />
+                  <Box sx={{ p: 3, textAlign: 'center' }}>
+                    <Typography variant="h6" gutterBottom>
+                      Structured Reporting
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                      Use the "Create Report" or "View Report" button above to access the unified reporting system.
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      onClick={() => {
+                        navigate(
+                          `/app/reporting?studyUID=${studyData.studyInstanceUID}&mode=manual&patientID=${studyData.patientID || ''}&patientName=${studyData.patientName || ''}&modality=${studyData.modality || ''}`
+                        );
+                      }}
+                    >
+                      Open Reporting Interface
+                    </Button>
+                  </Box>
                 ) : (
                   <Box sx={{ p: 3 }}>
                     <Typography variant="h6" color="text.secondary">

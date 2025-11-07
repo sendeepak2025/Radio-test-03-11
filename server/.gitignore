@@ -77,3 +77,19 @@ dist-ssr
 # # Environment files
 # *.env
 # *.env.*
+
+# Cryptographic Keys - NEVER COMMIT THESE
+keys/
+!keys/.gitkeep
+keys/**/*.pem
+keys/**/*.key
+keys/**/key-metadata.json
+keys/archive/
+
+# Temporary export files
+temp/
+temp/exports/
+
+# Backup files
+backups/
+*.tar.gz.enc

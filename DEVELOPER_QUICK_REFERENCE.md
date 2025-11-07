@@ -178,7 +178,7 @@ const [signatureText, setSignatureText] = useState('');
 const getAuthToken = (): string | null => {
   return localStorage.getItem('accessToken') || 
          sessionStorage.getItem('accessToken') || 
-         localStorage.getItem('token');
+         localStorage.getItem('accessToken');
 };
 ```
 

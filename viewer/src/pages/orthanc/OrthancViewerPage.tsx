@@ -170,7 +170,7 @@ const OrthancViewerPage: React.FC = () => {
   }
 
   const handleViewInCornerstone = (studyInstanceUID: string) => {
-    navigate(`/viewer/${studyInstanceUID}`)
+    navigate(`/app/viewer/${studyInstanceUID}`)
   }
 
   const openInStoneViewer = (orthancStudyId: string) => {
@@ -228,7 +228,7 @@ const OrthancViewerPage: React.FC = () => {
             <Box display="flex" gap={2}>
               <Button
                 variant="outlined"
-                onClick={() => navigate('/dashboard')}
+                onClick={() => navigate('/app/dashboard')}
               >
                 Dashboard
               </Button>

@@ -20,8 +20,8 @@ const adminActionRoutes = require('./admin-actions');
 const migrationRoutes = require('./migration');
 const pacsRoutes = require('./pacs');
 const viewerSelectionRoutes = require('./viewer-selection');
-const structuredReportsRoutes = require('./structured-reports');
 const signatureRoutes = require('./signature');
+const fdaSignaturesRoutes = require('./signatures'); // FDA 21 CFR Part 11 compliant signatures
 // AI routes - MedSigLIP + MedGemma integration
 const aiAnalysisRoutes = require('./aiAnalysis');
 const systemMonitoringRoutes = require('./system-monitoring');
@@ -31,8 +31,13 @@ const publicRoutes = require('./public');
 const exportRoutes = require('./export');
 const followUpRoutes = require('./follow-ups');
 const worklistRoutes = require('./worklist');
-const reportsRoutes = require('./reports');
 const priorAuthRoutes = require('./prior-authorization');
+const notificationsRoutes = require('./notifications');
+const mfaRoutes = require('./mfa');
+const phiAuditRoutes = require('./phi-audit');
+const ipWhitelistRoutes = require('./ip-whitelist');
+const dataRetentionRoutes = require('./data-retention');
+const billingRoutes = require('./billing');
 
 const router = express.Router();
 
@@ -174,15 +179,15 @@ router.get('/api/viewer/stats', authenticate, unifiedViewController.getStats);
 // Viewer Selection Sync API - Selection synchronization for measurements and annotations
 router.use('/api/viewer', viewerSelectionRoutes);
 
-// Medical Reporting API - AI-assisted report generation and management
-router.use('/api/reports', structuredReportsRoutes);
-
-// Report Templates API - Smart template selection and management
-const reportTemplatesRoutes = require('./report-templates');
-router.use('/api/report-templates', reportTemplatesRoutes);
+// 🎯 UNIFIED REPORTING SYSTEM - Single consolidated route for all reporting
+const unifiedReportsRoutes = require('./reports-unified');
+router.use('/api/reports', unifiedReportsRoutes);
 
 // Signature Upload API - Upload signatures to filesystem
 router.use('/api/signature', signatureRoutes);
+
+// FDA Digital Signatures API - FDA 21 CFR Part 11 compliant digital signatures
+router.use('/api/signatures', fdaSignaturesRoutes);
 
 // AI Analysis API - MedSigLIP detection + MedGemma reporting
 router.use('/api/ai', authenticate, aiAnalysisRoutes);
@@ -208,10 +213,25 @@ router.use('/api/follow-ups', followUpRoutes);
 // Worklist Management API - Study worklist and workflow management
 router.use('/api/worklist', worklistRoutes);
 
-// Report Management API - Report creation, storage, and retrieval
-router.use('/api/reports-v2', reportsRoutes);
-
 // Prior Authorization API - Insurance authorization management and automation
 router.use('/api/prior-auth', priorAuthRoutes);
+
+// Critical Notifications API - Real-time critical finding notifications with escalation
+router.use('/api/notifications', notificationsRoutes);
+
+// MFA API - Multi-factor authentication
+router.use('/api/mfa', mfaRoutes);
+
+// PHI Audit API - HIPAA compliance audit logs
+router.use('/api/phi-audit', phiAuditRoutes);
+
+// IP Whitelist API - IP access control
+router.use('/api/ip-whitelist', ipWhitelistRoutes);
+
+// Data Retention API - HIPAA data retention management
+router.use('/api/data-retention', dataRetentionRoutes);
+
+// Billing API - Medical billing and coding
+router.use('/api/billing', billingRoutes);
 
 module.exports = router;

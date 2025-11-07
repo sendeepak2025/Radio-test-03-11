@@ -20,7 +20,7 @@ POST /api/structured-reports/from-ai/... 401 (Unauthorized)
 // Run these commands:
 
 // Check if token exists
-console.log('Token:', localStorage.getItem('token'));
+console.log('Token:', localStorage.getItem('accessToken'));
 
 // Check if username exists
 console.log('Username:', localStorage.getItem('username'));
@@ -131,7 +131,7 @@ return axios(originalRequest);
 ### Test 1: Check Token Validity
 ```javascript
 // In browser console:
-const token = localStorage.getItem('token');
+const token = localStorage.getItem('accessToken');
 
 fetch('http://localhost:8001/api/structured-reports/test', {
   headers: { 'Authorization': `Bearer ${token}` }
@@ -144,7 +144,7 @@ fetch('http://localhost:8001/api/structured-reports/test', {
 ### Test 2: Decode Token
 ```javascript
 // Check token expiry
-const token = localStorage.getItem('token');
+const token = localStorage.getItem('accessToken');
 if (token) {
   const payload = JSON.parse(atob(token.split('.')[1]));
   console.log('Token payload:', payload);
@@ -159,13 +159,13 @@ if (token) {
 
 ### Before:
 ```typescript
-const token = localStorage.getItem('token');
+const token = localStorage.getItem('accessToken');
 // No validation, proceeds even if null
 ```
 
 ### After:
 ```typescript
-const token = localStorage.getItem('token');
+const token = localStorage.getItem('accessToken');
 if (!token) {
   alert('⚠️ Authentication required. Please login first.');
   console.error('❌ No token found in localStorage');
@@ -227,7 +227,7 @@ console.log('🔑 Token found, creating draft report...');
 ### Check Token:
 ```javascript
 // Browser console (F12)
-localStorage.getItem('token')
+localStorage.getItem('accessToken')
 ```
 
 ### Login and Save Token:
@@ -275,7 +275,7 @@ Browser Console:
 
 ### Check 1: Token Expired?
 ```javascript
-const token = localStorage.getItem('token');
+const token = localStorage.getItem('accessToken');
 const payload = JSON.parse(atob(token.split('.')[1]));
 console.log('Expired?', Date.now() > payload.exp * 1000);
 // If true, login again
@@ -284,7 +284,7 @@ console.log('Expired?', Date.now() > payload.exp * 1000);
 ### Check 2: Wrong Token?
 ```javascript
 // Token should start with "eyJ"
-const token = localStorage.getItem('token');
+const token = localStorage.getItem('accessToken');
 console.log('Valid format?', token?.startsWith('eyJ'));
 ```
 
@@ -303,7 +303,7 @@ JWT_SECRET=your-secret-key
 **Sabse pehle:**
 ```javascript
 // Browser console me ye run karo:
-localStorage.getItem('token')
+localStorage.getItem('accessToken')
 
 // Agar null hai to:
 // 1. Login page pe jao

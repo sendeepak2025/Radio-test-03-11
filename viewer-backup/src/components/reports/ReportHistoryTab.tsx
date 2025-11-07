@@ -33,7 +33,7 @@ const ReportHistoryTab: React.FC<ReportHistoryTabProps> = ({ studyInstanceUID })
       setLoading(true);
       setError(null);
       
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('accessToken');
       const response = await axios.get(
         `${import.meta.env.VITE_API_URL || 'http://localhost:8001'}/api/reports/study/${studyInstanceUID}`,
         {
@@ -54,7 +54,7 @@ const ReportHistoryTab: React.FC<ReportHistoryTabProps> = ({ studyInstanceUID })
 
   const viewReport = async (reportId: string) => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('accessToken');
       const response = await axios.get(
         `${import.meta.env.VITE_API_URL || 'http://localhost:8001'}/api/reports/${reportId}`,
         {
@@ -74,7 +74,7 @@ const ReportHistoryTab: React.FC<ReportHistoryTabProps> = ({ studyInstanceUID })
 
   const downloadPDF = async (reportId: string) => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('accessToken');
       const response = await axios.get(
         `${import.meta.env.VITE_API_URL || 'http://localhost:8001'}/api/reports/${reportId}/pdf`,
         {

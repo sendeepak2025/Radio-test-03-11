@@ -1,6 +1,7 @@
+// ✅ WORKLIST EMPTY FIX: Updated imports
 const WorklistItem = require('../models/WorklistItem');
 const Study = require('../models/Study');
-const Report = require('../models/Report');
+const StructuredReport = require('../models/StructuredReport');
 const { getOrthancClient } = require('./unified-orthanc-service');
 
 class WorklistService {
@@ -23,32 +24,70 @@ class WorklistService {
     
     const query = {};
     
-    if (hospitalId) query.hospitalId = hospitalId;
+    // ✅ WORKLIST EMPTY FIX: Handle hospitalId filtering - include items with null hospitalId for migration
+    if (hospitalId) {
+      query.$or = [
+        { hospitalId: hospitalId },
+        { hospitalId: null },
+        { hospitalId: { $exists: false } }
+      ];
+    }
     if (assignedTo) query.assignedTo = assignedTo;
     if (status) query.status = status;
     if (priority) query.priority = priority;
     if (hasCriticalFindings !== undefined) query.hasCriticalFindings = hasCriticalFindings;
     
+    // ✅ WORKLIST EMPTY FIX: Use updatedAt for date filtering instead of scheduledFor
+    // This ensures recently created items show up even if study date is old
     if (startDate || endDate) {
-      query.scheduledFor = {};
-      if (startDate) query.scheduledFor.$gte = new Date(startDate);
-      if (endDate) query.scheduledFor.$lte = new Date(endDate);
+      query.updatedAt = {};
+      if (startDate) query.updatedAt.$gte = new Date(startDate);
+      if (endDate) query.updatedAt.$lte = new Date(endDate);
     }
     
+    // ✅ WORKLIST EMPTY FIX: Sort by updatedAt (newest first) instead of scheduledFor
     const items = await WorklistItem.find(query)
       .populate('assignedTo', 'username email')
-      .sort({ priority: -1, scheduledFor: 1 })
+      .sort({ priority: -1, updatedAt: -1 })
       .limit(limit)
       .skip(skip)
       .lean();
     
-    // Enrich with study data
+    // Enrich with study data and sync report status
     const enrichedItems = await Promise.all(
       items.map(async (item) => {
         const study = await Study.findOne({ studyInstanceUID: item.studyInstanceUID }).lean();
+        
+        // ✅ WORKLIST EMPTY FIX: Check for report and sync status
+        const report = await StructuredReport.findOne({ studyInstanceUID: item.studyInstanceUID })
+          .sort({ reportDate: -1 })
+          .lean();
+        
+        let reportStatus = 'none';
+        if (report) {
+          // Map report status to worklist reportStatus
+          if (report.reportStatus === 'draft') {
+            reportStatus = 'draft';
+          } else if (report.reportStatus === 'final' || report.signedAt) {
+            reportStatus = 'finalized';
+          }
+          
+          // Update worklist item if report status changed
+          if (item.reportStatus !== reportStatus) {
+            await WorklistItem.updateOne(
+              { _id: item._id },
+              { 
+                reportStatus: reportStatus,
+                reportId: report._id.toString()
+              }
+            );
+          }
+        }
+        
         return {
           ...item,
-          study: study || null
+          study: study || null,
+          reportStatus: reportStatus
         };
       })
     );
@@ -214,22 +253,51 @@ class WorklistService {
     
     let created = 0;
     let skipped = 0;
+    let updated = 0;
     
     for (const study of studies) {
       const exists = await WorklistItem.findOne({ studyInstanceUID: study.studyInstanceUID });
       
       if (!exists) {
-        await this.createWorklistItem(study.studyInstanceUID, {
-          hospitalId: study.hospitalId,
-          priority: 'routine'
-        });
-        created++;
+        try {
+          await this.createWorklistItem(study.studyInstanceUID, {
+            hospitalId: study.hospitalId,
+            priority: 'routine'
+          });
+          created++;
+        } catch (error) {
+          console.error(`Failed to create worklist item for ${study.studyInstanceUID}:`, error.message);
+          skipped++;
+        }
       } else {
-        skipped++;
+        // ✅ WORKLIST EMPTY FIX: Update existing worklist item with latest report status
+        const report = await StructuredReport.findOne({ studyInstanceUID: study.studyInstanceUID })
+          .sort({ reportDate: -1 })
+          .lean();
+        
+        if (report) {
+          let reportStatus = 'none';
+          if (report.reportStatus === 'draft') {
+            reportStatus = 'draft';
+          } else if (report.reportStatus === 'final' || report.signedAt) {
+            reportStatus = 'finalized';
+          }
+          
+          await WorklistItem.updateOne(
+            { studyInstanceUID: study.studyInstanceUID },
+            { 
+              reportStatus: reportStatus,
+              reportId: report._id.toString()
+            }
+          );
+          updated++;
+        } else {
+          skipped++;
+        }
       }
     }
     
-    return { created, skipped, total: studies.length };
+    return { created, skipped, updated, total: studies.length };
   }
 }
 

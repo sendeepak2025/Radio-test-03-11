@@ -58,7 +58,7 @@ export const UsersPage: React.FC = () => {
       try {
         const response = await fetch('/api/users', {
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
+            'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
           }
         })
         
@@ -152,7 +152,7 @@ export const UsersPage: React.FC = () => {
         method,
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         },
         body: JSON.stringify(userData)
       })
@@ -164,7 +164,7 @@ export const UsersPage: React.FC = () => {
       // Reload users
       const usersResponse = await fetch('/api/users', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         }
       })
       

@@ -49,14 +49,14 @@ const WorkflowNavigation: React.FC<WorkflowNavigationProps> = ({
       
       case 'worklist':
         return [
-          { label: 'View Study', icon: <ViewerIcon />, path: context.studyInstanceUID ? `/viewer/${context.studyInstanceUID}` : null, tooltip: 'Open in viewer', disabled: !context.studyInstanceUID },
-          { label: 'Create Report', icon: <ReportIcon />, path: '/reporting', tooltip: 'Generate report' },
+          { label: 'View Study', icon: <ViewerIcon />, path: context.studyInstanceUID ? `/app/viewer/${context.studyInstanceUID}` : null, tooltip: 'Open in viewer', disabled: !context.studyInstanceUID },
+          { label: 'Create Report', icon: <ReportIcon />, path: context.studyInstanceUID ? `/app/reporting?studyUID=${context.studyInstanceUID}` : null, tooltip: 'Generate report', disabled: !context.studyInstanceUID },
         ];
       
       case 'viewer':
         return [
-          { label: 'Create Report', icon: <ReportIcon />, path: '/reporting', tooltip: 'Generate report for this study' },
-          { label: 'Back to Worklist', icon: <WorklistIcon />, path: '/worklist', tooltip: 'Return to worklist' },
+          { label: 'Create Report', icon: <ReportIcon />, path: context.studyInstanceUID ? `/app/reporting?studyUID=${context.studyInstanceUID}` : null, tooltip: 'Generate report for this study', disabled: !context.studyInstanceUID },
+          { label: 'Back to Worklist', icon: <WorklistIcon />, path: '/app/worklist', tooltip: 'Return to worklist' },
         ];
       
       case 'reporting':

@@ -50,9 +50,12 @@ import {
   TrendingUp as StatsIcon
 } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
-import ApiService from '../../services/ApiService'
+import ApiService, { apiCall, getCSRFToken } from '../../services/ApiService'
 import WorkflowNavigation from '../../components/workflow/WorkflowNavigation'
 import { useWorkflow } from '../../contexts/WorkflowContext'
+import { ExportButton } from '../../components/export/ExportButton'
+import Person from '@mui/icons-material/Person'
+import { Download as DownloadIcon } from '@mui/icons-material'
 
 interface WorklistItem {
   _id: string
@@ -116,12 +119,12 @@ const EnhancedWorklistPage: React.FC = () => {
 
   const fetchWorklist = async () => {
     setLoading(true)
+      const csrfToken = getCSRFToken()
+    
     try {
-      const response = await fetch('/api/worklist', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      })
+      const response = await apiCall('/api/worklist')
+        
+      
       const data = await response.json()
       
       if (data.success) {
@@ -138,7 +141,7 @@ const EnhancedWorklistPage: React.FC = () => {
     try {
       const response = await fetch('/api/worklist/stats', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         }
       })
       const data = await response.json()
@@ -200,7 +203,7 @@ const EnhancedWorklistPage: React.FC = () => {
       studyDate: item.study?.studyDate || ''
     })
     addToHistory('worklist')
-    navigate(`/viewer/${item.studyInstanceUID}`)
+    navigate(`/app/viewer/${item.studyInstanceUID}`)
   }
 
   const handleStartReading = async (item: WorklistItem) => {
@@ -209,7 +212,7 @@ const EnhancedWorklistPage: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         },
         body: JSON.stringify({ status: 'in_progress' })
       })
@@ -229,7 +232,7 @@ const EnhancedWorklistPage: React.FC = () => {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
         },
         body: JSON.stringify({ status: 'completed' })
       })
@@ -244,13 +247,14 @@ const EnhancedWorklistPage: React.FC = () => {
   }
 
   const handleSyncWorklist = async () => {
+      const csrfToken = getCSRFToken()
+
     try {
-      const response = await fetch('/api/worklist/sync', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
+      const response = await apiCall('/api/worklist/sync',{
+    method: 'POST',
+
       })
+     
       
       const data = await response.json()
       
@@ -263,6 +267,37 @@ const EnhancedWorklistPage: React.FC = () => {
       console.error('Failed to sync worklist:', error)
     } finally {
       setSyncDialog(false)
+    }
+  }
+
+  const handleExportWorklist = async () => {
+    try {
+      const params = new URLSearchParams({
+        format: 'csv',
+        includeStats: 'true'
+      })
+
+      const response = await fetch(`/api/worklist/export?${params.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
+        }
+      })
+
+      if (!response.ok) throw new Error('Export failed')
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `worklist-${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+
+      alert('✅ Worklist exported successfully!')
+    } catch (error: any) {
+      alert(`❌ Export failed: ${error.message}`)
     }
   }
 
@@ -305,6 +340,13 @@ const EnhancedWorklistPage: React.FC = () => {
             📋 Radiology Worklist
           </Typography>
           <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button
+              startIcon={<DownloadIcon />}
+              variant="outlined"
+              onClick={() => handleExportWorklist()}
+            >
+              Export Worklist
+            </Button>
             <Button
               startIcon={<RefreshIcon />}
               onClick={fetchWorklist}
@@ -633,6 +675,12 @@ const EnhancedWorklistPage: React.FC = () => {
         }}>
           <HistoryIcon fontSize="small" sx={{ mr: 1 }} />
           View Prior Studies
+        </MenuItem>
+        <MenuItem onClick={(e) => {
+          e.stopPropagation()
+          setAnchorEl(null)
+        }}>
+          {selectedItem && <ExportButton type="study" id={selectedItem.studyInstanceUID} label="Export Study" />}
         </MenuItem>
       </Menu>
 

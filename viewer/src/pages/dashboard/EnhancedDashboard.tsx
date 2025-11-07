@@ -40,6 +40,8 @@ import {
 } from '@mui/icons-material'
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
+import { SystemHealthWidget } from '../../components/dashboard/SystemHealthWidget'
+import { IntegrationStatusWidget } from '../../components/dashboard/IntegrationStatusWidget'
 
 interface MachineStats {
   modality: string
@@ -393,6 +395,16 @@ export const EnhancedDashboard: React.FC = () => {
             machines={machines}
             loading={loading}
           />
+        </Grid>
+      </Grid>
+
+      {/* System Health Widget */}
+      <Grid container spacing={3} sx={{ mb: 4 }}>
+        <Grid item xs={12} lg={6}>
+          <SystemHealthWidget />
+        </Grid>
+        <Grid item xs={12} lg={6}>
+          <IntegrationStatusWidget />
         </Grid>
       </Grid>
 

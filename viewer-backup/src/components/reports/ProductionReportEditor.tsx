@@ -190,7 +190,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
 const getAuthToken = (): string | null => {
   return localStorage.getItem('accessToken') ||
     sessionStorage.getItem('accessToken') ||
-    localStorage.getItem('token');
+    localStorage.getItem('accessToken');
 };
 
 const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({

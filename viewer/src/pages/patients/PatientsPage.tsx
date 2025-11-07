@@ -72,6 +72,7 @@ import {
   exportStudyData,
 } from "../../services/ApiService"
 import { useNavigate } from "react-router-dom"
+import { ExportButton } from '../../components/export/ExportButton'
 
 interface PatientItem {
   patientID: string
@@ -192,7 +193,7 @@ const PatientsPage: React.FC = () => {
   }
 
   const handleStudyClick = (studyUID: string) => {
-    navigate(`/patient/studies/${studyUID}`)
+    navigate(`/app/patient/studies/${studyUID}`)
   }
 
   const handleAddPatientOpen = () => setAddOpen(true)
@@ -382,7 +383,7 @@ const PatientsPage: React.FC = () => {
       setTimeout(() => {
         handlePacsUploadClose()
         if (result.data?.studyInstanceUID) {
-          navigate(`/patient/studies/${result.data.studyInstanceUID}`)
+          navigate(`/app/patient/studies/${result.data.studyInstanceUID}`)
         }
       }, 2000)
     } catch (e: any) {
@@ -724,17 +725,7 @@ const PatientsPage: React.FC = () => {
                             )}
                           </CardActionArea>
                           <Box sx={{ px: 3, pb: 2 }}>
-                            <Button
-                              size="small"
-                              startIcon={<FileDownload />}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleExportPatient(patient.patientID)
-                              }}
-                              sx={{ textTransform: "none" }}
-                            >
-                              Export Data
-                            </Button>
+                            <ExportButton type="patient" id={patient.patientID} />
                           </Box>
                         </Card>
                         </Grow>

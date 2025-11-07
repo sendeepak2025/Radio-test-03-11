@@ -1,175 +1,153 @@
-# 🚀 Quick Reference - AI Stack
+# 🚀 Quick Reference - Landing Page
 
-## ✅ What's Active
+## 📍 URLs
 
-```
-✅ MedSigLIP (Hugging Face API) - Classification
-✅ MedGemma (Google Gemini API) - Reports
-❌ Local servers (NOT needed)
-```
-
----
-
-## 🎯 Quick Commands
-
-### Start Everything
-```bash
-# Terminal 1 - Backend
-cd server && npm start
-
-# Terminal 2 - Frontend
-cd viewer && npm run dev
-
-# Terminal 3 - Test AI
-node test-huggingface-ai.js
-```
-
-### Test AI Services
-```bash
-# Quick test
-node test-huggingface-ai.js
-
-# Check status
-curl http://localhost:8001/api/ai/status
-
-# Test connections
-curl http://localhost:8001/api/ai/test
-```
-
----
-
-## 📊 Architecture
-
-```
-Frontend → Backend → Cloud APIs
-                      ├─ Hugging Face (MedSigLIP)
-                      └─ Google Gemini (MedGemma)
-```
-
----
-
-## 🔑 API Keys
-
-```env
-HUGGINGFACE_API_KEY=your_huggingface_token_here
-GOOGLE_AI_API_KEY=your_google_ai_key_here
-```
-
-Both configured in `server/.env` ✅
+| Page | URL | Description |
+|------|-----|-------------|
+| **Landing Home** | `http://localhost:3011/` | Full animated landing page |
+| **Simple Version** | `http://localhost:3011/simple` | Minimal version (faster) |
+| **About** | `http://localhost:3011/about` | About page |
+| **Services** | `http://localhost:3011/services` | Services page |
+| **Contact** | `http://localhost:3011/contact` | Contact information |
+| **Blog** | `http://localhost:3011/blog` | Blog page |
+| **App Login** | `http://localhost:3011/app/login` | Sign in to app |
+| **Dashboard** | `http://localhost:3011/app/dashboard` | App dashboard |
 
 ---
 
 ## 📁 Key Files
 
-### Updated
-- ✅ `server/src/routes/aiAnalysis.js` - Now uses HF + Gemini
-- ✅ `server/.env` - API keys configured
-
-### Using
-- ✅ `server/src/services/medSigLIPService.js` - HF API
-- ✅ `server/src/services/medGemmaService.js` - Gemini API
-
-### Not Using
-- ❌ `server/src/services/geminiVisionService.js` - Old service
-
----
-
-## 🧪 Testing
-
-### Test Script
-```bash
-node test-huggingface-ai.js
-```
-
-**Expected:**
-```
-✅ MedSigLIP: ENABLED (Hugging Face API)
-✅ MedGemma: ENABLED (Google Gemini API)
-✅ MedSigLIP API: Connected
-✅ MedGemma API: Connected
-✅ ALL SYSTEMS OPERATIONAL
-```
+| File | Purpose | Edit For |
+|------|---------|----------|
+| `viewer/src/landing/components/Navbar.tsx` | Navigation bar | Brand name, menu links |
+| `viewer/src/landing/components/Hero.tsx` | Hero section | Headline, buttons, stats |
+| `viewer/src/landing/components/Footer.tsx` | Footer | Contact info, links |
+| `viewer/src/landing/pages/LandingHome.tsx` | Main landing page | Page structure |
+| `viewer/src/index.css` | Global styles | Colors, theme |
+| `viewer/tailwind.config.js` | Tailwind config | Animations, colors |
+| `viewer/src/App.tsx` | Routing | Add/remove pages |
 
 ---
 
-## 📊 Performance
+## 🎨 Quick Customizations
 
-| Metric | Value |
-|--------|-------|
-| Classification | 10-15s |
-| Report | 5-10s |
-| Total | 15-25s |
-
----
-
-## 🔧 Configuration
-
-### MedSigLIP
-```env
-MEDSIGLIP_MODEL=openai/clip-vit-base-patch32
-MEDSIGLIP_GRID_SIZE=3
-MEDSIGLIP_CONFIDENCE_THRESHOLD=0.15
+### Change Brand Name
+**File:** `Navbar.tsx` (line ~42)
+```tsx
+Your <span className="text-gradient">Brand</span>
 ```
 
-### MedGemma
-```env
-MEDGEMMA_MODEL=gemini-2.0-flash
-MEDGEMMA_MAX_TOKENS=2048
+### Change Headline
+**File:** `Hero.tsx` (line ~28)
+```tsx
+<h1>Your Custom Headline</h1>
+```
+
+### Change Colors
+**File:** `index.css` (line ~6)
+```css
+--primary: 221.2 83.2% 53.3%;  /* Your color */
+```
+
+### Change Stats
+**File:** `Hero.tsx` (line ~55)
+```tsx
+<div className="text-3xl font-bold">99.9%</div>
+```
+
+### Change Contact Info
+**File:** `Footer.tsx` (line ~60)
+```tsx
+info@yourdomain.com
 ```
 
 ---
 
-## 🎯 Usage
+## 🔧 Common Commands
 
-1. Start backend: `cd server && npm start`
-2. Start frontend: `cd viewer && npm run dev`
-3. Open http://localhost:5173
-4. Upload medical image
-5. Click "Analyze with AI"
-6. View results! 🎉
+```powershell
+# Start dev server
+cd viewer
+npm run dev
+
+# Build for production
+npm run build
+
+# Preview production build
+npm run preview
+
+# Type check
+npm run typecheck
+
+# Lint code
+npm run lint
+```
 
 ---
 
-## 🔍 Troubleshooting
+## 🎯 Navigation Flow
 
-### Backend not starting
-```bash
-cd server
-npm install
-npm start
+```
+Landing (/) → Sign In → Login (/app/login) → Dashboard (/app/dashboard)
 ```
 
-### API errors
-- Check `server/.env` has both API keys
-- Verify keys are valid
-- Check internet connection
+---
 
-### No detections
-- Image may be normal
-- Lower threshold: `MEDSIGLIP_CONFIDENCE_THRESHOLD=0.10`
+## ✅ Success Checklist
 
-### 503 errors
-- First request takes 20-30s (model loading)
-- Wait and retry
+- [x] Landing page loads at `/`
+- [x] Tailwind CSS working
+- [x] Animations playing
+- [x] Navigation working
+- [x] "Sign In" button works
+- [x] Mobile menu works
+- [x] All pages accessible
+- [x] No console errors
 
 ---
 
 ## 📚 Documentation
 
-- `HUGGINGFACE_AI_SETUP.md` - Complete setup guide
-- `START_AI_SERVICES.md` - Quick start
-- `AI_STACK_STATUS.md` - Current status
-- `AI_ARCHITECTURE_DIAGRAM.md` - Architecture details
-- `MIGRATION_COMPLETE.md` - What changed
-- `QUICK_REFERENCE.md` - This file
+- **SUCCESS_GUIDE.md** - Complete success guide
+- **CURRENT_STATUS.md** - Current status
+- **TROUBLESHOOTING.md** - Fix issues
+- **QUICK_START_GUIDE.md** - Getting started
+- **INTEGRATION_COMPLETE.md** - Technical details
 
 ---
 
-## ✅ Status
+## 🎨 Color Themes
 
-🟢 **READY** - All systems operational
-🟢 **Hugging Face** - MedSigLIP active
-🟢 **Google Gemini** - MedGemma active
-🟢 **No Local Setup** - Cloud-based
+### Blue (Current)
+```css
+--primary: 221.2 83.2% 53.3%;
+```
 
-**Next:** Run `node test-huggingface-ai.js` 🚀
+### Purple
+```css
+--primary: 270 91% 65%;
+```
+
+### Green
+```css
+--primary: 142 76% 36%;
+```
+
+### Red
+```css
+--primary: 0 84% 60%;
+```
+
+---
+
+## 🚀 Quick Start
+
+1. **Refresh browser** - See full animated landing
+2. **Test navigation** - Click all links
+3. **Test Sign In** - Goes to `/app/login`
+4. **Customize** - Update brand, colors, text
+5. **Deploy** - Build and deploy when ready
+
+---
+
+**Your landing page is ready! Visit http://localhost:3011/ to see it!** 🎉

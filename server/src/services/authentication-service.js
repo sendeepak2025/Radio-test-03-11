@@ -304,20 +304,35 @@ class AuthenticationService {
 
   async verifyToken(token) {
     try {
-      const decoded = jwt.verify(token, this.config.jwt.secret);
+      // Use JWT_SECRET from environment (same as authController)
+      const secret = process.env.JWT_SECRET || this.config.jwt.secret || 'dev_secret';
+      const decoded = jwt.verify(token, secret);
       
-      // Check if session still exists
-      const session = this.sessions.get(decoded.id);
-      if (!session) {
-        throw new Error('Session not found');
+      // Handle both "id" and "sub" fields (different token formats)
+      const userId = decoded.id || decoded.sub;
+      
+      if (!userId) {
+        throw new Error('Invalid token payload: missing user identifier');
       }
-
-      // Update last activity
-      session.lastActivity = new Date();
-      this.sessions.set(decoded.id, session);
+      
+      // Normalize the decoded token to always have "id" field
+      if (decoded.sub && !decoded.id) {
+        decoded.id = decoded.sub;
+      }
+      
+      // Check if session exists (optional - some tokens may not have sessions)
+      // This is for backward compatibility with OAuth2/session-based tokens
+      const session = this.sessions.get(userId);
+      if (session) {
+        // Update last activity if session exists
+        session.lastActivity = new Date();
+        this.sessions.set(userId, session);
+      }
+      // Note: Session check is optional - JWT tokens from authController don't use sessions
 
       return decoded;
     } catch (error) {
+      console.error('Token verification error:', error.message);
       throw new Error('Invalid token');
     }
   }
@@ -363,24 +378,45 @@ class AuthenticationService {
     };
   }
 
-  authenticationMiddleware() {
-    return async (req, res, next) => {
-      try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-          return res.status(401).json({ error: 'No token provided' });
-        }
+authenticationMiddleware() {
+  return async (req, res, next) => {
+    try {
+      const authHeader = req.headers.authorization;
 
-        const token = authHeader.substring(7);
-        const decoded = await this.verifyToken(token);
-        
-        req.user = decoded;
-        next();
-      } catch (error) {
-        return res.status(401).json({ error: 'Invalid token' });
+      // Step 1: Validate header
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "No token provided" });
       }
-    };
-  }
+
+      console.log("🔐 AUTH HEADER:", authHeader);
+
+      // Step 2: Extract token safely
+      const token = authHeader.replace("Bearer ", "").trim();
+      console.log("✅ Extracted Token:", token);
+
+      // Step 3: Verify token
+      const decoded = await this.verifyToken(token);
+      console.log("👤 Decoded Payload:", decoded);
+
+      // Step 4: Attach user info to request
+      // Normalize user ID field (handle both "id" and "sub")
+      req.user = {
+        ...decoded,
+        id: decoded.id || decoded.sub,
+        sub: decoded.sub || decoded.id
+      };
+
+      console.log("✅ User authenticated:", req.user.username || req.user.id);
+
+      // Step 5: Proceed to next middleware
+      next();
+    } catch (error) {
+      console.error("❌ Token verification failed:", error.message);
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+  };
+}
+
 
   requireMFA() {
     return (req, res, next) => {

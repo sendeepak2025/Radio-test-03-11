@@ -47,8 +47,9 @@ const PRIORITIES = [
   'STAT', 'URGENT', 'HIGH', 'ROUTINE', 'LOW'
 ]
 
+// ✅ WORKLIST EMPTY FIX: Add "All" option alongside Pending/In-Progress/Completed
 const STATUSES = [
-  'SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'REPORTED'
+  'ALL', 'PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'
 ]
 
 const AI_STATUSES = [
@@ -84,13 +85,29 @@ export const WorklistFilters: React.FC<WorklistFiltersProps> = ({
     })
   }, [filters.dateRange, handleFilterChange])
 
+  // ✅ WORKLIST EMPTY FIX: Don't pass empty search strings to API
   const handleSearchSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
-    onSearch(localSearchTerm)
+    // Don't pass empty search strings to avoid server filtering by q=""
+    if (localSearchTerm.trim()) {
+      onSearch(localSearchTerm)
+    } else {
+      onSearch('')
+    }
   }, [localSearchTerm, onSearch])
 
+  // ✅ WORKLIST EMPTY FIX: Reset Filters - set status='ALL', from=now-90d
   const clearFilters = useCallback(() => {
-    onFiltersChange({})
+    const now = new Date()
+    const defaultStartDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+    
+    onFiltersChange({
+      statuses: ['ALL'],
+      dateRange: {
+        start: defaultStartDate.toISOString().split('T')[0],
+        end: now.toISOString().split('T')[0]
+      }
+    })
     setLocalSearchTerm('')
     onSearch('')
   }, [onFiltersChange, onSearch])

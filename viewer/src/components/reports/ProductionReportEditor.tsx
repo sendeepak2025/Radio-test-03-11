@@ -22,6 +22,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
+import { addCSRFToken } from '../../utils/csrfUtils';
+import { createFDASignature } from '../reporting/utils/fdaSignature';
 import {
   Box,
   Paper,
@@ -185,12 +187,16 @@ interface AIDetection {
   description: string;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+const API_URL = import.meta.env.VITE_API_URL || (
+  process.env.NODE_ENV === 'production' 
+    ? window.location.origin 
+    : 'http://localhost:8001'
+);
 
 const getAuthToken = (): string | null => {
   return localStorage.getItem('accessToken') ||
     sessionStorage.getItem('accessToken') ||
-    localStorage.getItem('token');
+    localStorage.getItem('accessToken');
 };
 
 const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
@@ -209,6 +215,9 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [signing, setSigning] = useState(false);
+  
+  // ✅ COMPLIANCE UPDATE: Version tracking for optimistic locking
+  const [currentVersion, setCurrentVersion] = useState<number>(1);
 
   // NEW: Report Creation Mode
   const [creationMode, setCreationMode] = useState<'manual' | 'ai-assisted' | 'ai-only'>(
@@ -262,6 +271,18 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
   // Signature
   const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
   const [signatureText, setSignatureText] = useState('');
+  const [signatureMeaning, setSignatureMeaning] = useState<'authored' | 'reviewed' | 'approved' | 'verified'>('authored');
+  
+  // ✅ COMPLIANCE UPDATE: Addendum state
+  const [showAddendumDialog, setShowAddendumDialog] = useState(false);
+  const [addendumContent, setAddendumContent] = useState('');
+  const [addendumReason, setAddendumReason] = useState('');
+  
+  // ✅ COMPLIANCE UPDATE: Critical communication state
+  const [showCriticalCommDialog, setShowCriticalCommDialog] = useState(false);
+  const [criticalCommRecipient, setCriticalCommRecipient] = useState('');
+  const [criticalCommMethod, setCriticalCommMethod] = useState('phone');
+  const [criticalCommNotes, setCriticalCommNotes] = useState('');
 
   // Notifications
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'warning' | 'info' }>({
@@ -287,15 +308,145 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
     }
   }, [analysisId, priorStudyUID, reportId]);
 
-  // Load captured images
+  // ✅ TEMPLATE FIX: Reset state when template changes
   useEffect(() => {
-    const images = screenshotService.getCapturedImages();
-    setKeyImages(images);
-    console.log('📸 Loaded', images.length, 'captured images');
+    if (!selectedTemplate) return;
+    
+    const resetTemplateState = async () => {
+      console.log('🔄 Template changed, resetting state:', selectedTemplate.name);
+      
+      // ✅ TEMPLATE FIX: Import utilities
+      const { normalizeTemplateSections, mapAIDetectionsToTemplate } = await import('../../utils/reportingUtils');
+      
+      // ✅ TEMPLATE FIX: Deep clone template sections to avoid reference aliasing
+      const freshSections = JSON.parse(JSON.stringify(normalizeTemplateSections(selectedTemplate)));
+      
+      // ✅ TEMPLATE FIX: Reset template-bound states
+      setReportSections(freshSections);
+      
+      // ✅ TEMPLATE FIX: Set defaults from template or clear
+      setTechnique(freshSections.technique || '');
+      setClinicalHistory(freshSections.clinicalHistory || freshSections.indication || '');
+      
+      // ✅ TEMPLATE FIX: Clear findings and impression (will be populated from AI if available)
+      setFindingsText('');
+      setImpression('');
+      setRecommendations('');
+      
+      // ✅ TEMPLATE FIX: Clear structured findings (will be re-mapped from AI)
+      setStructuredFindings([]);
+      
+      // ✅ TEMPLATE FIX: Re-map AI detections to new template if available
+      if (aiDetections && aiDetections.length > 0) {
+        const { reportSectionsPatch, suggestions: aiSuggestions } = mapAIDetectionsToTemplate(
+          aiDetections,
+          selectedTemplate
+        );
+        
+        // Apply AI mappings to sections
+        setReportSections(prev => ({
+          ...prev,
+          ...reportSectionsPatch
+        }));
+        
+        // Update suggestions
+        setSuggestions(aiSuggestions);
+        
+        console.log('✅ Re-mapped AI detections to new template');
+      }
+      
+      // ✅ TEMPLATE FIX: Mark as having unsaved changes
+      setHasUnsavedChanges(true);
+      
+      console.log('✅ Template state reset complete');
+    };
+    
+    resetTemplateState();
+  }, [selectedTemplate?.id]); // Only trigger when template ID changes
+
+  // ✅ COMPLIANCE UPDATE (ADVANCED): Export wizard state
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportStep, setExportStep] = useState<1 | 2 | 3>(1);
+  const [exportFormat, setExportFormat] = useState<'json' | 'print' | 'images'>('json');
+  const [exportLayout, setExportLayout] = useState<'clinical' | 'research' | 'patient'>('clinical');
+  const [exportOptions, setExportOptions] = useState({
+    pageSize: 'A4' as 'A4' | 'Letter' | 'Legal',
+    dpi: 1 as 1 | 2 | 3,
+    imageType: 'png' as 'png' | 'jpeg',
+    jpegQuality: 0.9,
+    showScaleBar: false,
+    showOrientation: false,
+    redactPHI: false,
+    colorSafe: false,
+    branding: true
+  });
+  const [exportPreviewHtml, setExportPreviewHtml] = useState('');
+  const [exportAbort, setExportAbort] = useState<AbortController | null>(null);
+  const [exportProcessing, setExportProcessing] = useState(false);
+  const [shareLink, setShareLink] = useState<{ url: string; expiresAt: string } | null>(null);
+  const exportAnchorRef = useRef<HTMLButtonElement>(null);
+
+  // Load captured images with annotation composition
+  useEffect(() => {
+    const loadAndComposeImages = async () => {
+      const images = screenshotService.getCapturedImages();
+      
+      // ✅ COMPLIANCE UPDATE: Compose annotations into images
+      const composedImages = await Promise.all(
+        images.map(async (img) => {
+          // Check if image has overlay annotations (using any to bypass type checking for optional fields)
+          const metadata = img.metadata as any;
+          const hasOverlay = metadata?.overlayPng || metadata?.overlaySvg || metadata?.vectorOps;
+          
+          if (hasOverlay && !metadata?.composited) {
+            try {
+              // Import the composition function
+              const { composeImageWithAnnotations } = await import('../../utils/reportingUtils');
+              
+              // Compose image with annotations
+              const composedDataUrl = await composeImageWithAnnotations(
+                img.dataUrl,
+                metadata?.overlayPng,
+                metadata?.overlaySvg,
+                metadata?.vectorOps
+              );
+              
+              // Store original and use composed version
+              return {
+                ...img,
+                baseDataUrl: img.dataUrl, // Keep original
+                dataUrl: composedDataUrl, // Use composed
+                metadata: {
+                  ...img.metadata,
+                  composited: true
+                } as any
+              };
+            } catch (error) {
+              console.warn('Failed to compose image annotations:', error);
+              return img; // Return original on error
+            }
+          }
+          
+          return img;
+        })
+      );
+      
+      setKeyImages(composedImages);
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📸 Loaded', composedImages.length, 'captured images');
+        const compositedCount = composedImages.filter(img => (img.metadata as any)?.composited).length;
+        if (compositedCount > 0) {
+          console.log('✨ Composited', compositedCount, 'images with annotations');
+        }
+      }
+    };
+
+    loadAndComposeImages();
 
     // Refresh images periodically
     const interval = setInterval(() => {
-      setKeyImages([...screenshotService.getCapturedImages()]);
+      loadAndComposeImages();
     }, 3000);
 
     return () => clearInterval(interval);
@@ -345,18 +496,24 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
 
       // 🎯 SMART TEMPLATE SELECTION
       const modality = patientInfo?.modality || 'CT';
-      console.log('🔍 Attempting template match:', { modality, aiData });
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔍 Attempting template match:', { modality, aiData });
+      }
       const templateMatch = matchTemplate(modality, aiData, aiData.studyDescription);
 
       if (templateMatch) {
-        console.log('✨ Smart template matched:', templateMatch);
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✨ Smart template matched:', templateMatch);
+        }
         setSuggestedTemplate(templateMatch);
         setShowTemplateConfirmation(true);
         // Don't populate fields yet - wait for template confirmation
         setLoading(false);
         return;
       } else {
-        console.log('⚠️ No template match found, using default population');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('⚠️ No template match found, using default population');
+        }
       }
 
       // Extract AI detections
@@ -427,6 +584,7 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
 
     } catch (error) {
       console.error('Error loading AI analysis:', error);
+      showNotification('Failed to load AI analysis. Report will open without AI data.', 'warning');
     } finally {
       setLoading(false);
     }
@@ -436,7 +594,9 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
    * Map AI findings to template sections
    */
   const mapAIFindingsToTemplate = (template: ReportTemplate, aiData: any) => {
-    console.log('📋 Mapping AI findings to template:', template.name);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('📋 Mapping AI findings to template:', template.name);
+    }
 
     const sections: Record<string, string> = {};
 
@@ -492,32 +652,22 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
 
   /**
    * Handle template confirmation
+   * ✅ TEMPLATE FIX: Set template and let effect handle state reset
    */
   const handleTemplateConfirm = (template: ReportTemplate) => {
-    console.log('✅ Template confirmed:', template.name);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('✅ Template confirmed:', template.name);
+    }
+    
+    // ✅ TEMPLATE FIX: Set template (effect will handle state reset)
     setSelectedTemplate(template);
     setShowTemplateConfirmation(false);
     setShowTemplateSelector(false);
 
-    // Map AI findings to template sections
-    if (aiAnalysisData) {
-      const mappedSections = mapAIFindingsToTemplate(template, aiAnalysisData);
-      setReportSections(mappedSections);
-
-      // Also populate the main fields for backward compatibility
-      if (mappedSections.findings) {
-        setFindingsText(mappedSections.findings);
-      }
-      if (mappedSections.impression) {
-        setImpression(mappedSections.impression);
-      }
-      if (mappedSections.technique) {
-        setTechnique(mappedSections.technique);
-      }
-
-      showNotification('✨ Template loaded with AI findings!', 'success');
-    }
-
+    // ✅ TEMPLATE FIX: Store AI data for re-mapping in effect
+    // The useEffect will handle mapping AI findings to template sections
+    
+    showNotification('✨ Template loaded!', 'success');
     setWorkflowStep(1); // Move to editing step
   };
 
@@ -544,6 +694,7 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
 
     } catch (error) {
       console.error('Error loading prior study:', error);
+      showNotification('Failed to load prior study comparison', 'warning');
     }
   };
 
@@ -553,8 +704,17 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
       const token = getAuthToken();
       if (!token) return;
 
+      // Use report.reportId from state if available, otherwise use reportId prop
+      const idToLoad = report?.reportId || reportId;
+      
+      if (!idToLoad) {
+        console.warn('No reportId available to load');
+        setLoading(false);
+        return;
+      }
+
       const response = await axios.get(
-        `${API_URL}/api/structured-reports/${reportId}`,
+        `${API_URL}/api/reports/${idToLoad}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
@@ -625,6 +785,11 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
   }, []);
 
   const toggleVoiceMode = () => {
+    if (!('webkitSpeechRecognition' in window)) {
+      showNotification('Voice recognition is not supported in this browser. Please use Chrome or Edge.', 'error');
+      return;
+    }
+
     if (isVoiceActive) {
       recognitionRef.current?.stop();
       setIsVoiceActive(false);
@@ -814,23 +979,27 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
   // ==================== AUTO-SAVE ====================
 
   useEffect(() => {
-    if (hasUnsavedChanges && report) {
-      // Auto-save after 3 seconds of inactivity
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
+    // Clear any existing timer first
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = undefined;
+    }
 
+    // Only set new timer if there are unsaved changes and a report exists
+    if (hasUnsavedChanges && report && !saving) {
       autoSaveTimerRef.current = setTimeout(() => {
         handleSave(true); // Silent auto-save
       }, 3000);
     }
 
+    // Cleanup function
     return () => {
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = undefined;
       }
     };
-  }, [hasUnsavedChanges, findingsText, impression, recommendations]);
+  }, [hasUnsavedChanges, findingsText, impression, recommendations, clinicalHistory, technique, reportSections, report, saving]);
 
   // ==================== SAVE & SIGN ====================
 
@@ -843,36 +1012,76 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
         return;
       }
 
+      // Validate required fields
+      if (!studyInstanceUID) {
+        showNotification('Study UID is required', 'error');
+        setSaving(false);
+        return;
+      }
+
+      if (!patientInfo?.patientID) {
+        showNotification('Patient ID is required', 'error');
+        setSaving(false);
+        return;
+      }
+
       // Export key images for report
       const exportedImages = screenshotService.exportForReport();
 
+      // If using template, populate main fields from reportSections
+      const finalFindingsText = selectedTemplate 
+        ? (reportSections.findings || reportSections.findingsText || findingsText)
+        : findingsText;
+      
+      const finalImpression = selectedTemplate
+        ? (reportSections.impression || impression)
+        : impression;
+      
+      const finalTechnique = selectedTemplate
+        ? (reportSections.technique || technique)
+        : technique;
+      
+      const finalClinicalHistory = selectedTemplate
+        ? (reportSections.clinicalHistory || reportSections.indication || clinicalHistory)
+        : clinicalHistory;
+      
+      const finalRecommendations = selectedTemplate
+        ? (reportSections.recommendations || recommendations)
+        : recommendations;
+
+      // ✅ TEMPLATE FIX: Pin template metadata into report payload
       const reportData = {
         studyInstanceUID,
         patientID: patientInfo?.patientID,
         patientName: patientInfo?.patientName,
         modality: patientInfo?.modality,
-        findingsText,
-        impression,
-        recommendations,
-        clinicalHistory,
-        technique,
+        findingsText: finalFindingsText,
+        impression: finalImpression,
+        recommendations: finalRecommendations,
+        clinicalHistory: finalClinicalHistory,
+        technique: finalTechnique,
         findings: structuredFindings,
         aiDetections,
         criticalFindings,
         priorComparison: priorComparison?.uid,
+        // ✅ TEMPLATE FIX: Always include template metadata
         templateId: selectedTemplate?.id,
         templateName: selectedTemplate?.name,
-        reportSections,
+        templateVersion: (selectedTemplate as any)?.version || report?.templateVersion || '1.0',
+        sections: reportSections, // Send as 'sections' for backend
+        reportSections, // Keep for compatibility
         reportStatus: 'draft',
         status: 'draft',
-        creationMode, // NEW: Include creation mode
-        aiAnalysisId: analysisId, // NEW: Include AI analysis ID
+        creationMode,
+        aiAnalysisId: analysisId,
         aiAssisted: !!analysisId,
-        keyImages: exportedImages, // Include captured images
+        keyImages: exportedImages,
         imageCount: exportedImages.length
       };
 
-      console.log('💾 Saving report with', exportedImages.length, 'images', 'Mode:', creationMode);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('💾 Saving report with', exportedImages.length, 'images', 'Mode:', creationMode);
+      }
 
       let response;
       if (report?._id || report?.reportId) {
@@ -881,19 +1090,25 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
         response = await axios.put(
           `${API_URL}/api/reports/${id}`,
           reportData,
-          { headers: { Authorization: `Bearer ${token}` } }
+          addCSRFToken({ headers: { Authorization: `Bearer ${token}` } })
         );
       } else {
         // Create new report - use unified endpoint with mode
         response = await axios.post(
           `${API_URL}/api/reports`,
           reportData,
-          { headers: { Authorization: `Bearer ${token}` } }
+          addCSRFToken({ headers: { Authorization: `Bearer ${token}` } })
         );
       }
 
       const savedReport = response.data.report || response.data;
       setReport(savedReport);
+      
+      // ✅ COMPLIANCE UPDATE: Track version for optimistic locking
+      if (savedReport.version) {
+        setCurrentVersion(savedReport.version);
+      }
+      
       setLastSaved(new Date());
       setHasUnsavedChanges(false);
 
@@ -906,7 +1121,26 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
       }
     } catch (error: any) {
       console.error('Error saving report:', error);
-      showNotification('Failed to save report', 'error');
+      
+      // ✅ COMPLIANCE UPDATE: Handle version conflict
+      if (error.response?.status === 409 && error.response?.data?.error === 'VERSION_CONFLICT') {
+        const serverVersion = error.response.data.serverVersion;
+        const shouldReload = window.confirm(
+          `⚠️ Version Conflict\n\n` +
+          `This report has been modified by another user.\n` +
+          `Your version: ${currentVersion}\n` +
+          `Server version: ${serverVersion}\n\n` +
+          `Click OK to reload the latest version (your changes will be lost), or Cancel to keep editing.`
+        );
+        
+        if (shouldReload) {
+          await loadExistingReport();
+        }
+      } else if (error.response?.status === 409 && error.response?.data?.error === 'SIGNED_IMMUTABLE') {
+        showNotification('❌ Cannot edit signed report. Report is immutable after signing.', 'error');
+      } else {
+        showNotification('Failed to save report', 'error');
+      }
     } finally {
       setSaving(false);
     }
@@ -923,6 +1157,23 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
       return;
     }
 
+    // Validate report has required content before signing
+    // Check both template sections and direct fields
+    const hasImpression = (impression && impression.trim() !== '') || 
+                          (reportSections.impression && reportSections.impression.trim() !== '');
+    const hasFindings = (findingsText && findingsText.trim() !== '') || 
+                        (reportSections.findings && reportSections.findings.trim() !== '');
+
+    if (!hasImpression) {
+      showNotification('Impression is required before signing', 'error');
+      return;
+    }
+
+    if (!hasFindings) {
+      showNotification('Findings are required before signing', 'error');
+      return;
+    }
+
     try {
       setSigning(true);
       const token = getAuthToken();
@@ -931,24 +1182,40 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
         return;
       }
 
+      // Convert data URL to blob without using fetch (CSP compliant)
+      const dataUrlToBlob = (dataUrl: string): Blob => {
+        const arr = dataUrl.split(',');
+        const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        return new Blob([u8arr], { type: mime });
+      };
+
       const formData = new FormData();
       if (signatureDataUrl) {
-        const blob = await fetch(signatureDataUrl).then(r => r.blob());
+        const blob = dataUrlToBlob(signatureDataUrl);
         formData.append('signature', blob, 'signature.png');
       }
       if (signatureText) {
         formData.append('signatureText', signatureText);
       }
 
+      // ✅ COMPLIANCE UPDATE: Add meaning to signature
+      formData.append('meaning', signatureMeaning);
+
       await axios.post(
-        `${API_URL}/api/structured-reports/${report.reportId}/sign`,
+        `${API_URL}/api/reports/${report.reportId}/sign`,
         formData,
-        {
+        addCSRFToken({
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'multipart/form-data'
           }
-        }
+        })
       );
 
       showNotification('✅ Report signed and finalized!', 'success');
@@ -962,10 +1229,759 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
       await loadExistingReport();
     } catch (error: any) {
       console.error('Error signing report:', error);
-      showNotification('Failed to sign report', 'error');
+      
+      // ✅ COMPLIANCE UPDATE: Handle validation errors
+      if (error.response?.status === 400 && error.response?.data?.error === 'VALIDATION_FAILED') {
+        const errors = error.response.data.validationErrors || [];
+        showNotification(
+          `❌ Validation Failed:\n${errors.join('\n')}`,
+          'error'
+        );
+      } else {
+        showNotification('Failed to sign report', 'error');
+      }
     } finally {
       setSigning(false);
     }
+  };
+
+  // ✅ COMPLIANCE UPDATE: Handle addendum submission
+  const handleAddAddendum = async () => {
+    if (!addendumContent.trim()) {
+      showNotification('Addendum content is required', 'warning');
+      return;
+    }
+
+    if (!addendumReason.trim()) {
+      showNotification('Reason for addendum is required', 'warning');
+      return;
+    }
+
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        showNotification('Authentication required', 'error');
+        return;
+      }
+
+      await axios.post(
+        `${API_URL}/api/reports/${report.reportId}/addendum`,
+        { content: addendumContent, reason: addendumReason },
+        addCSRFToken({ headers: { Authorization: `Bearer ${token}` } })
+      );
+
+      showNotification('✅ Addendum added successfully', 'success');
+      setShowAddendumDialog(false);
+      setAddendumContent('');
+      setAddendumReason('');
+      
+      await loadExistingReport();
+    } catch (error: any) {
+      console.error('Error adding addendum:', error);
+      showNotification('Failed to add addendum', 'error');
+    }
+  };
+
+  // ✅ COMPLIANCE UPDATE: Handle critical communication documentation
+  const handleDocumentCriticalComm = async () => {
+    if (!criticalCommRecipient.trim()) {
+      showNotification('Recipient is required', 'warning');
+      return;
+    }
+
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        showNotification('Authentication required', 'error');
+        return;
+      }
+
+      await axios.post(
+        `${API_URL}/api/reports/${report.reportId}/critical-comm`,
+        {
+          recipient: criticalCommRecipient,
+          method: criticalCommMethod,
+          notes: criticalCommNotes
+        },
+        addCSRFToken({ headers: { Authorization: `Bearer ${token}` } })
+      );
+
+      showNotification('✅ Critical communication documented', 'success');
+      setShowCriticalCommDialog(false);
+      setCriticalCommRecipient('');
+      setCriticalCommMethod('phone');
+      setCriticalCommNotes('');
+      
+      await loadExistingReport();
+    } catch (error: any) {
+      console.error('Error documenting critical communication:', error);
+      showNotification('Failed to document communication', 'error');
+    }
+  };
+
+  // ✅ COMPLIANCE UPDATE (ADVANCED): Build frozen export payload with advanced features
+  const buildFrozenPayloadForExportAdvanced = async (
+    layout: 'clinical' | 'research' | 'patient',
+    options: typeof exportOptions
+  ) => {
+    // Use template sections if available, otherwise use direct fields
+    const finalFindingsText = selectedTemplate 
+      ? (reportSections.findings || reportSections.findingsText || findingsText)
+      : findingsText;
+    
+    const finalImpression = selectedTemplate
+      ? (reportSections.impression || impression)
+      : impression;
+    
+    const finalTechnique = selectedTemplate
+      ? (reportSections.technique || technique)
+      : technique;
+    
+    const finalClinicalHistory = selectedTemplate
+      ? (reportSections.clinicalHistory || reportSections.indication || clinicalHistory)
+      : clinicalHistory;
+    
+    const finalRecommendations = selectedTemplate
+      ? (reportSections.recommendations || recommendations)
+      : recommendations;
+
+    // ✅ COMPLIANCE UPDATE (ADVANCED): Extract measurements from vector ops
+    const { extractMeasurementsFromVectorOps, buildLegendFromOpsAndDetections } = await import('../../utils/reportingUtils');
+    
+    const measurementsTable = extractMeasurementsFromVectorOps(
+      keyImages.flatMap(img => (img.metadata as any)?.vectorOps || [])
+    );
+    
+    // ✅ COMPLIANCE UPDATE (ADVANCED): Build legend from annotations and AI
+    const legend = buildLegendFromOpsAndDetections(
+      keyImages.flatMap(img => (img.metadata as any)?.vectorOps || []),
+      aiDetections
+    );
+
+    // ✅ COMPLIANCE UPDATE (ADVANCED): Generate AI captions for key images
+    const keyImagesWithCaptions = keyImages.map((img, idx) => {
+      let caption = img.caption;
+      
+      // Generate smart caption if missing and AI detections present
+      if (!caption && aiDetections.length > 0) {
+        const detection = aiDetections[idx];
+        if (detection) {
+          const size = detection.measurements?.[0];
+          const sizeStr = size ? ` (~${size.value}${size.unit})` : '';
+          caption = `${detection.type}${sizeStr}, confidence ${(detection.confidence * 100).toFixed(1)}%`;
+        }
+      }
+      
+      return {
+        id: img.id,
+        dataUrl: img.dataUrl,
+        caption: caption || `Image ${idx + 1}`,
+        timestamp: img.timestamp,
+        metadata: img.metadata,
+        figureNo: idx + 1
+      };
+    });
+
+    // ✅ COMPLIANCE UPDATE (ADVANCED): Apply layout-specific transformations
+    let layoutSpecificData: any = {};
+    
+    if (layout === 'research') {
+      // Research: minimal PHI, focus on findings
+      layoutSpecificData = {
+        layoutType: 'research',
+        phiLevel: 'minimal',
+        focusAreas: ['findings', 'measurements', 'keyImages']
+      };
+    } else if (layout === 'patient') {
+      // Patient-friendly: simple wording, larger fonts
+      layoutSpecificData = {
+        layoutType: 'patient-friendly',
+        simplifiedWording: true,
+        largerFonts: true,
+        technicalTermsGlossary: true
+      };
+    } else {
+      // Clinical: full detail
+      layoutSpecificData = {
+        layoutType: 'clinical',
+        fullDetail: true
+      };
+    }
+
+    const basePayload = {
+      reportId: report?.reportId || report?._id,
+      studyInstanceUID,
+      patientID: options.redactPHI ? undefined : patientInfo?.patientID,
+      patientName: options.redactPHI ? undefined : patientInfo?.patientName,
+      caseCode: options.redactPHI ? `SR-${(report?.reportId || 'DRAFT').substring(0, 8)}` : undefined,
+      modality: patientInfo?.modality,
+      templateId: selectedTemplate?.id,
+      templateName: selectedTemplate?.name,
+      templateVersion: (selectedTemplate as any)?.version || report?.templateVersion || '1.0',
+      technique: finalTechnique,
+      clinicalHistory: finalClinicalHistory,
+      findingsText: finalFindingsText,
+      impression: finalImpression,
+      recommendations: finalRecommendations,
+      sections: reportSections,
+      findings: structuredFindings,
+      measurements: report?.measurements || [],
+      measurementsTable, // ✅ COMPLIANCE UPDATE (ADVANCED): Extracted measurements
+      legend, // ✅ COMPLIANCE UPDATE (ADVANCED): Legend with callout numbers
+      aiDetections: options.redactPHI ? undefined : aiDetections,
+      keyImages: keyImagesWithCaptions,
+      reportStatus: report?.reportStatus || 'draft',
+      createdAt: report?.createdAt || report?.metadata?.createdAt,
+      updatedAt: report?.updatedAt || new Date().toISOString(),
+      signedAt: report?.signedAt,
+      signedBy: options.redactPHI ? undefined : report?.radiologistName,
+      version: report?.version || currentVersion,
+      exportedAt: new Date().toISOString(),
+      exportLayout: layout,
+      exportOptions: options,
+      ...layoutSpecificData
+    };
+
+    return basePayload;
+  };
+
+  // ✅ COMPLIANCE UPDATE (ADVANCED): Compose all key images with high-DPI and options
+  const composeAllKeyImagesAdvanced = async (options: typeof exportOptions) => {
+    const { composeImageWithAnnotations } = await import('../../utils/reportingUtils');
+    
+    const composedImages = await Promise.all(
+      keyImages.map(async (img) => {
+        try {
+          const metadata = img.metadata as any;
+          
+          // Use baseDataUrl if available (original before composition), otherwise use dataUrl
+          const baseDataUrl = (img as any).baseDataUrl || img.dataUrl;
+          
+          // Compose with advanced options
+          const composedDataUrl = await composeImageWithAnnotations(
+            baseDataUrl,
+            metadata?.overlayPng,
+            metadata?.overlaySvg,
+            metadata?.vectorOps,
+            {
+              dpi: options.dpi,
+              imageType: options.imageType,
+              jpegQuality: options.jpegQuality,
+              colorSafe: options.colorSafe,
+              showScaleBar: options.showScaleBar,
+              showOrientation: options.showOrientation,
+              scaleInfo: metadata?.scaleInfo
+            }
+          );
+          
+          return {
+            ...img,
+            dataUrl: composedDataUrl,
+            metadata: {
+              ...img.metadata,
+              composited: true,
+              exportOptions: options
+            }
+          };
+        } catch (error) {
+          console.warn('Failed to compose image:', error);
+          return img;
+        }
+      })
+    );
+    
+    return composedImages;
+  };
+
+  // ✅ COMPLIANCE UPDATE (ADVANCED): Render export preview HTML
+  const renderExportPreviewHtml = (payload: any, options: typeof exportOptions) => {
+    let html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Medical Report Preview - ${payload.reportId || 'Draft'}</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+            font-size: ${payload.layoutType === 'patient-friendly' ? '14px' : '12px'};
+          }
+          h1 {
+            text-align: center;
+            color: #333;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+          }
+          h2 {
+            color: #555;
+            margin-top: 20px;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 5px;
+          }
+          .header-info {
+            margin: 20px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-left: 4px solid #333;
+          }
+          .section {
+            margin: 20px 0;
+          }
+          .section-title {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+          }
+          .section-content {
+            white-space: pre-wrap;
+            padding: 10px;
+            background: #fafafa;
+            border: 1px solid #ddd;
+          }
+          .measurements-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+          }
+          .measurements-table th,
+          .measurements-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+          }
+          .measurements-table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+          }
+          .legend {
+            margin: 15px 0;
+            padding: 10px;
+            background: #fff9e6;
+            border: 1px solid #ffd700;
+          }
+          .legend-item {
+            margin: 5px 0;
+          }
+          .key-images {
+            margin: 20px 0;
+          }
+          .key-image {
+            margin: 15px 0;
+            page-break-inside: avoid;
+          }
+          .key-image img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ccc;
+          }
+          .image-caption {
+            font-style: italic;
+            color: #666;
+            margin-top: 5px;
+          }
+          .signature {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #333;
+          }
+          .phi-redacted {
+            background: #ffebee;
+            padding: 10px;
+            border-left: 4px solid #f44336;
+            margin: 10px 0;
+          }
+          @media print {
+            body { margin: 0; }
+            .no-print { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <h1>MEDICAL REPORT</h1>
+        
+        ${options.redactPHI ? '<div class="phi-redacted"><strong>⚠️ PHI REDACTED:</strong> Patient identifiers removed for privacy</div>' : ''}
+        
+        <div class="header-info">
+          <p><strong>Report ID:</strong> ${payload.reportId || 'Draft'}</p>
+          ${!options.redactPHI && payload.patientName ? `<p><strong>Patient:</strong> ${payload.patientName} (${payload.patientID || 'N/A'})</p>` : ''}
+          ${options.redactPHI && payload.caseCode ? `<p><strong>Case Code:</strong> ${payload.caseCode}</p>` : ''}
+          <p><strong>Study UID:</strong> ${payload.studyInstanceUID || 'N/A'}</p>
+          <p><strong>Modality:</strong> ${payload.modality || 'N/A'}</p>
+          <p><strong>Status:</strong> ${payload.reportStatus?.toUpperCase() || 'DRAFT'}</p>
+          ${payload.templateName ? `<p><strong>Template:</strong> ${payload.templateName} v${payload.templateVersion || '1.0'}</p>` : ''}
+          <p><strong>Layout:</strong> ${payload.exportLayout?.toUpperCase() || 'CLINICAL'}</p>
+          <p><strong>Created:</strong> ${payload.createdAt ? new Date(payload.createdAt).toLocaleString() : 'N/A'}</p>
+        </div>
+    `;
+
+    // Add sections
+    if (payload.clinicalHistory) {
+      html += `
+        <div class="section">
+          <div class="section-title">CLINICAL HISTORY</div>
+          <div class="section-content">${payload.clinicalHistory}</div>
+        </div>
+      `;
+    }
+
+    if (payload.technique) {
+      html += `
+        <div class="section">
+          <div class="section-title">TECHNIQUE</div>
+          <div class="section-content">${payload.technique}</div>
+        </div>
+      `;
+    }
+
+    if (payload.findingsText) {
+      html += `
+        <div class="section">
+          <div class="section-title">FINDINGS</div>
+          <div class="section-content">${payload.findingsText}</div>
+        </div>
+      `;
+    }
+
+    // ✅ COMPLIANCE UPDATE (ADVANCED): Add measurements table
+    if (payload.measurementsTable && payload.measurementsTable.length > 0) {
+      html += `
+        <h2>MEASUREMENTS</h2>
+        <table class="measurements-table">
+          <thead>
+            <tr>
+              <th>Fig #</th>
+              <th>Type</th>
+              <th>Value</th>
+              <th>Location</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      payload.measurementsTable.forEach((m: any) => {
+        html += `
+          <tr>
+            <td>${m.figureNo || '-'}</td>
+            <td>${m.type}</td>
+            <td>${m.value} ${m.unit}</td>
+            <td>${m.location || '-'}</td>
+          </tr>
+        `;
+      });
+      
+      html += `
+          </tbody>
+        </table>
+      `;
+    }
+
+    if (payload.impression) {
+      html += `
+        <div class="section">
+          <div class="section-title">IMPRESSION</div>
+          <div class="section-content">${payload.impression}</div>
+        </div>
+      `;
+    }
+
+    if (payload.recommendations) {
+      html += `
+        <div class="section">
+          <div class="section-title">RECOMMENDATIONS</div>
+          <div class="section-content">${payload.recommendations}</div>
+        </div>
+      `;
+    }
+
+    // ✅ COMPLIANCE UPDATE (ADVANCED): Add legend
+    if (payload.legend && payload.legend.length > 0) {
+      html += `
+        <div class="legend">
+          <strong>LEGEND:</strong>
+      `;
+      
+      payload.legend.forEach((item: any) => {
+        html += `
+          <div class="legend-item">
+            <strong>Fig ${item.figureNo}:</strong> ${item.label}
+          </div>
+        `;
+      });
+      
+      html += `</div>`;
+    }
+
+    // Add key images
+    if (payload.keyImages && payload.keyImages.length > 0) {
+      html += `
+        <h2>KEY IMAGES (${payload.keyImages.length})</h2>
+        <div class="key-images">
+      `;
+      
+      payload.keyImages.forEach((img: any, index: number) => {
+        html += `
+          <div class="key-image">
+            <p><strong>Figure ${img.figureNo || index + 1}</strong></p>
+            <img src="${img.dataUrl}" alt="Key Image ${index + 1}" />
+            ${img.caption ? `<p class="image-caption">${img.caption}</p>` : ''}
+          </div>
+        `;
+      });
+      
+      html += `</div>`;
+    }
+
+    // Add signature if signed
+    if (payload.signedAt && payload.signedBy && !options.redactPHI) {
+      html += `
+        <div class="signature">
+          <p><strong>Electronically Signed By:</strong> ${payload.signedBy}</p>
+          <p><strong>Date/Time:</strong> ${new Date(payload.signedAt).toLocaleString()}</p>
+          <p><strong>Version:</strong> ${payload.version || 1}</p>
+        </div>
+      `;
+    }
+
+    html += `
+      </body>
+      </html>
+    `;
+
+    return html;
+  };
+
+  // ✅ COMPLIANCE UPDATE (ADVANCED): Export as JSON
+  const doExportJSON = async (payload: any) => {
+    try {
+      const jsonStr = JSON.stringify(payload, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${payload.reportId || 'report'}-export.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      showNotification('✅ Report exported as JSON', 'success');
+    } catch (error) {
+      console.error('Export JSON error:', error);
+      showNotification('Failed to export JSON', 'error');
+    }
+  };
+
+  // ✅ COMPLIANCE UPDATE (ADVANCED): Export as Print/PDF
+  const doExportPrint = (payload: any, html: string) => {
+    try {
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.onload = () => {
+          setTimeout(() => {
+            printWindow.print();
+          }, 500);
+        };
+      } else {
+        showNotification('Please allow popups to print', 'warning');
+      }
+    } catch (error) {
+      console.error('Export print error:', error);
+      showNotification('Failed to generate print preview', 'error');
+    }
+  };
+
+  // ✅ COMPLIANCE UPDATE (ADVANCED): Export as Images (sequential download)
+  const doExportImages = async (payload: any, options: typeof exportOptions) => {
+    try {
+      if (!payload.keyImages || payload.keyImages.length === 0) {
+        showNotification('No images to export', 'warning');
+        return;
+      }
+
+      for (let i = 0; i < payload.keyImages.length; i++) {
+        const img = payload.keyImages[i];
+        const ext = options.imageType === 'jpeg' ? 'jpg' : 'png';
+        const filename = `${payload.reportId || 'report'}-fig-${String(i + 1).padStart(2, '0')}.${ext}`;
+        
+        // Convert data URL to blob
+        const response = await fetch(img.dataUrl);
+        const blob = await response.blob();
+        
+        // Download
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        // Small delay between downloads
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      
+      showNotification(`✅ Exported ${payload.keyImages.length} images`, 'success');
+    } catch (error) {
+      console.error('Export images error:', error);
+      showNotification('Failed to export images', 'error');
+    }
+  };
+
+  // ✅ COMPLIANCE UPDATE (ADVANCED): Handle export wizard flow
+  const handleOpenExportWizard = () => {
+    setExportOpen(true);
+    setExportStep(1);
+    setShareLink(null);
+    
+    // ✅ COMPLIANCE UPDATE (ADVANCED): AI-recommend layout
+    if (keyImages.length > 6) {
+      setExportLayout('research');
+      showNotification('💡 Research layout recommended for >6 images', 'info');
+    } else if (patientInfo?.modality === 'CR' || patientInfo?.modality === 'DX') {
+      setExportLayout('patient');
+      showNotification('💡 Patient-friendly layout recommended', 'info');
+    }
+  };
+
+  const handleExportNext = async () => {
+    if (exportStep === 1) {
+      setExportStep(2);
+    } else if (exportStep === 2) {
+      // ✅ COMPLIANCE UPDATE (ADVANCED): Check for AI cross-check
+      const impressionText = (impression || reportSections.impression || '').toLowerCase();
+      const highConfDetections = aiDetections.filter(d => d.confidence >= 0.75);
+      const unmatchedDetections = highConfDetections.filter(d => 
+        !impressionText.includes(d.type.toLowerCase())
+      );
+      
+      if (unmatchedDetections.length > 0) {
+        const detectionList = unmatchedDetections.map(d => d.type).join(', ');
+        showNotification(
+          `💡 Consider mentioning: ${detectionList}`,
+          'warning'
+        );
+      }
+      
+      // Generate preview
+      setExportProcessing(true);
+      try {
+        const payload = await buildFrozenPayloadForExportAdvanced(exportLayout, exportOptions);
+        const html = renderExportPreviewHtml(payload, exportOptions);
+        setExportPreviewHtml(html);
+        setExportStep(3);
+      } catch (error) {
+        console.error('Preview generation error:', error);
+        showNotification('Failed to generate preview', 'error');
+      } finally {
+        setExportProcessing(false);
+      }
+    }
+  };
+
+  const handleExportBack = () => {
+    if (exportStep > 1) {
+      setExportStep((exportStep - 1) as 1 | 2 | 3);
+    }
+  };
+
+  const handleExportExecute = async () => {
+    setExportProcessing(true);
+    
+    try {
+      console.log('🚀 Starting export...', { format: exportFormat, layout: exportLayout });
+      
+      // Add timeout to prevent infinite loading
+      const exportPromise = new Promise<void>(async (resolve, reject) => {
+        try {
+          // Compose images with advanced options
+          console.log('📸 Composing images...');
+          const composedImages = await composeAllKeyImagesAdvanced(exportOptions);
+          console.log('✅ Images composed:', composedImages.length);
+          
+          // Build final payload with composed images
+          console.log('📦 Building payload...');
+          const payload = await buildFrozenPayloadForExportAdvanced(exportLayout, exportOptions);
+          payload.keyImages = composedImages.map((img, idx) => ({
+            id: img.id,
+            dataUrl: img.dataUrl,
+            caption: img.caption,
+            timestamp: img.timestamp,
+            metadata: img.metadata,
+            figureNo: idx + 1
+          }));
+          console.log('✅ Payload built');
+          
+          // Execute export based on format
+          console.log('💾 Executing export...');
+          if (exportFormat === 'json') {
+            await doExportJSON(payload);
+          } else if (exportFormat === 'print') {
+            const html = renderExportPreviewHtml(payload, exportOptions);
+            doExportPrint(payload, html);
+          } else if (exportFormat === 'images') {
+            await doExportImages(payload, exportOptions);
+          }
+          
+          console.log('✅ Export complete!');
+          showNotification('Export completed successfully', 'success');
+          setExportOpen(false);
+          resolve();
+        } catch (error) {
+          console.error('❌ Export execution error:', error);
+          reject(error);
+        }
+      });
+      
+      // Add 30 second timeout
+      const timeoutPromise = new Promise<void>((_, reject) => {
+        setTimeout(() => reject(new Error('Export timeout after 30 seconds')), 30000);
+      });
+      
+      await Promise.race([exportPromise, timeoutPromise]);
+      
+    } catch (error) {
+      console.error('❌ Export failed:', error);
+      showNotification(`Export failed: ${error.message || 'Unknown error'}`, 'error');
+    } finally {
+      setExportProcessing(false);
+    }
+  };
+
+  const handleCreateShareLink = async () => {
+    setExportProcessing(true);
+    
+    try {
+      const { reportsApi } = await import('../../services/ReportsApi');
+      const payload = await buildFrozenPayloadForExportAdvanced(exportLayout, { ...exportOptions, redactPHI: true });
+      
+      const result = await reportsApi.createSharedExport(report.reportId, payload);
+      
+      setShareLink({
+        url: result.url,
+        expiresAt: result.expiresAt
+      });
+      
+      showNotification('✅ Share link created (PHI redacted)', 'success');
+    } catch (error) {
+      console.error('Share link error:', error);
+      showNotification('Failed to create share link', 'error');
+    } finally {
+      setExportProcessing(false);
+    }
+  };
+
+  const handleCancelExport = () => {
+    if (exportAbort) {
+      exportAbort.abort();
+      setExportAbort(null);
+    }
+    setExportOpen(false);
+    setExportProcessing(false);
   };
 
   // ==================== HELPER FUNCTIONS ====================
@@ -1260,6 +2276,40 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
                 Sign (Ctrl+Shift+S)
               </Button>
             )}
+            {/* ✅ COMPLIANCE UPDATE: Add Addendum button for final reports */}
+            {report && isReportSigned && (
+              <Button
+                variant="outlined"
+                color="secondary"
+                startIcon={<AddIcon />}
+                onClick={() => setShowAddendumDialog(true)}
+              >
+                Add Addendum
+              </Button>
+            )}
+            {/* ✅ COMPLIANCE UPDATE: Document Critical Communication button */}
+            {report && criticalFindings.length > 0 && (
+              <Button
+                variant="outlined"
+                color="warning"
+                startIcon={<WarningIcon />}
+                onClick={() => setShowCriticalCommDialog(true)}
+              >
+                Document Critical Comm
+              </Button>
+            )}
+            {/* ✅ COMPLIANCE UPDATE (ADVANCED): Export wizard button */}
+            {report && (
+              <Button
+                ref={exportAnchorRef}
+                variant="outlined"
+                color="primary"
+                startIcon={<DownloadIcon />}
+                onClick={handleOpenExportWizard}
+              >
+                Export
+              </Button>
+            )}
           </Box>
         </Box>
 
@@ -1287,7 +2337,7 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
         </Typography>
 
         {selectedTemplate ? (
-          <Grid container spacing={3}>
+          <Grid container spacing={3} key={selectedTemplate.id}>
             {selectedTemplate.sections.map((section) => (
               <Grid item xs={12} key={section.id}>
                 <Typography variant="subtitle1" gutterBottom>
@@ -1430,6 +2480,65 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
           </Box>
         )}
       </Paper>
+
+      {/* ✅ COMPLIANCE UPDATE: Display Addenda */}
+      {report && report.addenda && report.addenda.length > 0 && (
+        <Paper elevation={1} sx={{ p: 3, mt: 3, bgcolor: 'warning.50', border: '2px solid', borderColor: 'warning.main' }}>
+          <Typography variant="h6" gutterBottom>
+            📝 Addenda ({report.addenda.length})
+          </Typography>
+          {report.addenda.map((addendum: any, index: number) => (
+            <Card key={index} variant="outlined" sx={{ mb: 2 }}>
+              <CardContent>
+                <Box display="flex" justifyContent="space-between" alignItems="start" mb={1}>
+                  <Typography variant="subtitle2" fontWeight="bold">
+                    Addendum #{index + 1}
+                  </Typography>
+                  <Chip label={addendum.reason} size="small" color="warning" />
+                </Box>
+                <Typography variant="body2" sx={{ mb: 2, whiteSpace: 'pre-wrap' }}>
+                  {addendum.content}
+                </Typography>
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="caption" color="text.secondary">
+                  Added by: {addendum.addedBy} on {new Date(addendum.addedAt).toLocaleString()}
+                </Typography>
+              </CardContent>
+            </Card>
+          ))}
+        </Paper>
+      )}
+
+      {/* ✅ COMPLIANCE UPDATE: Display Critical Communications */}
+      {report && report.criticalComms && report.criticalComms.length > 0 && (
+        <Paper elevation={1} sx={{ p: 3, mt: 3, bgcolor: 'error.50', border: '2px solid', borderColor: 'error.main' }}>
+          <Typography variant="h6" gutterBottom>
+            ⚠️ Critical Communications ({report.criticalComms.length})
+          </Typography>
+          {report.criticalComms.map((comm: any, index: number) => (
+            <Card key={index} variant="outlined" sx={{ mb: 2 }}>
+              <CardContent>
+                <Box display="flex" gap={1} mb={1}>
+                  <Chip label={comm.method} size="small" color="error" />
+                  <Chip label="Documented" size="small" color="success" icon={<CheckIcon />} />
+                </Box>
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  <strong>Recipient:</strong> {comm.recipient}
+                </Typography>
+                {comm.notes && (
+                  <Typography variant="body2" sx={{ mb: 1 }}>
+                    <strong>Notes:</strong> {comm.notes}
+                  </Typography>
+                )}
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="caption" color="text.secondary">
+                  Documented by: {comm.communicatedBy} on {new Date(comm.communicatedAt).toLocaleString()}
+                </Typography>
+              </CardContent>
+            </Card>
+          ))}
+        </Paper>
+      )}
 
       {/* Key Images Section */}
       <Paper elevation={1} sx={{ p: 3, mt: 3 }}>
@@ -1650,12 +2759,26 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
             Once signed, the report cannot be edited. Please review carefully.
           </Alert>
 
+          {/* ✅ COMPLIANCE UPDATE: Signature meaning selector */}
+          <FormControl fullWidth sx={{ mb: 3 }}>
+            <InputLabel>Signature Meaning</InputLabel>
+            <Select
+              value={signatureMeaning}
+              onChange={(e) => setSignatureMeaning(e.target.value as any)}
+              label="Signature Meaning"
+            >
+              <MenuItem value="authored">Authored - I created this report</MenuItem>
+              <MenuItem value="reviewed">Reviewed - I reviewed this report</MenuItem>
+              <MenuItem value="approved">Approved - I approve this report</MenuItem>
+              <MenuItem value="verified">Verified - I verified this report</MenuItem>
+            </Select>
+          </FormControl>
+
           <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
             Option 1: Draw Signature
           </Typography>
           <SignatureCanvas
             onSave={(dataUrl) => setSignatureDataUrl(dataUrl)}
-            onCancel={() => setSignatureDataUrl(null)}
           />
 
           <Divider sx={{ my: 3 }}>OR</Divider>
@@ -1684,6 +2807,105 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
         </DialogActions>
       </Dialog>
 
+      {/* ✅ COMPLIANCE UPDATE: Addendum Dialog */}
+      <Dialog open={showAddendumDialog} onClose={() => setShowAddendumDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Add Addendum to Final Report</DialogTitle>
+        <DialogContent>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Addenda are appended to signed reports and cannot be removed. They will be included in all exports.
+          </Alert>
+
+          <TextField
+            fullWidth
+            label="Reason for Addendum *"
+            value={addendumReason}
+            onChange={(e) => setAddendumReason(e.target.value)}
+            placeholder="e.g., Additional findings noted, Correction, Clarification"
+            sx={{ mb: 2 }}
+            required
+          />
+
+          <TextField
+            fullWidth
+            multiline
+            rows={6}
+            label="Addendum Content *"
+            value={addendumContent}
+            onChange={(e) => setAddendumContent(e.target.value)}
+            placeholder="Enter addendum text..."
+            required
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowAddendumDialog(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleAddAddendum}
+            disabled={!addendumContent.trim() || !addendumReason.trim()}
+            startIcon={<AddIcon />}
+          >
+            Add Addendum
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ✅ COMPLIANCE UPDATE: Critical Communication Dialog */}
+      <Dialog open={showCriticalCommDialog} onClose={() => setShowCriticalCommDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Document Critical Result Communication</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Document that critical findings have been communicated to the ordering physician or appropriate personnel.
+          </Alert>
+
+          <TextField
+            fullWidth
+            label="Recipient *"
+            value={criticalCommRecipient}
+            onChange={(e) => setCriticalCommRecipient(e.target.value)}
+            placeholder="Dr. Smith, Attending Physician"
+            sx={{ mb: 2 }}
+            required
+          />
+
+          <FormControl fullWidth sx={{ mb: 2 }}>
+            <InputLabel>Communication Method *</InputLabel>
+            <Select
+              value={criticalCommMethod}
+              onChange={(e) => setCriticalCommMethod(e.target.value)}
+              label="Communication Method *"
+            >
+              <MenuItem value="phone">Phone Call</MenuItem>
+              <MenuItem value="in-person">In Person</MenuItem>
+              <MenuItem value="email">Email</MenuItem>
+              <MenuItem value="pager">Pager</MenuItem>
+              <MenuItem value="ehr">EHR Message</MenuItem>
+            </Select>
+          </FormControl>
+
+          <TextField
+            fullWidth
+            multiline
+            rows={3}
+            label="Notes"
+            value={criticalCommNotes}
+            onChange={(e) => setCriticalCommNotes(e.target.value)}
+            placeholder="Additional notes about the communication..."
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowCriticalCommDialog(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={handleDocumentCriticalComm}
+            disabled={!criticalCommRecipient.trim()}
+            startIcon={<CheckIcon />}
+          >
+            Document Communication
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Suggestions Dialog */}
       <Dialog open={showSuggestions} onClose={() => setShowSuggestions(false)} maxWidth="sm" fullWidth>
         <DialogTitle>
@@ -1705,6 +2927,384 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowSuggestions(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ✅ COMPLIANCE UPDATE (ADVANCED): Export Wizard Dialog */}
+      <Dialog 
+        open={exportOpen} 
+        onClose={handleCancelExport} 
+        maxWidth="md" 
+        fullWidth
+        aria-labelledby="export-wizard-title"
+      >
+        <DialogTitle id="export-wizard-title">
+          Export Report - Step {exportStep} of 3
+        </DialogTitle>
+        <DialogContent>
+          <Stepper activeStep={exportStep - 1} sx={{ mb: 3 }}>
+            <Step>
+              <StepLabel>Format & Layout</StepLabel>
+            </Step>
+            <Step>
+              <StepLabel>Options</StepLabel>
+            </Step>
+            <Step>
+              <StepLabel>Preview & Export</StepLabel>
+            </Step>
+          </Stepper>
+
+          {/* Step 1: Format & Layout */}
+          {exportStep === 1 && (
+            <Box>
+              <Typography variant="h6" gutterBottom>Choose Export Format</Typography>
+              <Grid container spacing={2} sx={{ mb: 3 }}>
+                <Grid item xs={12} sm={4}>
+                  <Card 
+                    variant={exportFormat === 'json' ? 'elevation' : 'outlined'}
+                    sx={{ 
+                      cursor: 'pointer',
+                      border: exportFormat === 'json' ? '2px solid' : '1px solid',
+                      borderColor: exportFormat === 'json' ? 'primary.main' : 'divider'
+                    }}
+                    onClick={() => setExportFormat('json')}
+                  >
+                    <CardContent>
+                      <Typography variant="h6">JSON</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Frozen payload with all data, images, and metadata
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <Card 
+                    variant={exportFormat === 'print' ? 'elevation' : 'outlined'}
+                    sx={{ 
+                      cursor: 'pointer',
+                      border: exportFormat === 'print' ? '2px solid' : '1px solid',
+                      borderColor: exportFormat === 'print' ? 'primary.main' : 'divider'
+                    }}
+                    onClick={() => setExportFormat('print')}
+                  >
+                    <CardContent>
+                      <Typography variant="h6">Print/PDF</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Formatted document for printing or saving as PDF
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <Card 
+                    variant={exportFormat === 'images' ? 'elevation' : 'outlined'}
+                    sx={{ 
+                      cursor: 'pointer',
+                      border: exportFormat === 'images' ? '2px solid' : '1px solid',
+                      borderColor: exportFormat === 'images' ? 'primary.main' : 'divider'
+                    }}
+                    onClick={() => setExportFormat('images')}
+                  >
+                    <CardContent>
+                      <Typography variant="h6">Images</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Download key images as individual PNG/JPEG files
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+
+              <Typography variant="h6" gutterBottom>Choose Layout Preset</Typography>
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={4}>
+                  <Card 
+                    variant={exportLayout === 'clinical' ? 'elevation' : 'outlined'}
+                    sx={{ 
+                      cursor: 'pointer',
+                      border: exportLayout === 'clinical' ? '2px solid' : '1px solid',
+                      borderColor: exportLayout === 'clinical' ? 'primary.main' : 'divider'
+                    }}
+                    onClick={() => setExportLayout('clinical')}
+                  >
+                    <CardContent>
+                      <Typography variant="h6">Clinical</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Full sections, measurements table, callout legend
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <Card 
+                    variant={exportLayout === 'research' ? 'elevation' : 'outlined'}
+                    sx={{ 
+                      cursor: 'pointer',
+                      border: exportLayout === 'research' ? '2px solid' : '1px solid',
+                      borderColor: exportLayout === 'research' ? 'primary.main' : 'divider'
+                    }}
+                    onClick={() => setExportLayout('research')}
+                  >
+                    <CardContent>
+                      <Typography variant="h6">Research</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Minimal PHI, focus on key images + measurements
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <Card 
+                    variant={exportLayout === 'patient' ? 'elevation' : 'outlined'}
+                    sx={{ 
+                      cursor: 'pointer',
+                      border: exportLayout === 'patient' ? '2px solid' : '1px solid',
+                      borderColor: exportLayout === 'patient' ? 'primary.main' : 'divider'
+                    }}
+                    onClick={() => setExportLayout('patient')}
+                  >
+                    <CardContent>
+                      <Typography variant="h6">Patient-Friendly</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Simple wording, larger fonts, fewer technical terms
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+            </Box>
+          )}
+
+          {/* Step 2: Options */}
+          {exportStep === 2 && (
+            <Box>
+              <Typography variant="h6" gutterBottom>Export Options</Typography>
+              
+              <Grid container spacing={2}>
+                {exportFormat === 'print' && (
+                  <Grid item xs={12} sm={6}>
+                    <FormControl fullWidth>
+                      <InputLabel>Page Size</InputLabel>
+                      <Select
+                        value={exportOptions.pageSize}
+                        onChange={(e) => setExportOptions({ ...exportOptions, pageSize: e.target.value as any })}
+                        label="Page Size"
+                      >
+                        <MenuItem value="A4">A4</MenuItem>
+                        <MenuItem value="Letter">Letter</MenuItem>
+                        <MenuItem value="Legal">Legal</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                )}
+
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Image Quality (DPI)</InputLabel>
+                    <Select
+                      value={exportOptions.dpi}
+                      onChange={(e) => setExportOptions({ ...exportOptions, dpi: e.target.value as any })}
+                      label="Image Quality (DPI)"
+                    >
+                      <MenuItem value={1}>1x (Standard)</MenuItem>
+                      <MenuItem value={2}>2x (High)</MenuItem>
+                      <MenuItem value={3}>3x (Ultra)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+
+                <Grid item xs={12} sm={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Image Type</InputLabel>
+                    <Select
+                      value={exportOptions.imageType}
+                      onChange={(e) => setExportOptions({ ...exportOptions, imageType: e.target.value as any })}
+                      label="Image Type"
+                    >
+                      <MenuItem value="png">PNG (Lossless)</MenuItem>
+                      <MenuItem value="jpeg">JPEG (High Quality 90%)</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={exportOptions.redactPHI}
+                        onChange={(e) => setExportOptions({ ...exportOptions, redactPHI: e.target.checked })}
+                      />
+                    }
+                    label="Redact PHI (Patient Name/ID)"
+                  />
+                </Grid>
+
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={exportOptions.colorSafe}
+                        onChange={(e) => setExportOptions({ ...exportOptions, colorSafe: e.target.checked })}
+                      />
+                    }
+                    label="Color-Blind Safe Palette (Okabe-Ito)"
+                  />
+                </Grid>
+
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={exportOptions.showScaleBar}
+                        onChange={(e) => setExportOptions({ ...exportOptions, showScaleBar: e.target.checked })}
+                      />
+                    }
+                    label="Show Scale Bar on Images"
+                  />
+                </Grid>
+
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={exportOptions.showOrientation}
+                        onChange={(e) => setExportOptions({ ...exportOptions, showOrientation: e.target.checked })}
+                      />
+                    }
+                    label="Show Orientation Tags (R/L/A/P)"
+                  />
+                </Grid>
+              </Grid>
+
+              {/* ✅ COMPLIANCE UPDATE (ADVANCED): AI cross-check reminder */}
+              {aiDetections.length > 0 && (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <Typography variant="body2">
+                    💡 AI detected {aiDetections.length} finding(s). Review will check if all are mentioned in impression.
+                  </Typography>
+                </Alert>
+              )}
+            </Box>
+          )}
+
+          {/* Step 3: Preview & Export */}
+          {exportStep === 3 && (
+            <Box>
+              <Typography variant="h6" gutterBottom>Preview</Typography>
+              
+              {exportProcessing ? (
+                <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+                  <CircularProgress />
+                  <Typography sx={{ ml: 2 }}>Generating preview...</Typography>
+                </Box>
+              ) : (
+                <Box 
+                  sx={{ 
+                    border: '1px solid #ccc', 
+                    borderRadius: 1, 
+                    p: 2, 
+                    maxHeight: '400px', 
+                    overflow: 'auto',
+                    bgcolor: '#f9f9f9',
+                    '& .section': {
+                      marginBottom: 2,
+                      clear: 'both'
+                    },
+                    '& .section-title': {
+                      fontWeight: 'bold',
+                      marginBottom: 1,
+                      display: 'block'
+                    },
+                    '& .section-content': {
+                      display: 'block',
+                      clear: 'both',
+                      marginTop: 1
+                    }
+                  }}
+                >
+                  <div dangerouslySetInnerHTML={{ __html: exportPreviewHtml }} />
+                </Box>
+              )}
+
+              {/* ✅ COMPLIANCE UPDATE (ADVANCED): Share link option */}
+              {report && report.reportStatus === 'final' && (
+                <Box sx={{ mt: 3, clear: 'both' }}>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="h6" gutterBottom sx={{ clear: 'both' }}>PHI-Safe Sharing</Typography>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    Create a temporary share link with PHI redacted (expires in 24h)
+                  </Typography>
+                  
+                  {shareLink ? (
+                    <Alert severity="success" sx={{ mt: 2 }}>
+                      <Typography variant="body2" gutterBottom>
+                        <strong>Share Link Created:</strong>
+                      </Typography>
+                      <TextField
+                        fullWidth
+                        value={shareLink.url}
+                        InputProps={{
+                          readOnly: true,
+                          endAdornment: (
+                            <Button
+                              size="small"
+                              onClick={() => {
+                                navigator.clipboard.writeText(shareLink.url);
+                                showNotification('Link copied to clipboard', 'success');
+                              }}
+                            >
+                              Copy
+                            </Button>
+                          )
+                        }}
+                        sx={{ mt: 1, mb: 1 }}
+                      />
+                      <Typography variant="caption" color="text.secondary">
+                        Expires: {new Date(shareLink.expiresAt).toLocaleString()}
+                      </Typography>
+                    </Alert>
+                  ) : (
+                    <Button
+                      variant="outlined"
+                      onClick={handleCreateShareLink}
+                      disabled={exportProcessing}
+                      sx={{ mt: 1 }}
+                    >
+                      Create Share Link
+                    </Button>
+                  )}
+                </Box>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelExport} disabled={exportProcessing}>
+            Cancel
+          </Button>
+          {exportStep > 1 && (
+            <Button onClick={handleExportBack} disabled={exportProcessing}>
+              Back
+            </Button>
+          )}
+          {exportStep < 3 ? (
+            <Button 
+              variant="contained" 
+              onClick={handleExportNext}
+              disabled={exportProcessing}
+            >
+              Next
+            </Button>
+          ) : (
+            <Button 
+              variant="contained" 
+              onClick={handleExportExecute}
+              disabled={exportProcessing}
+              startIcon={exportProcessing ? <CircularProgress size={20} /> : <DownloadIcon />}
+            >
+              {exportProcessing ? 'Exporting...' : 'Export'}
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 

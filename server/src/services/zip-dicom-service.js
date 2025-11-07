@@ -536,7 +536,7 @@ class ZipDicomService {
       }
 
       // Link to patient
-      await Patient.findOneAndUpdate(
+      const patient = await Patient.findOneAndUpdate(
         { patientID: studyStructure.patientID },
         {
           patientID: studyStructure.patientID,
@@ -545,6 +545,60 @@ class ZipDicomService {
         },
         { upsert: true, new: true }
       );
+
+      // ✅ WORKLIST EMPTY FIX: Auto-create worklist item when study is uploaded
+      try {
+        const WorklistItem = require('../models/WorklistItem');
+        
+        // Get hospitalId from patient or use null (will be fixed by sync)
+        const hospitalId = patient.hospitalId || null;
+        
+        // ✅ FIX: Parse DICOM date format (YYYYMMDD) to proper Date
+        let scheduledDate = new Date();
+        if (studyStructure.studyDate && studyStructure.studyDate.length === 8) {
+          // DICOM format: YYYYMMDD
+          const year = studyStructure.studyDate.substring(0, 4);
+          const month = studyStructure.studyDate.substring(4, 6);
+          const day = studyStructure.studyDate.substring(6, 8);
+          scheduledDate = new Date(`${year}-${month}-${day}`);
+          
+          // Validate the date
+          if (isNaN(scheduledDate.getTime())) {
+            scheduledDate = new Date(); // Fallback to current date
+          }
+        }
+        
+        const worklistItem = await WorklistItem.findOneAndUpdate(
+          { studyInstanceUID },
+          {
+            $set: {
+              studyInstanceUID,
+              patientID: studyStructure.patientID,
+              hospitalId: hospitalId
+            },
+            $setOnInsert: {
+              status: 'pending',
+              priority: 'routine',
+              reportStatus: 'none',
+              scheduledFor: scheduledDate
+            }
+          },
+          { upsert: true, new: true }
+        );
+        
+        console.log(`✅ Worklist item created/updated for study: ${studyInstanceUID}, hospitalId: ${hospitalId}`);
+        console.log(`   Worklist item details:`, {
+          _id: worklistItem._id,
+          studyInstanceUID: worklistItem.studyInstanceUID,
+          hospitalId: worklistItem.hospitalId,
+          status: worklistItem.status,
+          scheduledFor: worklistItem.scheduledFor
+        });
+      } catch (worklistError) {
+        console.error(`⚠️ Failed to create worklist item:`, worklistError.message);
+        console.error(`   Error stack:`, worklistError.stack);
+        // Don't fail the upload if worklist creation fails
+      }
 
       console.log(`✅ Saved study data to database: ${studyStructure.series.length} series, ${parsedFiles.length} instances`);
       dbSaveSuccess = true;

@@ -29,6 +29,23 @@ export const getAuthToken = (): string | null => {
 }
 
 /**
+ * Get CSRF token from cookie
+ */
+export const getCSRFToken = (): string | null => {
+  const name = 'XSRF-TOKEN';
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  
+  if (parts.length === 2) {
+    const token = parts.pop()?.split(';').shift();
+    // Extract just the token value (before the signature)
+    return token?.split('.')[0] || null;
+  }
+  
+  return null;
+}
+
+/**
  * Make an API call to the backend
  */
 export const apiCall = async (
@@ -41,6 +58,9 @@ export const apiCall = async (
 
   // Get auth token
   const token = getAuthToken()
+  
+  // Get CSRF token for state-changing operations
+  const csrfToken = getCSRFToken()
 
   const response = await fetch(url, {
     ...options,
@@ -48,6 +68,7 @@ export const apiCall = async (
     headers: {
       'Content-Type': 'application/json',
       ...(token && { 'Authorization': `Bearer ${token}` }),
+      ...(csrfToken && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(options.method?.toUpperCase() || 'GET') && { 'X-XSRF-TOKEN': csrfToken }),
       ...options.headers,
     },
   })

@@ -49,7 +49,9 @@ app.use(cors({
     'Authorization', 
     'X-Requested-With',
     'x-correlation-id',  // Add correlation ID header
-    'X-Correlation-Id'   // Case variation
+    'X-Correlation-Id',   // Case variation
+    'X-XSRF-TOKEN',      // CSRF token header
+    'x-xsrf-token'       // Case variation
   ],
   exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
@@ -58,16 +60,73 @@ app.use(express.json({ limit: '20mb' }));
 app.use(morgan('dev'));
 app.use(cookieParser());
 
+// Security middleware - must be early in the middleware chain
+const { inputValidationMiddleware } = require('./middleware/input-validation-middleware');
+const { xssProtectionMiddleware, setSecurityHeaders } = require('./middleware/xss-protection-middleware');
+const { doubleSubmitCookieCSRF, configureSameSiteCookies } = require('./middleware/csrf-protection-middleware');
+
+// Set security headers
+app.use(setSecurityHeaders);
+
+// Configure SameSite cookies
+configureSameSiteCookies(app);
+
+// Input validation (NoSQL injection prevention)
+app.use(inputValidationMiddleware);
+
+// XSS protection
+app.use(xssProtectionMiddleware({
+  htmlFields: ['findings', 'impression', 'clinicalHistory', 'technique', 'comparison', 'content', 'description', 'notes', 'comments'],
+  excludePaths: ['/health', '/metrics']
+}));
+
+// CSRF protection (using double submit cookie pattern)
+app.use(doubleSubmitCookieCSRF({
+  excludePaths: [
+    '/health', 
+    '/metrics', 
+    '/auth/login', 
+    '/auth/register', 
+    '/auth/refresh-token', 
+    '/api/orthanc-webhook',
+    '/api/reports', // Exclude reporting API from CSRF (uses JWT auth)
+    '/api/users',   // Exclude user management API from CSRF (uses JWT auth + RBAC)
+    '/api/follow-ups', // Exclude follow-up API from CSRF (uses JWT auth)
+    '/api/prior-auth', // Exclude prior auth API from CSRF (uses JWT auth)
+    '/api/dicom',   // Exclude DICOM API from CSRF (uses JWT auth)
+    '/api/patients', // Exclude patients API from CSRF (uses JWT auth)
+    '/api/export',  // Exclude export API from CSRF (uses JWT auth)
+    '/api/medical-ai', // Exclude AI API from CSRF (uses JWT auth)
+    '/api/ai'       // Exclude AI API from CSRF (uses JWT auth)
+  ],
+  excludeMethods: ['GET', 'HEAD', 'OPTIONS']
+}));
+
 // Serve uploaded files (signatures, etc.)
 const uploadsPath = require('path').join(__dirname, '../uploads');
 app.use('/uploads', express.static(uploadsPath));
 console.log('📁 Serving uploads from:', uploadsPath);
 
-// Audit middleware - must be early in the middleware chain
+// Audit middleware - must be after security middleware
 app.use(auditMiddleware({
-  excludePaths: ['/health', '/metrics'],
+  excludePaths: ['/health', '/metrics', '/api/reports/health'],
   logBody: true
-}));
+}));                              
+
+// 404 handler with detailed logging
+// app.use((req, res, next) => {
+//   if (!res.headersSent) {
+//     console.warn(`[404] ${req.method} ${req.url}`);
+//     res.status(404).json({ 
+//       error: 'Not Found', 
+//       path: req.url,
+//       method: req.method,
+//       message: `Route ${req.method} ${req.url} does not exist`
+//     });
+//   } else {
+//     next();
+//   }
+// });
 
 // Admin action logging middleware (will be initialized after services are set up)
 app.use((req, res, next) => {
@@ -303,13 +362,41 @@ async function startServer() {
     app.use('/', routes);
 
     const port = process.env.PORT || 8001;
-    app.listen(port, () => {
+    const httpServer = app.listen(port, () => {
       console.log(`Node DICOM API running on http://0.0.0.0:${port}`, {
         environment: process.env.NODE_ENV,
         mongoUri: mongoUri.replace(/\/\/[^:]+:[^@]+@/, '//***:***@'), // Hide credentials in logs
         secretsEnabled: secretsAvailable
       });
+      
+      // Log mounted routes for diagnostics
+      console.log('\n📍 MOUNTED ROUTES:');
+      console.log('  ✅ /api/reports          → Unified Reporting System');
+      console.log('  ✅ /api/reports/health   → Health check endpoint');
+      console.log('  ✅ /api/reports/templates → Template management');
+      console.log('  ✅ /api/reports/:id/export → Export functionality');
+      console.log(`\n🌐 Base URL: http://localhost:${port}`);
+      console.log(`   Test health: curl http://localhost:${port}/api/reports/health\n`);
     });
+
+    // Initialize WebSocket service
+    console.log('Initializing WebSocket service...');
+    const { getWebSocketService } = require('./services/websocket-service');
+    const websocketService = getWebSocketService();
+    websocketService.initialize(httpServer, {
+      corsOrigins: [
+        'http://localhost:3010',
+        'http://localhost:5173',
+        'http://localhost:3000',
+        'http://127.0.0.1:3010',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:3000'
+      ]
+    });
+
+    // Make WebSocket service available globally
+    app.locals.websocketService = websocketService;
+    console.log('WebSocket service initialized and ready');
     
 
   } catch (error) {
@@ -318,4 +405,10 @@ async function startServer() {
   }
 }
 
-startServer();
+// Export app for testing
+module.exports = app;
+
+// Only start server if not in test mode
+if (process.env.NODE_ENV !== 'test') {
+  startServer();
+}

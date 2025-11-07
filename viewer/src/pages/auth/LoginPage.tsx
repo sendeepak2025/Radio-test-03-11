@@ -18,8 +18,9 @@ import { Helmet } from 'react-helmet-async'
 import { useAuth } from '../../hooks/useAuth'
 import { useAppSelector } from '../../store/hooks'
 import type { LoginCredentials } from '../../types/auth'
-import { TestCredentials } from '../../components/auth/TestCredentials'
 import { getRoleBasedRedirect } from '../../utils/roleBasedRedirect'
+import { NotificationPermissionPrompt } from '../../components/notifications/NotificationPermissionPrompt'
+import { shouldShowPermissionPrompt } from '../../utils/notificationPermission'
 
 const LoginPage: React.FC = () => {
   const theme = useTheme()
@@ -32,6 +33,7 @@ const LoginPage: React.FC = () => {
     password: '',
     rememberMe: false,
   })
+  const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
 
   const from = (location.state as any)?.from?.pathname || '/dashboard'
 
@@ -58,25 +60,35 @@ const LoginPage: React.FC = () => {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
-
+console.log("Login")
     if (!credentials.username || !credentials.password) {
       return
     }
 
     try {
       const result = await login(credentials)
-
+console.log(result,"COOKIES AUTH")
       if (result.type === 'auth/login/fulfilled') {
         // Get role from the result payload
         const payload = result.payload as any
         const role = payload?.role || null
         const userRoles = payload?.user?.roles || []
 
-        // Determine redirect based on role
-        const redirectPath = getRoleBasedRedirect(role, userRoles)
-
-        console.log('Login successful, redirecting to:', redirectPath)
-        navigate(redirectPath, { replace: true })
+        // Check if we should request notification permission
+        if (shouldShowPermissionPrompt()) {
+          setShowPermissionPrompt(true)
+          // Delay navigation to show permission prompt
+          setTimeout(() => {
+            const redirectPath = getRoleBasedRedirect(role, userRoles)
+            console.log('Login successful, redirecting to:', redirectPath)
+            navigate(redirectPath, { replace: true })
+          }, 1000)
+        } else {
+          // Determine redirect based on role
+          const redirectPath = getRoleBasedRedirect(role, userRoles)
+          console.log('Login successful, redirecting to:', redirectPath)
+          navigate(redirectPath, { replace: true })
+        }
       }
     } catch (err) {
       // Error is handled by Redux
@@ -89,6 +101,14 @@ const LoginPage: React.FC = () => {
       <Helmet>
         <title>Login - Medical Imaging Viewer</title>
       </Helmet>
+
+      {/* Notification Permission Prompt */}
+      <NotificationPermissionPrompt
+        autoShow={showPermissionPrompt}
+        onGranted={() => console.log('Notification permission granted')}
+        onDenied={() => console.log('Notification permission denied')}
+        onDismiss={() => setShowPermissionPrompt(false)}
+      />
 
       <Box
         sx={{
