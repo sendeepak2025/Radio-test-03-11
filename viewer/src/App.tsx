@@ -357,6 +357,16 @@ if (refreshToken) {
                 </SimpleProtectedRoute>
               }
             />
+            <Route
+              path="/app/setting"
+              element={
+                <SimpleProtectedRoute>
+                  <MainLayout>
+                    <SettingsPage />
+                  </MainLayout>
+                </SimpleProtectedRoute>
+              }
+            />
 
             <Route
               path="/app/billing"

@@ -42,8 +42,10 @@ import {
   Settings as SettingsIcon,
   Palette as BrandIcon,
   Close as CloseIcon,
-  CloudUpload as UploadIcon
+  CloudUpload as UploadIcon,
+  LocalHospital as FhirIcon
 } from '@mui/icons-material';
+import FHIRExportButton from '../reporting/FHIRExportButton';
 
 interface ExportOptions {
   format: 'pdf' | 'docx' | 'json' | 'png' | 'html';
@@ -69,6 +71,7 @@ interface AdvancedExportSystemProps {
 const EXPORT_FORMATS = [
   { value: 'pdf', label: 'PDF Report', icon: <PdfIcon />, description: 'Professional PDF with formatting' },
   { value: 'docx', label: 'Word Document', icon: <DocIcon />, description: 'Editable Word document' },
+  { value: 'fhir', label: 'FHIR Export', icon: <FhirIcon />, description: 'HL7 FHIR R4 DiagnosticReport' },
   { value: 'json', label: 'JSON Data', icon: <JsonIcon />, description: 'Structured data export' },
   { value: 'png', label: 'Image Export', icon: <ImageIcon />, description: 'High-quality image' },
   { value: 'html', label: 'Web Page', icon: <EmailIcon />, description: 'Shareable web format' }

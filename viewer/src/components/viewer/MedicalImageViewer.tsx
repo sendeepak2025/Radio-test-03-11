@@ -22,12 +22,6 @@ import {
   clearMeasurementsAndAnnotations,
 } from '../../store/slices/viewerSlice'
 import selectionSyncService from '../../services/selectionSyncService'
-import { controlPointManager } from '../../services/controlPointManager'
-import { selectionManager } from '../../services/selectionManager'
-import { dragManager } from '../../services/dragManager'
-import { transformService } from '../../services/transformService'
-import { textEditorManager } from '../../services/textEditorManager'
-import { undoRedoManager } from '../../services/undoRedoManager'
 import { screenshotService } from '../../services/screenshotService'
 import InlineTextEditor from './InlineTextEditor'
 import type { ControlPoint, HistoryEntry } from '../../types/viewer'

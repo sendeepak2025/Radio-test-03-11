@@ -510,7 +510,40 @@ const ViewerPage: React.FC = () => {
 
               {/* Right Section - Actions */}
               <Stack direction="row" spacing={1}>
-                {/* View/Create Report Button */}
+                {/* NEW: Create Report Button - Prominent */}
+                {studyData?.studyInstanceUID && (
+                  <Tooltip title="Create New Report">
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      size="small"
+                      startIcon={<Description />}
+                      onClick={() => {
+                        const params = new URLSearchParams({
+                          studyUID: studyData.studyInstanceUID,
+                          patientID: studyData.patientID || 'Unknown',
+                          patientName: studyData.patientName || 'Unknown Patient',
+                          modality: studyData.modality || 'CT',
+                          studyDescription: studyData.studyDescription || ''
+                        });
+                        navigate(`/app/reporting?${params.toString()}`);
+                      }}
+                      sx={{
+                        textTransform: 'none',
+                        fontWeight: 600,
+                        px: 2,
+                        bgcolor: theme.palette.primary.main,
+                        '&:hover': {
+                          bgcolor: theme.palette.primary.dark,
+                        },
+                      }}
+                    >
+                      Create Report
+                    </Button>
+                  </Tooltip>
+                )}
+                
+                {/* View Existing Report Button */}
                 {studyData?.studyInstanceUID && (
                   <ViewReportButton
                     studyInstanceUID={studyData.studyInstanceUID}
@@ -710,27 +743,86 @@ const ViewerPage: React.FC = () => {
 
               <TabPanel value={activeTab} index={3}>
                 {studyData ? (
-                  <Box sx={{ p: 3, textAlign: 'center' }}>
-                    <Typography variant="h6" gutterBottom>
-                      Structured Reporting
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                      Use the "Create Report" or "View Report" button above to access the unified reporting system.
-                    </Typography>
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      onClick={() => {
-                        navigate(
-                          `/app/reporting?studyUID=${studyData.studyInstanceUID}&mode=manual&patientID=${studyData.patientID || ''}&patientName=${studyData.patientName || ''}&modality=${studyData.modality || ''}`
-                        );
-                      }}
-                    >
-                      Open Reporting Interface
-                    </Button>
+                  <Box sx={{ 
+                    p: 4, 
+                    textAlign: 'center',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: '100%',
+                    bgcolor: alpha('#000', 0.3)
+                  }}>
+                    <Box sx={{ 
+                      maxWidth: 600,
+                      p: 4,
+                      borderRadius: 3,
+                      bgcolor: alpha('#fff', 0.05),
+                      border: `1px solid ${alpha('#fff', 0.1)}`,
+                    }}>
+                      <Description sx={{ fontSize: 64, color: theme.palette.primary.main, mb: 2 }} />
+                      <Typography variant="h5" gutterBottom sx={{ color: 'white', fontWeight: 600 }}>
+                        Unified Reporting System
+                      </Typography>
+                      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
+                        Create professional medical reports with advanced features:
+                      </Typography>
+                      
+                      <Stack spacing={1} sx={{ mb: 3, textAlign: 'left' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: theme.palette.primary.main }} />
+                          <Typography variant="body2" color="text.secondary">
+                            📍 Interactive anatomical diagrams
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: theme.palette.primary.main }} />
+                          <Typography variant="body2" color="text.secondary">
+                            🎤 Voice dictation for hands-free reporting
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: theme.palette.primary.main }} />
+                          <Typography variant="body2" color="text.secondary">
+                            🤖 AI-powered suggestions and auto-population
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: theme.palette.primary.main }} />
+                          <Typography variant="body2" color="text.secondary">
+                            📥 Multi-format export (PDF, DICOM SR, FHIR)
+                          </Typography>
+                        </Box>
+                      </Stack>
+                      
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        size="large"
+                        startIcon={<Description />}
+                        onClick={() => {
+                          const params = new URLSearchParams({
+                            studyUID: studyData.studyInstanceUID,
+                            patientID: studyData.patientID || 'Unknown',
+                            patientName: studyData.patientName || 'Unknown Patient',
+                            modality: studyData.modality || 'CT',
+                            studyDescription: studyData.studyDescription || ''
+                          });
+                          navigate(`/app/reporting?${params.toString()}`);
+                        }}
+                        sx={{
+                          textTransform: 'none',
+                          fontWeight: 600,
+                          px: 4,
+                          py: 1.5,
+                        }}
+                      >
+                        Open Reporting Interface
+                      </Button>
+                    </Box>
                   </Box>
                 ) : (
-                  <Box sx={{ p: 3 }}>
+                  <Box sx={{ p: 3, textAlign: 'center' }}>
                     <Typography variant="h6" color="text.secondary">
                       No study data available for reporting
                     </Typography>

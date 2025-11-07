@@ -6,16 +6,27 @@ const UserSchema = new mongoose.Schema({
   passwordHash: { type: String, required: true },
   firstName: { type: String, required: true },
   lastName: { type: String, required: true },
+  fullName: { type: String }, // Full display name
   roles: { type: [String], default: ['user'] },
   permissions: { type: [String], default: ['studies:read'] },
   hospitalId: { 
     type: String, 
     index: true 
   }, // Hospital ID as string (e.g., "HOSP001") for multi-tenancy
+  hospitalName: { type: String }, // Hospital/Organization name
   isActive: { type: Boolean, default: true },
   isVerified: { type: Boolean, default: true },
   mfaEnabled: { type: Boolean, default: false },
   lastLogin: { type: Date },
+  
+  // Professional Information
+  licenseNumber: { type: String }, // Medical license number
+  specialty: { type: String }, // e.g., "Diagnostic Radiology", "Neuroradiology"
+  
+  // Digital Signature
+  signatureText: { type: String }, // Text-based signature (e.g., "Dr. John Smith, MD")
+  signatureImagePath: { type: String }, // File system path to signature image
+  signatureImageUrl: { type: String }, // Public URL to signature image
 }, { timestamps: true })
 
 UserSchema.methods.toPublicJSON = function () {

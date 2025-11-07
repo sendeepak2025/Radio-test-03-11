@@ -11,6 +11,9 @@ const HospitalSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  logoUrl: {
+    type: String
+  },
   address: {
     street: String,
     city: String,

@@ -38,6 +38,7 @@ const phiAuditRoutes = require('./phi-audit');
 const ipWhitelistRoutes = require('./ip-whitelist');
 const dataRetentionRoutes = require('./data-retention');
 const billingRoutes = require('./billing');
+const fhirRoutes = require('./fhir');
 
 const router = express.Router();
 
@@ -233,5 +234,8 @@ router.use('/api/data-retention', dataRetentionRoutes);
 
 // Billing API - Medical billing and coding
 router.use('/api/billing', billingRoutes);
+
+// FHIR API - HL7 FHIR R4 export for healthcare interoperability
+router.use('/api/fhir', fhirRoutes);
 
 module.exports = router;

@@ -399,14 +399,14 @@ export const EnhancedDashboard: React.FC = () => {
       </Grid>
 
       {/* System Health Widget */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
+      {/* <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} lg={6}>
           <SystemHealthWidget />
         </Grid>
         <Grid item xs={12} lg={6}>
           <IntegrationStatusWidget />
         </Grid>
-      </Grid>
+      </Grid> */}
 
       {/* Machine Cards */}
       <Typography variant="h6" fontWeight="bold" sx={{ mb: 2 }}>

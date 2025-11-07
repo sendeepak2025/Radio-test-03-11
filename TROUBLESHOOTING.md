@@ -1,269 +1,304 @@
-# 🔧 Troubleshooting - Landing Page Blank/No Styles
+# 🔧 Troubleshooting Guide
 
-## Issue: Landing page shows blank content and missing animations
-
-### Quick Fixes to Try:
-
-#### 1. Hard Refresh Browser
-```
-Windows: Ctrl + Shift + R
-Mac: Cmd + Shift + R
-```
-
-#### 2. Clear Browser Cache
-- Open DevTools (F12)
-- Right-click refresh button
-- Select "Empty Cache and Hard Reload"
-
-#### 3. Check Browser Console
-- Open DevTools (F12)
-- Go to Console tab
-- Look for any errors (red text)
-- Share the errors if you see any
-
-#### 4. Verify Server is Running
-The server should be at:
-```
-http://localhost:3011/
-```
-
-#### 5. Test Tailwind CSS
-Visit this test page:
-```
-http://localhost:3011/test
-```
-
-If you see a blue background with a white card, Tailwind is working!
+## Common Errors and Solutions
 
 ---
 
-## Common Issues & Solutions:
+## ❌ Error: "useReporting must be used within ReportingProvider"
 
-### Issue 1: White/Blank Page
-**Cause:** CSS not loading or JavaScript error
+### **Cause:**
+The `UnifiedReportEditor` component is being rendered without the `ReportingProvider` wrapper.
 
-**Solution:**
-1. Open browser console (F12)
-2. Check for errors
-3. Look for failed network requests in Network tab
+### **Solution:**
 
-### Issue 2: No Animations
-**Cause:** Tailwind animations not configured
+**Check your URL:**
+Make sure you're accessing the reporting page through the correct route:
 
-**Solution:**
-Already fixed in the code. Try hard refresh.
-
-### Issue 3: Dark Background
-**Cause:** Medical app styles overriding landing page
-
-**Solution:**
-Already fixed with LandingLayout component. Try hard refresh.
-
-### Issue 4: Images Not Loading
-**Cause:** Image paths incorrect
-
-**Check:**
-- Images should be in `viewer/src/landing/assets/`
-- hero-image.jpg
-- medical-equipment.png
-
----
-
-## Manual Verification Steps:
-
-### Step 1: Check if Tailwind is in index.css
-Open `viewer/src/index.css` and verify it starts with:
-```css
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+✅ **Correct:**
+```
+http://localhost:5173/app/reporting?studyUID=1.2.3.4.5&patientID=P001&patientName=John%20Doe&modality=CT
 ```
 
-### Step 2: Check if CSS variables are defined
-In `viewer/src/index.css`, look for:
-```css
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    ...
-  }
-}
+❌ **Wrong:**
+```
+http://localhost:5173/reporting  (missing /app/)
 ```
 
-### Step 3: Verify imports in App.tsx
-Check that these imports exist:
-```tsx
-import LandingLayout from './landing/LandingLayout'
-import LandingHome from './landing/pages/LandingHome'
-```
+### **Quick Fix:**
 
-### Step 4: Check routes in App.tsx
-Look for:
-```tsx
-<Route path="/" element={<LandingLayout />}>
-  <Route index element={<LandingHome />} />
-</Route>
+1. **Refresh the page** (Ctrl + Shift + R)
+2. **Navigate from viewer** instead of direct URL
+3. **Check console** for other errors
+
+### **If Still Not Working:**
+
+Check `viewer/src/pages/ReportingPage.tsx`:
+
+```typescript
+// Should look like this:
+return (
+  <ReportingProvider initialData={reportData}>
+    <UnifiedReportEditor onClose={handleBack} />
+  </ReportingProvider>
+);
 ```
 
 ---
 
-## Debug Commands:
+## ❌ Error: "No templates available"
 
-### Restart Dev Server
-```powershell
+### **Cause:**
+Backend API `/api/reports/templates` is not returning templates.
+
+### **Solution:**
+
+**Already Fixed!** The system now uses mock templates as fallback.
+
+**To verify:**
+1. Refresh page (Ctrl + Shift + R)
+2. You should see 5 mock templates:
+   - Chest CT
+   - Head CT
+   - Abdomen/Pelvis CT
+   - Chest X-Ray
+   - MRI Brain
+
+---
+
+## ❌ Error: "Study UID is required"
+
+### **Cause:**
+Missing `studyUID` parameter in URL.
+
+### **Solution:**
+
+**Option 1: Navigate from Viewer**
+1. Go to viewer: `http://localhost:5173/app/viewer/1.2.3.4.5`
+2. Click "Create Report" button
+3. ✅ Study data is automatically passed
+
+**Option 2: Use Complete URL**
+```
+http://localhost:5173/app/reporting?studyUID=1.2.3.4.5&patientID=P001&patientName=John%20Doe&modality=CT
+```
+
+---
+
+## ❌ Error: "Cannot sign: No report ID"
+
+### **Cause:**
+Report hasn't been saved yet.
+
+### **Solution:**
+
+1. **Wait for auto-save** (30 seconds)
+2. **OR manually save** (click save button)
+3. **Then try signing again**
+
+---
+
+## ❌ Error: "Impression is required before signing"
+
+### **Cause:**
+Trying to sign without filling required fields.
+
+### **Solution:**
+
+Fill in these **required fields** before signing:
+- ✅ Impression
+- ✅ Findings
+
+---
+
+## ❌ Signature canvas not showing
+
+### **Cause:**
+Missing `react-signature-canvas` package.
+
+### **Solution:**
+
+```bash
+cd viewer
+npm install react-signature-canvas @types/react-signature-canvas --legacy-peer-deps
+```
+
+Then refresh the page.
+
+---
+
+## ❌ "Create Report" button not visible in viewer
+
+### **Cause:**
+Study data not loaded yet.
+
+### **Solution:**
+
+1. **Wait for study to load** (look for patient name in header)
+2. **Check if studyInstanceUID exists**
+3. **Refresh page** if needed
+
+---
+
+## ❌ Auto-save not working
+
+### **Cause:**
+- No report ID
+- Backend not responding
+- Network error
+
+### **Solution:**
+
+1. **Check console** for errors
+2. **Check network tab** for failed API calls
+3. **Verify backend is running**
+4. **Try manual save** (click save button)
+
+---
+
+## ❌ Voice dictation not working
+
+### **Cause:**
+- Browser doesn't support Web Speech API
+- Microphone permission denied
+
+### **Solution:**
+
+1. **Use Chrome or Edge** (Firefox/Safari not supported)
+2. **Allow microphone permission** when prompted
+3. **Check browser console** for errors
+
+---
+
+## ❌ Canvas shows placeholder instead of body diagram
+
+### **Cause:**
+This is **expected behavior**! Real body diagrams need to be added.
+
+### **Solution:**
+
+This is not an error. The canvas works correctly:
+- ✅ You can still mark findings
+- ✅ Markings are saved
+- ✅ Markings create linked findings
+
+**To add real diagrams:**
+1. Get medical illustration SVGs
+2. Replace canvas placeholder in `AnatomicalDiagramPanel.tsx`
+
+---
+
+## 🔍 **General Debugging Steps**
+
+### **1. Check Browser Console**
+```
+F12 → Console tab
+Look for red errors
+```
+
+### **2. Check Network Tab**
+```
+F12 → Network tab
+Look for failed API calls (red)
+Check response for error messages
+```
+
+### **3. Check URL Parameters**
+```
+Should have: ?studyUID=xxx&patientID=xxx&patientName=xxx&modality=xxx
+```
+
+### **4. Clear Cache**
+```
+Ctrl + Shift + R (hard refresh)
+Or: Ctrl + Shift + Delete → Clear cache
+```
+
+### **5. Check Backend**
+```
+Is backend running?
+Check: http://localhost:8001/api/reports/health
+Should return: { ok: true }
+```
+
+---
+
+## 📊 **System Health Check**
+
+### **Frontend:**
+```bash
 cd viewer
 npm run dev
+# Should start on http://localhost:5173
 ```
 
-### Check for TypeScript Errors
-```powershell
-cd viewer
-npm run typecheck
+### **Backend:**
+```bash
+cd server
+npm start
+# Should start on http://localhost:8001
 ```
 
-### Rebuild Node Modules (if needed)
-```powershell
-cd viewer
-Remove-Item -Recurse -Force node_modules
-npm install
-npm run dev
-```
+### **Test URLs:**
+
+1. **Landing Page:**
+   ```
+   http://localhost:5173/
+   ✅ Should show landing page
+   ```
+
+2. **Login:**
+   ```
+   http://localhost:5173/app/login
+   ✅ Should show login form
+   ```
+
+3. **Dashboard:**
+   ```
+   http://localhost:5173/app/dashboard
+   ✅ Should show dashboard (after login)
+   ```
+
+4. **Viewer:**
+   ```
+   http://localhost:5173/app/viewer/1.2.3.4.5
+   ✅ Should show image viewer
+   ```
+
+5. **Reporting:**
+   ```
+   http://localhost:5173/app/reporting?studyUID=1.2.3.4.5&patientID=P001&patientName=Test&modality=CT
+   ✅ Should show template selector
+   ```
 
 ---
 
-## What to Check in Browser DevTools:
+## 🆘 **Still Having Issues?**
 
-### Console Tab:
-Look for:
-- ❌ Red errors
-- ⚠️ Yellow warnings
-- Failed imports
-- 404 errors
+### **Collect This Information:**
 
-### Network Tab:
-Check if these load successfully:
-- index.css (should be large, ~100KB+)
-- hero-image.jpg
-- All .tsx/.jsx files
+1. **Error message** (exact text)
+2. **Browser console** (screenshot or copy errors)
+3. **Network tab** (failed API calls)
+4. **URL** (what URL are you accessing?)
+5. **Steps to reproduce** (what did you do?)
 
-### Elements Tab:
-Inspect the page and check:
-- Does `<div class="landing-wrapper">` exist?
-- Are Tailwind classes applied (like `min-h-screen`, `bg-background`)?
-- Do elements have computed styles?
+### **Common Fixes:**
+
+1. ✅ **Refresh page** (Ctrl + Shift + R)
+2. ✅ **Clear cache** (Ctrl + Shift + Delete)
+3. ✅ **Restart dev server** (Ctrl + C, then npm run dev)
+4. ✅ **Check backend is running**
+5. ✅ **Navigate from viewer** instead of direct URL
 
 ---
 
-## Expected Behavior:
+## 📚 **Documentation**
 
-### What You Should See:
-1. **White background** (not dark)
-2. **Navigation bar** at top with logo
-3. **Hero section** with:
-   - Large headline
-   - Gradient text effect
-   - Two buttons (Get Started, Explore Services)
-   - Statistics (99.9%, 10M+, 500+)
-   - Hero image on right
-4. **Floating animations** on background elements
-5. **Footer** at bottom
-
-### What You Should NOT See:
-- ❌ Dark background (#121212)
-- ❌ Completely blank page
-- ❌ Console errors
-- ❌ 404 errors for assets
+- `TESTING_GUIDE.md` - How to test features
+- `SIGN_AND_PREVIEW_GUIDE.md` - Sign and preview features
+- `VIEWER_INTEGRATION_VISUAL.md` - Visual guide
+- `INTEGRATION_COMPLETE.md` - Complete integration guide
 
 ---
 
-## If Still Not Working:
-
-### Option 1: Check Specific Files
-
-Run these commands to verify files exist:
-```powershell
-Test-Path viewer/src/landing/LandingLayout.tsx
-Test-Path viewer/src/landing/pages/LandingHome.tsx
-Test-Path viewer/src/landing/components/Hero.tsx
-Test-Path viewer/src/landing/components/Navbar.tsx
-Test-Path viewer/src/landing/assets/hero-image.jpg
-```
-
-All should return `True`.
-
-### Option 2: Verify Tailwind Processing
-
-Check if Tailwind is processing CSS:
-1. Open browser DevTools
-2. Go to Sources tab
-3. Find `index.css`
-4. Search for `.bg-background` or `.text-gradient`
-5. If found, Tailwind is working
-
-### Option 3: Test Individual Components
-
-Create a minimal test:
-```tsx
-// In viewer/src/landing/pages/TestPage.tsx
-const TestPage = () => {
-  return (
-    <div style={{ background: 'red', padding: '50px' }}>
-      <h1 style={{ color: 'white', fontSize: '48px' }}>
-        TEST PAGE - If you see this, React is working
-      </h1>
-      <div className="bg-blue-500 text-white p-4 mt-4">
-        If this is blue, Tailwind is working
-      </div>
-    </div>
-  );
-};
-```
-
-Visit: `http://localhost:3011/test`
-
----
-
-## Share This Information:
-
-If still having issues, please share:
-
-1. **Browser Console Output** (any errors)
-2. **Network Tab** (any failed requests)
-3. **Screenshot** of what you see
-4. **URL** you're visiting
-5. **Browser** and version
-
----
-
-## Quick Test Checklist:
-
-- [ ] Server running on port 3011
-- [ ] Visited http://localhost:3011/
-- [ ] Hard refreshed browser (Ctrl+Shift+R)
-- [ ] Checked browser console for errors
-- [ ] Tested http://localhost:3011/test
-- [ ] Verified files exist in viewer/src/landing/
-- [ ] Checked Network tab for failed requests
-- [ ] Tried different browser
-
----
-
-## Emergency Rollback:
-
-If you want to revert changes:
-```powershell
-cd viewer
-git checkout viewer/src/App.tsx
-git checkout viewer/src/index.css
-Remove-Item -Recurse -Force src/landing
-Remove-Item tailwind.config.js
-Remove-Item postcss.config.js
-npm run dev
-```
-
-This will restore your app to before the landing page integration.
-
----
-
-**Need more help? Share your browser console output and screenshots!**
+**Most issues are solved by refreshing the page or navigating from the viewer!** 🚀

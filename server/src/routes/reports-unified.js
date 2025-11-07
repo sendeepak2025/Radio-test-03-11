@@ -188,6 +188,16 @@ function validateReportForSigning(report) {
     errors.push('Findings are required before signing');
   }
 
+  // Required: Technique
+  if (!report.technique || report.technique.trim() === '') {
+    errors.push('Technique section is required before signing');
+  }
+
+  // Required: Clinical History (if available in template)
+  if (report.templateId && (!report.clinicalHistory || report.clinicalHistory.trim() === '')) {
+    errors.push('Clinical history/indication is required before signing');
+  }
+
   // ✅ COMPLIANCE UPDATE: Contrast rule for CT
   if (report.modality === 'CT' && report.technique) {
     const techniqueText = report.technique.toLowerCase();
@@ -196,6 +206,15 @@ function validateReportForSigning(report) {
     if (techniqueText.includes('contrast') && !findingsText.includes('contrast')) {
       errors.push('Contrast mentioned in technique but not documented in findings');
     }
+  }
+
+  // Minimum content length check
+  if (report.findingsText && report.findingsText.trim().length < 10) {
+    errors.push('Findings section appears incomplete (too short)');
+  }
+
+  if (report.impression && report.impression.trim().length < 5) {
+    errors.push('Impression section appears incomplete (too short)');
   }
 
   return {
@@ -784,10 +803,37 @@ router.post('/:reportId/finalize', async (req, res) => {
  * Sign and finalize report with content hash verification
  * ✅ COMPLIANCE UPDATE: Enhanced FDA-compliant signature with validation
  */
-router.post('/:reportId/sign', upload.single('signature'), async (req, res) => {
+router.post('/:reportId/sign', upload.single('signatureFile'), async (req, res) => {
   try {
     const { reportId } = req.params;
-    const { signatureText, meaning = 'authored', reason } = req.body;
+    
+    // ✅ FIX: Parse signatureData from request body
+    let signatureData = {};
+    if (req.body.signatureData) {
+      try {
+        signatureData = typeof req.body.signatureData === 'string' 
+          ? JSON.parse(req.body.signatureData) 
+          : req.body.signatureData;
+      } catch (err) {
+        console.error('Failed to parse signatureData:', err);
+      }
+    }
+    
+    const { 
+      signatureText = signatureData.signatureText,
+      signatureImage = signatureData.signatureImage,
+      signatureMeaning = signatureData.signatureMeaning || 'authored',
+      password = signatureData.password,
+      reason = signatureData.reason
+    } = signatureData;
+
+    console.log('📝 Sign request received:', {
+      reportId,
+      hasSignatureText: !!signatureText,
+      hasSignatureImage: !!signatureImage,
+      hasFile: !!req.file,
+      signatureMeaning
+    });
 
     const report = await StructuredReport.findOne({ reportId });
 
@@ -804,6 +850,34 @@ router.post('/:reportId/sign', upload.single('signature'), async (req, res) => {
         success: false,
         error: 'Access denied: You do not have permission to sign this report'
       });
+    }
+
+    // ✅ SIGNATURE FIX: Require either signature image OR signature text
+    if (!req.file && !signatureText && !signatureImage) {
+      return res.status(400).json({
+        success: false,
+        error: 'SIGNATURE_REQUIRED',
+        message: 'Either signature image or signature text is required to sign the report'
+      });
+    }
+
+    // ✅ PASSWORD VERIFICATION: Verify user password before signing
+    if (password) {
+      const User = require('../models/User');
+      const bcrypt = require('bcryptjs');
+      const userId = req.user.userId || req.user._id || req.user.id;
+      const user = await User.findById(userId);
+      
+      if (user && user.passwordHash) {
+        const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+        if (!isPasswordValid) {
+          return res.status(401).json({
+            success: false,
+            error: 'INVALID_PASSWORD',
+            message: 'Invalid password. Please enter your correct password to sign the report.'
+          });
+        }
+      }
     }
 
     // ✅ COMPLIANCE UPDATE: Server-side validation before signing
@@ -832,28 +906,46 @@ router.post('/:reportId/sign', upload.single('signature'), async (req, res) => {
       }
     }
 
+    // ✅ FIX: Get user info for signature
+    const User = require('../models/User');
+    const user = await User.findById(userId);
+    const fullName = user?.fullName || user?.username || req.user.username || 'Radiologist';
+    const licenseNumber = user?.licenseNumber || '';
+    const specialty = user?.specialty || '';
+
     // ✅ COMPLIANCE UPDATE: Enhanced FDA-compliant signature block
     report.signature = {
       by: userId,
-      displayName: req.user.username || 'Radiologist',
+      displayName: fullName,
+      licenseNumber: licenseNumber,
+      specialty: specialty,
       at: new Date(),
-      method: req.file ? 'image' : 'text',
-      meaning: meaning, // authored, reviewed, approved, verified
-      reason: reason, // Required for addendum
+      method: signatureImage || req.file ? 'image' : 'text',
+      meaning: signatureMeaning || 'authored',
+      reason: reason,
       ip: req.ip || req.connection.remoteAddress,
       userAgent: req.get('user-agent') || 'Unknown',
       contentHash: hash
     };
 
-    // Store signature file path (private, not publicly accessible)
-    if (req.file) {
+    // ✅ FIX: Store signature image (base64 or file)
+    if (signatureImage) {
+      // Base64 image from frontend
+      report.radiologistSignatureUrl = signatureImage;
+      report.radiologistSignaturePublicId = 'base64-signature';
+    } else if (req.file) {
+      // Uploaded file
       report.radiologistSignatureUrl = `/private/signatures/${req.file.filename}`;
       report.radiologistSignaturePublicId = req.file.filename;
     }
 
+    // Store text signature
     if (signatureText) {
       report.radiologistSignature = signatureText;
     }
+    
+    // Store full radiologist name
+    report.radiologistName = fullName;
 
     // ✅ COMPLIANCE UPDATE: Set status based on context
     if (report.reportStatus === 'final' && reason) {
@@ -924,8 +1016,8 @@ router.post('/:reportId/sign', upload.single('signature'), async (req, res) => {
       resourceId: reportId,
       details: {
         contentHash: hash,
-        signatureMethod: req.file ? 'image' : 'text',
-        meaning: meaning,
+        signatureMethod: req.file || signatureImage ? 'image' : 'text',
+        meaning: signatureMeaning || 'authored',
         templateVersion: report.templateVersion
       },
       ipAddress: req.ip || req.connection.remoteAddress
@@ -1674,57 +1766,185 @@ router.get('/export/share/:shareId', async (req, res) => {
 // ============================================================================
 
 /**
- * Generate PDF from report
+ * Generate PDF from report with hospital info and signature
  */
 async function generateReportPDF(report) {
   try {
     // Try to use PDFKit if available
     const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument();
+    const Hospital = require('../models/Hospital');
+    const doc = new PDFDocument({ margin: 50 });
     const chunks = [];
 
     doc.on('data', chunk => chunks.push(chunk));
     doc.on('end', () => {});
 
-    // Header
-    doc.fontSize(20).text('MEDICAL REPORT', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(12).text(`Report ID: ${report.reportId}`);
-    doc.text(`Patient: ${report.patientName} (${report.patientID})`);
-    doc.text(`Study: ${report.studyInstanceUID}`);
-    doc.text(`Modality: ${report.modality}`);
-    doc.text(`Date: ${new Date(report.reportDate).toLocaleDateString()}`);
-    doc.text(`Radiologist: ${report.radiologistName}`);
-    doc.text(`Status: ${report.reportStatus.toUpperCase()}`);
+    // Get hospital information
+    let hospital = null;
+    if (report.hospitalId) {
+      hospital = await Hospital.findOne({ hospitalId: report.hospitalId });
+    }
+
+    // ===== HEADER WITH HOSPITAL INFO =====
+    const pageWidth = doc.page.width - 100; // Account for margins
+    
+    // Hospital Logo (if available)
+    if (hospital && hospital.logoUrl) {
+      try {
+        doc.image(hospital.logoUrl, 50, 45, { width: 80 });
+      } catch (err) {
+        console.warn('Failed to load hospital logo:', err.message);
+      }
+    }
+
+    // Hospital Name and Address
+    doc.fontSize(16).font('Helvetica-Bold');
+    doc.text(hospital?.name || 'Medical Center', hospital?.logoUrl ? 140 : 50, 50);
+    
+    doc.fontSize(9).font('Helvetica');
+    if (hospital?.address) {
+      const addr = hospital.address;
+      const addressLine = [addr.street, addr.city, addr.state, addr.zipCode, addr.country]
+        .filter(Boolean).join(', ');
+      doc.text(addressLine, hospital?.logoUrl ? 140 : 50, 70);
+    }
+    if (hospital?.contactPhone) {
+      doc.text(`Phone: ${hospital.contactPhone}`, hospital?.logoUrl ? 140 : 50, 85);
+    }
+    if (hospital?.contactEmail) {
+      doc.text(`Email: ${hospital.contactEmail}`, hospital?.logoUrl ? 140 : 50, 97);
+    }
+
+    // Horizontal line
+    doc.moveTo(50, 120).lineTo(pageWidth + 50, 120).stroke();
+    doc.moveDown(2);
+
+    // ===== REPORT TITLE =====
+    doc.fontSize(20).font('Helvetica-Bold').text('RADIOLOGY REPORT', { align: 'center' });
     doc.moveDown();
 
-    // Technique
+    // ===== PATIENT & STUDY INFO =====
+    doc.fontSize(10).font('Helvetica');
+    const infoY = doc.y;
+    
+    // Left column
+    doc.text(`Report ID: ${report.reportId}`, 50, infoY);
+    doc.text(`Patient: ${report.patientName}`, 50, infoY + 15);
+    doc.text(`Patient ID: ${report.patientID}`, 50, infoY + 30);
+    doc.text(`Modality: ${report.modality}`, 50, infoY + 45);
+    
+    // Right column
+    doc.text(`Date: ${new Date(report.reportDate).toLocaleDateString()}`, 320, infoY);
+    doc.text(`Study UID: ${report.studyInstanceUID.substring(0, 30)}...`, 320, infoY + 15);
+    doc.text(`Status: ${report.reportStatus.toUpperCase()}`, 320, infoY + 30);
+    doc.text(`Radiologist: ${report.radiologistName}`, 320, infoY + 45);
+    
+    doc.moveDown(4);
+
+    // ===== CLINICAL HISTORY =====
+    if (report.clinicalHistory) {
+      doc.fontSize(12).font('Helvetica-Bold').text('CLINICAL HISTORY', { underline: true });
+      doc.fontSize(10).font('Helvetica').text(report.technique, { align: 'justify' });
+      doc.moveDown();
+    }
+
+    // ===== TECHNIQUE =====
     if (report.technique) {
-      doc.fontSize(14).text('TECHNIQUE', { underline: true });
-      doc.fontSize(11).text(report.technique);
+      doc.fontSize(12).font('Helvetica-Bold').text('TECHNIQUE', { underline: true });
+      doc.fontSize(10).font('Helvetica').text(report.technique, { align: 'justify' });
       doc.moveDown();
     }
 
-    // Findings
+    // ===== FINDINGS =====
     if (report.findingsText) {
-      doc.fontSize(14).text('FINDINGS', { underline: true });
-      doc.fontSize(11).text(report.findingsText);
+      doc.fontSize(12).font('Helvetica-Bold').text('FINDINGS', { underline: true });
+      doc.fontSize(10).font('Helvetica').text(report.findingsText, { align: 'justify' });
       doc.moveDown();
     }
 
-    // Impression
+    // ===== MEASUREMENTS =====
+    if (report.measurements && report.measurements.length > 0) {
+      doc.fontSize(12).font('Helvetica-Bold').text('MEASUREMENTS', { underline: true });
+      doc.fontSize(10).font('Helvetica');
+      report.measurements.forEach(m => {
+        doc.text(`• ${m.type}: ${m.value} ${m.unit}`);
+      });
+      doc.moveDown();
+    }
+
+    // ===== IMPRESSION =====
     if (report.impression) {
-      doc.fontSize(14).text('IMPRESSION', { underline: true });
-      doc.fontSize(11).text(report.impression);
+      doc.fontSize(12).font('Helvetica-Bold').text('IMPRESSION', { underline: true });
+      doc.fontSize(10).font('Helvetica').text(report.impression, { align: 'justify' });
       doc.moveDown();
     }
 
-    // Signature
-    if (report.signedAt) {
+    // ===== RECOMMENDATIONS =====
+    if (report.recommendations) {
+      doc.fontSize(12).font('Helvetica-Bold').text('RECOMMENDATIONS', { underline: true });
+      doc.fontSize(10).font('Helvetica').text(report.recommendations, { align: 'justify' });
       doc.moveDown();
-      doc.fontSize(10).text(`Signed by: ${report.radiologistName}`);
-      doc.text(`Date: ${new Date(report.signedAt).toLocaleString()}`);
     }
+
+    // ===== SIGNATURE SECTION =====
+    if (report.signedAt) {
+      doc.moveDown(2);
+      
+      // Signature box
+      const sigBoxY = doc.y;
+      doc.rect(50, sigBoxY, pageWidth, 100).stroke();
+      
+      doc.moveDown(0.5);
+      
+      // Signature image (if available)
+      if (report.radiologistSignatureUrl) {
+        try {
+          // Check if it's a base64 image
+          if (report.radiologistSignatureUrl.startsWith('data:image')) {
+            const base64Data = report.radiologistSignatureUrl.split(',')[1];
+            const imgBuffer = Buffer.from(base64Data, 'base64');
+            doc.image(imgBuffer, 60, sigBoxY + 10, { width: 150, height: 40 });
+          } else {
+            // File path
+            doc.image(report.radiologistSignatureUrl, 60, sigBoxY + 10, { width: 150, height: 40 });
+          }
+        } catch (err) {
+          console.warn('Failed to load signature image:', err.message);
+          // Fallback to text signature
+          if (report.radiologistSignature) {
+            doc.fontSize(14).font('Helvetica-Oblique').text(report.radiologistSignature, 60, sigBoxY + 20);
+          }
+        }
+      } else if (report.radiologistSignature) {
+        // Text signature
+        doc.fontSize(14).font('Helvetica-Oblique').text(report.radiologistSignature, 60, sigBoxY + 20);
+      }
+      
+      // Signature details
+      doc.fontSize(9).font('Helvetica');
+      doc.text(`Signed by: ${report.radiologistName}`, 60, sigBoxY + 60);
+      if (report.signature?.licenseNumber) {
+        doc.text(`License: ${report.signature.licenseNumber}`, 60, sigBoxY + 73);
+      }
+      if (report.signature?.specialty) {
+        doc.text(`Specialty: ${report.signature.specialty}`, 60, sigBoxY + 86);
+      }
+      
+      // Date and time
+      doc.text(`Date: ${new Date(report.signedAt).toLocaleString()}`, 320, sigBoxY + 60);
+      doc.text(`Status: Electronically Signed`, 320, sigBoxY + 73);
+      if (report.signature?.contentHash) {
+        doc.fontSize(7).text(`Hash: ${report.signature.contentHash.substring(0, 32)}...`, 320, sigBoxY + 86);
+      }
+    }
+
+    // ===== FOOTER =====
+    doc.fontSize(8).font('Helvetica').text(
+      'This report is electronically signed and legally binding.',
+      50,
+      doc.page.height - 50,
+      { align: 'center' }
+    );
 
     doc.end();
 
@@ -1734,7 +1954,7 @@ async function generateReportPDF(report) {
     });
 
   } catch (error) {
-    console.warn('PDFKit not available, using simple text format');
+    console.warn('PDFKit not available, using simple text format:', error.message);
     // Fallback to simple text format
     const text = `
 MEDICAL REPORT
@@ -1748,6 +1968,10 @@ Date: ${new Date(report.reportDate).toLocaleDateString()}
 Radiologist: ${report.radiologistName}
 Status: ${report.reportStatus.toUpperCase()}
 
+CLINICAL HISTORY
+----------------
+${report.clinicalHistory || 'N/A'}
+
 TECHNIQUE
 ---------
 ${report.technique || 'N/A'}
@@ -1760,7 +1984,9 @@ IMPRESSION
 ----------
 ${report.impression || 'N/A'}
 
-${report.signedAt ? `\nSigned by: ${report.radiologistName}\nDate: ${new Date(report.signedAt).toLocaleString()}` : ''}
+${report.recommendations ? `RECOMMENDATIONS\n---------------\n${report.recommendations}\n` : ''}
+
+${report.signedAt ? `\nSigned by: ${report.radiologistName}\n${report.signature?.licenseNumber ? `License: ${report.signature.licenseNumber}\n` : ''}Date: ${new Date(report.signedAt).toLocaleString()}\nStatus: Electronically Signed` : ''}
     `;
     return Buffer.from(text);
   }

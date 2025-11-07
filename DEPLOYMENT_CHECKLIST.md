@@ -1,279 +1,361 @@
-# 🚀 Deployment Checklist - AI Report Consolidation
+# ✅ Reporting Module - Deployment Checklist
 
-## ✅ Pre-Deployment (Do This First!)
+## Pre-Deployment Tasks
 
-### 1. Backup Database
-```bash
-# Create backup with timestamp
-mongodump --uri="$MONGODB_URI" --out=./backup-$(date +%Y%m%d-%H%M%S)
+### 1. Code Review
+- [ ] Review all new files for code quality
+- [ ] Check TypeScript types are correct
+- [ ] Verify no console.errors in production code
+- [ ] Remove debug console.logs
+- [ ] Check for TODO/FIXME comments
 
-# Verify backup
-ls -lh backup-*/
-```
+### 2. Testing
 
-### 2. Review Changes
-- [ ] Read `CONSOLIDATION_PR_DESCRIPTION.md`
-- [ ] Review `TEST_RESULTS.md`
-- [ ] Check all 8 modified files
-- [ ] Understand rollback procedure
+#### Unit Tests
+- [ ] Test ReportingContext reducer
+- [ ] Test each action in ReportingContext
+- [ ] Test ReportContentPanel
+- [ ] Test AnatomicalDiagramPanel
+- [ ] Test VoiceDictationPanel
+- [ ] Test AIAssistantPanel
+- [ ] Test ExportPanel
 
-### 3. Test in Staging
-```bash
-# Deploy to staging
-git checkout consolidation-branch
-npm install --prefix server
-npm install --prefix viewer
+#### Integration Tests
+- [ ] Test complete reporting workflow
+- [ ] Test template selection → editing → save
+- [ ] Test anatomical marking → finding creation
+- [ ] Test voice dictation → field update
+- [ ] Test AI suggestions → apply
+- [ ] Test export all formats
 
-# Run migration dry-run
-node server/migrate-reports-consolidation.js --dry-run
-
-# Start services
-cd server && npm start &
-cd viewer && npm run dev &
-
-# Test all three modes
-# - Manual report creation
-# - AI-assisted report
-# - AI-only report
-```
-
----
-
-## 🔧 Deployment Steps
-
-### Step 1: Deploy Backend (15 min)
-```bash
-# 1. Stop backend
-pm2 stop backend
-
-# 2. Pull changes
-git pull origin main
-
-# 3. Install dependencies (if needed)
-cd server && npm install
-
-# 4. Run migration
-node migrate-reports-consolidation.js --dry-run  # Preview
-node migrate-reports-consolidation.js            # Execute
-node migrate-reports-consolidation.js --verify   # Verify
-
-# 5. Start backend
-pm2 start backend
-pm2 logs backend --lines 50
-```
-
-### Step 2: Verify Backend (5 min)
-```bash
-# Check health
-curl http://localhost:8001/health
-
-# Check AI routing
-curl -X POST http://localhost:8001/api/ai/analyze \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"studyInstanceUID":"test","frameIndex":0}'
-
-# Check report endpoint
-curl http://localhost:8001/api/reports \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-### Step 3: Deploy Frontend (10 min)
-```bash
-# 1. Build frontend
-cd viewer
-npm run build
-
-# 2. Deploy build
-# (Copy dist/ to your web server)
-
-# 3. Clear browser cache
-# Instruct users to hard refresh (Ctrl+Shift+R)
-```
-
-### Step 4: Verify Frontend (5 min)
-- [ ] Open application in browser
-- [ ] Check console for errors
-- [ ] Test report creation (manual mode)
-- [ ] Test AI analysis
-- [ ] Test mode toggle
-- [ ] Test PDF download
-
----
-
-## 🔍 Post-Deployment Verification
-
-### Immediate Checks (First 30 min)
-```bash
-# 1. Check logs
-pm2 logs backend --lines 100 | grep -i error
-tail -f server/logs/audit.log
-
-# 2. Check database
-mongo $MONGODB_URI
-> db.reports.countDocuments()
-> db.reports.find({creationMode: "ai-assisted"}).limit(5)
-
-# 3. Monitor AI calls
-tail -f server/logs/access.log | grep "/api/ai/analyze"
-```
-
-### Database Verification Queries
-```javascript
-// Connect to MongoDB
-mongo $MONGODB_URI
-
-// 1. Count reports by mode
-db.reports.aggregate([
-  { $group: { _id: "$creationMode", count: { $sum: 1 } } }
-])
-
-// 2. Check provenance
-db.reports.find({ "aiProvenance": { $exists: true } }).count()
-
-// 3. Verify migration
-db.reports.find().count()  // Should match old count
-db.structuredreports.find().count()  // Old collection
-
-// 4. Sample check
-db.reports.findOne({ creationMode: "ai-assisted" })
-```
-
-### Functional Tests
-- [ ] Create manual report
-- [ ] Create AI-assisted report
-- [ ] Create AI-only report
-- [ ] Download PDF
+#### E2E Tests
+- [ ] Create new report from scratch
+- [ ] Edit existing report
+- [ ] Add multiple findings
+- [ ] Mark on anatomical diagram
+- [ ] Use voice dictation
+- [ ] Apply AI suggestions
+- [ ] Save report
 - [ ] Sign report
-- [ ] View audit trail
+- [ ] Export to PDF
+- [ ] Export to DICOM SR
+- [ ] Export to FHIR
+
+### 3. Browser Compatibility
+- [ ] Test on Chrome (latest)
+- [ ] Test on Firefox (latest)
+- [ ] Test on Safari (latest)
+- [ ] Test on Edge (latest)
+- [ ] Test on mobile browsers
+
+### 4. Performance
+- [ ] Check initial load time (<2s)
+- [ ] Check state update performance
+- [ ] Check canvas rendering performance
+- [ ] Check auto-save doesn't block UI
+- [ ] Check memory leaks (DevTools)
+- [ ] Run Lighthouse audit
+
+### 5. Accessibility
+- [ ] Keyboard navigation works
+- [ ] Screen reader compatible
+- [ ] ARIA labels present
+- [ ] Color contrast meets WCAG AA
+- [ ] Focus indicators visible
+
+### 6. Security
+- [ ] API endpoints require authentication
+- [ ] CSRF tokens included
+- [ ] Input validation on all fields
+- [ ] XSS prevention
+- [ ] SQL injection prevention (if applicable)
 
 ---
 
-## 🚨 Rollback Procedure (If Needed)
+## Deployment Steps
 
-### Quick Rollback (5 min)
-```bash
-# 1. Stop services
-pm2 stop all
+### Step 1: Backup
+- [ ] Backup current production code
+- [ ] Backup database
+- [ ] Document rollback procedure
 
-# 2. Restore database
-mongorestore --uri="$MONGODB_URI" --drop ./backup-YYYYMMDD-HHMMSS/
+### Step 2: Dependencies
+- [ ] Install any new npm packages
+- [ ] Update package.json
+- [ ] Run `npm install`
+- [ ] Check for security vulnerabilities (`npm audit`)
 
-# 3. Revert code
-git revert HEAD
-git push origin main
+### Step 3: Build
+- [ ] Run TypeScript compiler (`tsc`)
+- [ ] Run build process (`npm run build`)
+- [ ] Check build output for errors
+- [ ] Verify bundle size is reasonable
 
-# 4. Restart services
-pm2 start all
-```
+### Step 4: Database
+- [ ] Run any database migrations
+- [ ] Update indexes if needed
+- [ ] Test database connections
 
-### Verify Rollback
-```bash
-# Check database
-mongo $MONGODB_URI
-> db.reports.countDocuments()
-> db.structuredreports.countDocuments()
+### Step 5: Deploy
+- [ ] Deploy to staging environment first
+- [ ] Test on staging
+- [ ] Deploy to production
+- [ ] Verify deployment successful
 
-# Check application
-curl http://localhost:8001/health
-```
-
----
-
-## 📊 Monitoring (First 48 Hours)
-
-### Metrics to Watch
-```bash
-# 1. Error rate
-tail -f server/logs/error.log | grep -c "Error"
-
-# 2. AI call success rate
-grep "/api/ai/analyze" server/logs/access.log | \
-  awk '{print $9}' | sort | uniq -c
-
-# 3. Report creation by mode
-mongo $MONGODB_URI --eval '
-  db.reports.aggregate([
-    { $match: { createdAt: { $gte: new Date(Date.now() - 24*60*60*1000) } } },
-    { $group: { _id: "$creationMode", count: { $sum: 1 } } }
-  ])
-'
-
-# 4. Response times
-tail -f server/logs/access.log | \
-  grep "/api/reports" | \
-  awk '{print $10}' | \
-  awk '{sum+=$1; count++} END {print "Avg:", sum/count, "ms"}'
-```
-
-### Alert Thresholds
-- ⚠️ Error rate > 5%
-- ⚠️ AI call failure > 10%
-- ⚠️ Response time > 2000ms
-- 🚨 Database connection lost
-- 🚨 AI services unavailable
+### Step 6: Post-Deployment
+- [ ] Smoke test critical paths
+- [ ] Monitor error logs
+- [ ] Monitor performance metrics
+- [ ] Check auto-save is working
+- [ ] Verify exports work
 
 ---
 
-## 📞 Support Contacts
+## Configuration
 
-### Technical Issues
-- **Backend:** @backend-team
-- **Frontend:** @frontend-team
-- **Database:** @dba-team
-- **DevOps:** @devops-team
+### Environment Variables
+- [ ] `VITE_API_URL` - API endpoint
+- [ ] `NODE_ENV` - production
+- [ ] Any other required env vars
 
-### Escalation
-- **On-Call:** [Phone Number]
-- **Slack:** #tech-emergency
-- **Email:** tech-support@company.com
+### Feature Flags (if applicable)
+- [ ] Enable anatomical diagrams
+- [ ] Enable voice dictation
+- [ ] Enable AI assistant
+- [ ] Enable auto-save
 
 ---
 
-## ✅ Sign-Off
+## Documentation
 
-### Pre-Deployment
-- [ ] Database backed up
-- [ ] Staging tested
-- [ ] Team notified
+### User Documentation
+- [ ] Update user manual
+- [ ] Create video tutorials
+- [ ] Update help section
+- [ ] Create quick reference guide
+
+### Developer Documentation
+- [ ] Update API documentation
+- [ ] Update component documentation
+- [ ] Update architecture diagrams
+- [ ] Update README files
+
+---
+
+## Training
+
+### Radiologists
+- [ ] Train on new interface
+- [ ] Train on anatomical diagrams
+- [ ] Train on voice dictation
+- [ ] Train on AI assistant
+- [ ] Provide cheat sheet
+
+### IT Staff
+- [ ] Train on troubleshooting
+- [ ] Train on monitoring
+- [ ] Train on rollback procedure
+- [ ] Provide support documentation
+
+---
+
+## Monitoring
+
+### Metrics to Track
+- [ ] Page load time
+- [ ] API response times
+- [ ] Error rates
+- [ ] Auto-save success rate
+- [ ] Export success rate
+- [ ] User adoption rate
+
+### Alerts
+- [ ] Set up error alerts
+- [ ] Set up performance alerts
+- [ ] Set up availability alerts
+- [ ] Set up usage alerts
+
+---
+
+## Rollback Plan
+
+### If Issues Occur
+1. [ ] Identify the issue
+2. [ ] Assess severity
+3. [ ] Decide: fix forward or rollback
+4. [ ] If rollback:
+   - [ ] Restore previous code
+   - [ ] Restore database if needed
+   - [ ] Verify rollback successful
+   - [ ] Notify users
+5. [ ] Document issue and resolution
+
+---
+
+## Known Issues & Workarounds
+
+### Issue 1: Canvas Placeholder
+- **Issue**: Body diagrams show placeholder text
+- **Workaround**: Add real SVG/images before production
+- **Priority**: HIGH
+- **Status**: [ ] Fixed
+
+### Issue 2: No Report Locking
+- **Issue**: Multiple users can edit simultaneously
+- **Workaround**: Train users to coordinate
+- **Priority**: MEDIUM
+- **Status**: [ ] Fixed
+
+### Issue 3: Voice Recognition Browser Support
+- **Issue**: Only works in Chrome/Edge
+- **Workaround**: Use Chrome/Edge for voice features
+- **Priority**: LOW
+- **Status**: [ ] Documented
+
+---
+
+## Success Criteria
+
+### Technical
+- [ ] All tests passing
+- [ ] No critical bugs
+- [ ] Performance targets met
+- [ ] Security audit passed
+
+### User Experience
+- [ ] Users can create reports faster
+- [ ] Anatomical diagrams are used
+- [ ] Voice dictation adoption >20%
+- [ ] AI assistant adoption >50%
+- [ ] User satisfaction >80%
+
+### Business
+- [ ] Reports per day increased
+- [ ] Time per report decreased
+- [ ] Export usage increased
+- [ ] No data loss incidents
+
+---
+
+## Post-Launch
+
+### Week 1
+- [ ] Monitor error logs daily
+- [ ] Monitor performance metrics
+- [ ] Collect user feedback
+- [ ] Fix critical bugs immediately
+
+### Week 2-4
+- [ ] Analyze usage patterns
+- [ ] Identify improvement areas
+- [ ] Plan next iteration
+- [ ] Update documentation
+
+### Month 2-3
+- [ ] Implement improvements
+- [ ] Add requested features
+- [ ] Optimize performance
+- [ ] Expand training
+
+---
+
+## Support
+
+### User Support
+- [ ] Create support ticket system
+- [ ] Assign support team
+- [ ] Create FAQ
+- [ ] Set up help desk
+
+### Technical Support
+- [ ] On-call rotation
+- [ ] Escalation procedure
+- [ ] Debug tools ready
+- [ ] Monitoring dashboard
+
+---
+
+## Compliance
+
+### Medical Device Regulations
+- [ ] FDA compliance (if applicable)
+- [ ] HIPAA compliance
+- [ ] Data privacy compliance
+- [ ] Audit trail requirements
+
+### Quality Assurance
+- [ ] QA testing complete
+- [ ] Validation documentation
+- [ ] Risk assessment
+- [ ] Change control
+
+---
+
+## Sign-Off
+
+### Required Approvals
+- [ ] Development Lead
+- [ ] QA Lead
+- [ ] Product Manager
+- [ ] Medical Director
+- [ ] IT Director
+- [ ] Compliance Officer
+
+### Deployment Authorization
+- [ ] Staging deployment approved
+- [ ] Production deployment approved
+- [ ] Rollback plan approved
+- [ ] Support plan approved
+
+---
+
+## Final Checklist
+
+Before going live:
+- [ ] All tests passing
+- [ ] All documentation updated
+- [ ] All training completed
+- [ ] All monitoring set up
+- [ ] All approvals obtained
 - [ ] Rollback plan ready
-
-**Signed:** ________________  
-**Date:** ________________
-
-### Post-Deployment
-- [ ] Backend deployed
-- [ ] Frontend deployed
-- [ ] Verification complete
-- [ ] Monitoring active
-
-**Signed:** ________________  
-**Date:** ________________
-
-### 48-Hour Review
-- [ ] No critical errors
-- [ ] Performance acceptable
-- [ ] User feedback positive
-- [ ] Ready for cleanup
-
-**Signed:** ________________  
-**Date:** ________________
+- [ ] Support team ready
+- [ ] Users notified
 
 ---
 
-## 🎉 Success Criteria
+## Emergency Contacts
 
-- ✅ Zero downtime deployment
-- ✅ All reports migrated successfully
-- ✅ No data loss
-- ✅ AI routing working
-- ✅ Three modes functional
-- ✅ PDF generation working
-- ✅ No critical errors in 48 hours
-- ✅ User acceptance positive
+### Development Team
+- Lead Developer: [Name] - [Phone] - [Email]
+- Backend Developer: [Name] - [Phone] - [Email]
+- Frontend Developer: [Name] - [Phone] - [Email]
+
+### Operations Team
+- DevOps Lead: [Name] - [Phone] - [Email]
+- Database Admin: [Name] - [Phone] - [Email]
+- Network Admin: [Name] - [Phone] - [Email]
+
+### Management
+- Product Manager: [Name] - [Phone] - [Email]
+- Medical Director: [Name] - [Phone] - [Email]
+- IT Director: [Name] - [Phone] - [Email]
 
 ---
 
-**Last Updated:** 2025-10-27  
-**Version:** 1.0  
-**Status:** Ready for Production
+## Notes
+
+### Deployment Date
+- Planned: [Date]
+- Actual: [Date]
+
+### Issues Encountered
+- [List any issues and resolutions]
+
+### Lessons Learned
+- [Document lessons for future deployments]
+
+---
+
+**Status: Ready for Deployment** ✅
+
+Once all items are checked, the reporting module is ready for production deployment!
