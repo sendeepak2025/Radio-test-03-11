@@ -211,13 +211,24 @@ console.log(result,"COOKIES AUTH")
               >
                 Forgot your password?
               </Link>
-            </Box>
-            <FormControlLabel
-              control={<Checkbox checked={credentials.rememberMe} onChange={handleCheckboxChange} />}
-              label="Remember me"
-              sx={{ mt: 1 }}
-            />
           </Box>
+          <FormControlLabel
+            control={<Checkbox checked={credentials.rememberMe} onChange={handleCheckboxChange} />}
+            label="Remember me"
+            sx={{ mt: 1 }}
+          />
+
+          {/* Register redirect */}
+          <Box sx={{ mt: 2, textAlign: 'center' }}>
+            <Button
+              variant="text"
+              onClick={() => navigate('/app/register')}
+              disabled={isLoading}
+            >
+              New here? Create an account
+            </Button>
+          </Box>
+        </Box>
 
           {/* Test Credentials (Development Only) */}
           {/* {import.meta.env.DEV && (

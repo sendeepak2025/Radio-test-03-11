@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const Session = require('../models/Session');
 const User = require('../models/User');
 
@@ -49,8 +50,8 @@ class SessionService {
       }
       
       // Generate tokens
-      const accessToken = this.generateAccessToken(userId, sessionId, user.roles);
-      const refreshToken = this.generateRefreshToken(userId, sessionId);
+      const accessToken = this.generateAccessToken(userId, sessionId.toString(), user.roles);
+      const refreshToken = this.generateRefreshToken(userId, sessionId.toString());
       
       // Calculate expiration
       const expiresAt = new Date(Date.now() + this.REFRESH_TOKEN_EXPIRY * 1000);
@@ -485,7 +486,7 @@ class SessionService {
    * @private
    */
   generateSessionId() {
-    return crypto.randomBytes(16).toString('hex');
+    return new mongoose.Types.ObjectId();
   }
 
   /**

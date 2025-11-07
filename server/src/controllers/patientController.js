@@ -1,47 +1,72 @@
 const Study = require('../models/Study');
 const Patient = require('../models/Patient');
+const User = require('../models/User');
+
+const mongoose = require("mongoose");
 
 async function getPatients(req, res) {
   try {
-    // Check authentication
     if (!req.user) {
-      return res.status(401).json({ success: false, message: 'Authentication required' })
+      return res.status(401).json({ success: false, message: "Authentication required" });
     }
 
-    // Build query based on user's hospital
+    console.log("🔍 Requested user:", req.user);
+    console.log("🏥 Hospital ID from token:", req.user.hospitalId);
+
     const query = {};
 
-    // Check if user is super admin
-    const isSuperAdmin = req.user.roles && (
-      req.user.roles.includes('system:admin') ||
-      req.user.roles.includes('super_admin')
-    );
+    const isSuperAdmin = req.user.roles?.includes("system:admin") || req.user.roles?.includes("super_admin");
 
-    // Filter by hospital for non-super-admin users
-    if (!isSuperAdmin && req.user.hospitalId) {
-      query.hospitalId = req.user.hospitalId;
-      console.log(`🔒 Filtering patients by hospitalId: ${req.user.hospitalId} for user: ${req.user.username}`);
-    } else if (isSuperAdmin) {
-      console.log(`👑 Super admin ${req.user.username} - showing all patients`);
-    }
+if (!isSuperAdmin && req.user.hospitalId) {
+
+  const hospitalUser = await User.findById(req.user.hospitalId).lean();
+
+  if (!hospitalUser) {
+    return res.status(404).json({ success: false, message: "Hospital user not found" });
+  }
+
+ const isAdminUser = req.user.roles?.includes("admin");
+
+  const finalHospitalId = isAdminUser
+    ? hospitalUser._id
+    : (hospitalUser.hospitalId ? hospitalUser.hospitalId : hospitalUser._id);
+  // ✅ VALIDATION ADDED
+  if (!mongoose.isValidObjectId(finalHospitalId)) {
+    console.log("⚠ Invalid ObjectId:", finalHospitalId);
+    return res.status(400).json({ success: false, message: "Invalid hospital ID format" });
+  }
+
+  query.hospitalId = new mongoose.Types.ObjectId(finalHospitalId);
+
+  console.log(`🏥 User found: ${hospitalUser._id}`);
+  console.log(`✅ Using hospitalId for filter: ${finalHospitalId}`);
+}
+
+
+
 
     const patients = await Patient.find(query).lean();
-    console.log(`   📋 Found ${patients.length} patients`);
+    console.log(`📋 Found ${patients.length} patients`);
 
     const out = patients.map(p => ({
       patientID: p.patientID,
-      patientName: p.patientName || 'Unknown',
-      birthDate: p.birthDate || '',
-      sex: p.sex || '',
+      patientName: p.patientName || "Unknown",
+      birthDate: p.birthDate || "",
+      sex: p.sex || "",
       studyCount: Array.isArray(p.studyIds) ? p.studyIds.length : 0,
-      hospitalId: p.hospitalId ? p.hospitalId.toString() : null
+      hospitalId: p.hospitalId?.toString() || null
     }));
-    res.json({ success: true, data: out });
+
+    return res.json({ success: true, data: out });
+
   } catch (e) {
-    console.error('Failed to list patients:', e);
-    res.status(500).json({ success: false, message: e.message });
+    console.error("❌ Failed to list patients:", e);
+    return res.status(500).json({ success: false, message: e.message });
   }
 }
+
+
+
 
 async function getPatientStudies(req, res) {
   try {

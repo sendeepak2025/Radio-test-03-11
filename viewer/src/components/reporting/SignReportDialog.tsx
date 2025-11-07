@@ -62,6 +62,20 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
   onSign,
   reportData
 }) => {
+  // Convert a data URL to a Blob without using fetch (CSP-safe)
+  const dataUrlToBlob = (dataUrl: string): Blob => {
+    const parts = dataUrl.split(',');
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+    const binary = atob(parts[1]);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mime });
+  };
+
   const [activeTab, setActiveTab] = useState(0);
   const [signatureText, setSignatureText] = useState('');
   const [signatureMeaning, setSignatureMeaning] = useState<'authored' | 'reviewed' | 'approved' | 'verified'>('authored');
@@ -113,7 +127,8 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
       let signatureFile: File | undefined;
       if (activeTab === 1 && signatureCanvasRef.current) {
         const dataUrl = signatureCanvasRef.current.toDataURL('image/png');
-        const blob = await fetch(dataUrl).then(r => r.blob());
+        // Avoid fetch(data:) which may be blocked by CSP; convert inline
+        const blob = dataUrlToBlob(dataUrl);
         signatureFile = new File([blob], 'signature.png', { type: 'image/png' });
       }
       

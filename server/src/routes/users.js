@@ -10,6 +10,7 @@ const User = require('../models/User');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
+const bcrypt = require('bcryptjs');
 
 // Configure multer for signature uploads
 const storage = multer.diskStorage({
@@ -43,153 +44,132 @@ const upload = multer({
 // All routes require authentication
 router.use(authenticate);
 
-/**
- * GET /api/users/profile
- * Get current user profile
- */
-router.get('/profile', async (req, res) => {
+
+// Helper to normalize current user id
+function getCurrentUserId(req) {
+  return (
+    req.user?.userId ||
+    req.user?.id ||
+    req.user?.sub ||
+    req.user?._id
+  );
+}
+
+router.get("/", async (req, res) => {
   try {
-    const userId = req.user.userId || req.user._id || req.user.id;
-    
-    const user = await User.findById(userId).select('-password');
-    
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
+    const query = {};
+
+    const isSuperAdmin = req.user?.roles?.includes("superadmin");
+
+    if (!isSuperAdmin) {
+      // Login user ko DB se fetch karo
+      const hospitalUser = await User.findById(req.user._id).lean();
+
+      if (!hospitalUser) {
+        return res.status(404).json({ success: false, message: "Hospital user not found" });
+      }
+
+      // Admin hai to _id use karega, baaki hospitalId ya fallback _id
+      const isAdminUser = req.user.roles?.includes("admin");
+
+      const finalHospitalId = isAdminUser
+        ? hospitalUser._id.toString()
+        : (hospitalUser.hospitalId || hospitalUser._id.toString());
+
+      query.hospitalId = finalHospitalId;
+
+      console.log(`🏥 User Roles: ${req.user.roles}`);
+      console.log(`🔒 Filtering patients by hospitalId: ${finalHospitalId}`);
+    } else {
+      console.log("👑 SuperAdmin detected, returning all patients");
     }
 
-    res.json({
+    // Patients fetch
+    const patients = await Patient.find(query).sort({ createdAt: -1 });
+
+    return res.status(200).json({
       success: true,
-      profile: {
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName || user.username,
-        role: user.role || user.roles?.[0],
-        hospitalId: user.hospitalId,
-        hospitalName: user.hospitalName || 'Unknown Hospital',
-        licenseNumber: user.licenseNumber,
-        specialty: user.specialty,
-        signatureText: user.signatureText,
-        signatureImageUrl: user.signatureImageUrl
-      }
+      count: patients.length,
+      data: patients
     });
 
   } catch (error) {
-    console.error('❌ Error fetching profile:', error);
-    res.status(500).json({
+    console.error("❌ Error fetching patients:", error);
+    return res.status(500).json({
       success: false,
+      message: "Failed to fetch patients",
       error: error.message
     });
   }
 });
 
 /**
- * PUT /api/users/profile
- * Update user profile
+ * POST /api/users
+ * Create a new user; set createdBy to current user
  */
-router.put('/profile', async (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const userId = req.user.userId || req.user._id || req.user.id;
-    const { fullName, email, licenseNumber, specialty, signatureText } = req.body;
+    const {
+      username,
+      email,
+      password,
+      firstName,
+      lastName,
+      roles,
+      permissions,
+      hospitalId,
+      hospitalName
+    } = req.body;
 
-    const user = await User.findById(userId);
-    
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-
-    // Update allowed fields
-    if (fullName !== undefined) user.fullName = fullName;
-    if (email !== undefined) user.email = email;
-    if (licenseNumber !== undefined) user.licenseNumber = licenseNumber;
-    if (specialty !== undefined) user.specialty = specialty;
-    if (signatureText !== undefined) user.signatureText = signatureText;
-
-    await user.save();
-
-    res.json({
-      success: true,
-      message: 'Profile updated successfully',
-      profile: {
-        username: user.username,
-        email: user.email,
-        fullName: user.fullName,
-        role: user.role || user.roles?.[0],
-        hospitalId: user.hospitalId,
-        hospitalName: user.hospitalName,
-        licenseNumber: user.licenseNumber,
-        specialty: user.specialty,
-        signatureText: user.signatureText,
-        signatureImageUrl: user.signatureImageUrl
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Error updating profile:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-/**
- * POST /api/users/signature
- * Upload signature image
- */
-router.post('/signature', upload.single('signature'), async (req, res) => {
-  try {
-    if (!req.file) {
+    if (!username || !email || !password || !firstName || !lastName) {
       return res.status(400).json({
         success: false,
-        error: 'No signature file uploaded'
+        message: 'username, email, password, firstName, and lastName are required'
       });
     }
 
-    const userId = req.user.userId || req.user._id || req.user.id;
-    const user = await User.findById(userId);
-    
-    if (!user) {
-      return res.status(404).json({
+    // Check duplicates
+    const existingUser = await User.findOne({ $or: [{ username }, { email }] });
+    if (existingUser) {
+      return res.status(409).json({
         success: false,
-        error: 'User not found'
+        message: 'Username or email already exists'
       });
     }
 
-    // Delete old signature file if exists
-    if (user.signatureImagePath) {
-      try {
-        await fs.unlink(user.signatureImagePath);
-      } catch (err) {
-        console.warn('Failed to delete old signature:', err.message);
-      }
-    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    const createdBy = getCurrentUserId(req);
 
-    // Store signature path and URL
-    user.signatureImagePath = req.file.path;
-    user.signatureImageUrl = `/api/users/signature/image/${req.file.filename}`;
-    
-    await user.save();
-
-    res.json({
-      success: true,
-      message: 'Signature uploaded successfully',
-      signatureUrl: user.signatureImageUrl
+    const user = await User.create({
+      username,
+      email,
+      passwordHash,
+      firstName,
+      lastName,
+      fullName: `${firstName} ${lastName}`,
+      roles: Array.isArray(roles) && roles.length ? roles : ['user'],
+      permissions: Array.isArray(permissions) && permissions.length ? permissions : ['studies:read'],
+      hospitalId: hospitalId || req.user?.hospitalId,
+      hospitalName,
+      createdBy,
+      isActive: true,
+      isVerified: true
     });
 
+    res.status(201).json({
+      success: true,
+      data: user.toPublicJSON()
+    });
   } catch (error) {
-    console.error('❌ Error uploading signature:', error);
+    console.error('Error creating user:', error);
     res.status(500).json({
       success: false,
+      message: 'Failed to create user',
       error: error.message
     });
   }
 });
+
 
 /**
  * DELETE /api/users/signature

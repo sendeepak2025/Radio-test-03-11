@@ -7,6 +7,10 @@ const { authenticate } = require('../middleware/authMiddleware')
 const AuthenticationService = require('../services/authentication-service')
 const SessionService = require('../services/session-service')
 const { validateSession, rateLimit } = require('../middleware/session-middleware')
+const bcrypt = require('bcryptjs')
+const Counter = require('../models/Counter')
+const Hospital = require('../models/Hospital')
+const User = require('../models/User')
 
 // Initialize services
 const authService = new AuthenticationService()
@@ -32,6 +36,112 @@ router.post('/mfa/verify', authService.authenticationMiddleware(), authenticatio
 router.post('/token/refresh', authenticationController.refreshToken)
 router.post('/logout/secure', authService.authenticationMiddleware(), authenticationController.logout)
 router.get('/user/current', authService.authenticationMiddleware(), authenticationController.getCurrentUser)
+
+// ============================================================================
+// Signup: Create Hospital + User (Self-service onboarding)
+// ============================================================================
+
+/**
+ * POST /auth/register
+ * Body: { username, email, password, firstName, lastName, hospitalName }
+ * - Generates `hospitalId` like HOS-0001, HOS-0002 ... (sequence)
+ * - Creates Hospital (with minimal required fields)
+ * - Creates User with default permissions ['studies:read']
+ * - Auto-sets fullName = `${firstName} ${lastName}`
+ */
+router.post('/register', async (req, res) => {
+  try {
+    const { username, email, password, firstName, lastName, hospitalName } = req.body || {}
+
+    if (!username || !email || !password || !firstName || !lastName || !hospitalName) {
+      return res.status(400).json({
+        success: false,
+        error: 'VALIDATION_ERROR',
+        message: 'username, email, password, firstName, lastName, hospitalName are required'
+      })
+    }
+
+    // Check duplicates
+    const existingUser = await User.findOne({ $or: [{ username }, { email }] })
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        error: 'USER_EXISTS',
+        message: 'Username or email already exists'
+      })
+    }
+
+    // Generate next hospital sequence atomically
+    const counter = await Counter.findOneAndUpdate(
+      { name: 'hospital' },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    )
+    const seqNum = counter.seq || 1
+    const padded = String(seqNum).padStart(4, '0')
+    const hospitalId = `HOS-${padded}`
+
+    // Create hospital (minimal required fields)
+    const apiKey = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
+    const hospital = await Hospital.create({
+      hospitalId,
+      name: hospitalName,
+      contactEmail: email,
+      status: 'active',
+      apiKey
+    })
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 10)
+
+    // Create user with default permissions and auto fullName
+    const user = await User.create({
+      username,
+      email,
+      passwordHash,
+      firstName,
+      lastName,
+      fullName: `${firstName} ${lastName}`.trim(),
+      permissions: ['studies:read'],
+      hospitalId,
+      hospitalName
+    })
+    // Auto-login: create session and return tokens
+    const deviceInfo = {
+      userAgent: req.get('user-agent') || 'Unknown',
+      ipAddress: req.ip || 'Unknown',
+      location: req.headers['x-user-location']
+    }
+    const session = await sessionService.createSession(user._id.toString(), deviceInfo)
+
+    // Determine primary role for routing
+    const primaryRole = user.getPrimaryRole()
+
+    return res.status(201).json({
+      success: true,
+      message: 'Signup successful',
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      sessionId: session.sessionId,
+      role: primaryRole,
+      user: session.user,
+      data: {
+        hospital: {
+          hospitalId: hospital.hospitalId,
+          name: hospital.name,
+          status: hospital.status
+        }
+      }
+    })
+  } catch (error) {
+    console.error('❌ Signup error:', error)
+    return res.status(500).json({
+      success: false,
+      error: 'SIGNUP_FAILED',
+      message: error.message || 'Failed to signup'
+    })
+  }
+})
 
 // ============================================================================
 // Session Management Endpoints (Production Features)

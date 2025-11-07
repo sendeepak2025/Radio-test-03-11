@@ -39,6 +39,7 @@ import DataRetentionPage from './pages/admin/DataRetentionPage'
 
 // Simple pages without complex dependencies
 const LoginPage = React.lazy(() => import('./pages/auth/LoginPage'))
+const RegisterPage = React.lazy(() => import('./pages/auth/RegisterPage'))
 
 // Landing page components
 import LandingLayout from './landing/LandingLayout'
@@ -254,6 +255,17 @@ if (refreshToken) {
                   <Navigate to={getRoleBasedRedirect(user?.roles?.[0] || null, user?.roles || [])} replace />
                 ) : (
                   <LoginPage />
+                )
+              }
+            />
+
+            <Route
+              path="/app/register"
+              element={
+                isAuthenticated ? (
+                  <Navigate to={getRoleBasedRedirect(user?.roles?.[0] || null, user?.roles || [])} replace />
+                ) : (
+                  <RegisterPage />
                 )
               }
             />

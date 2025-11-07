@@ -7,13 +7,15 @@ const UserSchema = new mongoose.Schema({
   firstName: { type: String, required: true },
   lastName: { type: String, required: true },
   fullName: { type: String }, // Full display name
-  roles: { type: [String], default: ['user'] },
+  roles: { type: [String], default: ['admin'] },
   permissions: { type: [String], default: ['studies:read'] },
   hospitalId: { 
     type: String, 
     index: true 
   }, // Hospital ID as string (e.g., "HOSP001") for multi-tenancy
   hospitalName: { type: String }, // Hospital/Organization name
+  // Track who created this user
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   isActive: { type: Boolean, default: true },
   isVerified: { type: Boolean, default: true },
   mfaEnabled: { type: Boolean, default: false },
