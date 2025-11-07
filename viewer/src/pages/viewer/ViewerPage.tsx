@@ -115,11 +115,11 @@ const ViewerPage: React.FC = () => {
 
   // OHIF integration with availability check
   const openInOHIF = async () => {
-    const ohifUrl = `http://localhost:3001/viewer?StudyInstanceUIDs=${studyInstanceUID}`
+    const ohifUrl = `http://54.160.225.145:3000/viewer?StudyInstanceUIDs=${studyInstanceUID}`
     
     // Try to check if OHIF is running
     try {
-      const response = await fetch('http://localhost:3001', { method: 'HEAD', mode: 'no-cors' })
+      const response = await fetch('http://54.160.225.145:3000', { method: 'HEAD', mode: 'no-cors' })
       window.open(ohifUrl, '_blank')
     } catch (error) {
       // OHIF might not be running, but still try to open it

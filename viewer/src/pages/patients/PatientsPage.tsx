@@ -107,7 +107,6 @@ const PatientsPage: React.FC = () => {
   const [loadingAllStudies, setLoadingAllStudies] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [studiesPopupOpen, setStudiesPopupOpen] = useState(false)
-  const [newPatientID, setNewPatientID] = useState("")
   const [newPatientName, setNewPatientName] = useState("")
   const [newPatientBirthDate, setNewPatientBirthDate] = useState("")
   const [newPatientSex, setNewPatientSex] = useState("")
@@ -199,7 +198,6 @@ const PatientsPage: React.FC = () => {
   const handleAddPatientOpen = () => setAddOpen(true)
   const handleAddPatientClose = () => {
     setAddOpen(false)
-    setNewPatientID("")
     setNewPatientName("")
     setNewPatientBirthDate("")
     setNewPatientSex("")
@@ -207,11 +205,9 @@ const PatientsPage: React.FC = () => {
 
   const handleAddPatientSubmit = async () => {
     try {
-      if (!newPatientID.trim()) throw new Error("Patient ID is required")
       setAddingPatient(true)
       setError(null)
       const res = await createPatient({
-        patientID: newPatientID.trim(),
         patientName: newPatientName.trim(),
         birthDate: newPatientBirthDate.trim(),
         sex: newPatientSex.trim(),
@@ -1289,14 +1285,6 @@ const PatientsPage: React.FC = () => {
         </DialogTitle>
         <DialogContent sx={{ mt: 2 }}>
           <Stack spacing={3}>
-            <TextField
-              label="Patient ID"
-              value={newPatientID}
-              onChange={(e) => setNewPatientID(e.target.value)}
-              required
-              fullWidth
-              variant="outlined"
-            />
             <TextField
               label="Patient Name"
               value={newPatientName}

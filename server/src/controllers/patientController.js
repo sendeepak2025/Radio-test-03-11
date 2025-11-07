@@ -1,6 +1,7 @@
 const Study = require('../models/Study');
 const Patient = require('../models/Patient');
 const User = require('../models/User');
+const Counter = require('../models/Counter');
 
 const mongoose = require("mongoose");
 
@@ -109,10 +110,7 @@ async function getPatientStudies(req, res) {
 
 async function createPatient(req, res) {
   try {
-    const { patientID, patientName, birthDate, sex } = req.body || {}
-    if (!patientID || typeof patientID !== 'string') {
-      return res.status(400).json({ success: false, message: 'patientID is required' })
-    }
+    const { patientID: providedPatientID, patientName, birthDate, sex } = req.body || {}
 
     // Check authentication
     if (!req.user) {
@@ -121,6 +119,22 @@ async function createPatient(req, res) {
 
     // Get hospitalId from authenticated user (already a string from JWT)
     const hospitalId = req.user.hospitalId || null;
+
+    // Determine patientID: use provided if present; otherwise generate sequential ID
+    let patientID = (typeof providedPatientID === 'string' && providedPatientID.trim()) ? providedPatientID.trim() : null;
+
+    if (!patientID) {
+      // Atomically increment patient counter and generate ID with pt- prefix
+      const counter = await Counter.findOneAndUpdate(
+        { name: 'patient' },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      );
+      const seqNum = counter.seq || 1;
+      const padded = String(seqNum).padStart(4, '0');
+      patientID = `PT-${padded}`;
+      console.log(`🆔 Generated patientID: ${patientID}`);
+    }
 
     console.log(`👤 Creating patient ${patientID} for hospital: ${hospitalId} by user: ${req.user.username}`);
 

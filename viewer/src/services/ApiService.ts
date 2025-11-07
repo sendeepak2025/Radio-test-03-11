@@ -244,7 +244,7 @@ export const getPatientStudies = async (patientID: string) => {
   return response.json()
 }
 
-export const createPatient = async (patient: { patientID: string; patientName?: string; birthDate?: string; sex?: string }) => {
+export const createPatient = async (patient: { patientID?: string; patientName?: string; birthDate?: string; sex?: string }) => {
   const response = await apiCall('/api/patients', {
     method: 'POST',
     body: JSON.stringify(patient),
