@@ -3,13 +3,27 @@
  * Handles selection synchronization for the medical image viewer
  */
 
+// In-memory storage for viewer annotations/measurements (per study)
+// This will be cleared when server restarts or after 24 hours
+const viewerDataStore = new Map();
+
+// Cleanup old data every hour
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, data] of viewerDataStore.entries()) {
+    if (now - data.timestamp > 24 * 60 * 60 * 1000) { // 24 hours
+      viewerDataStore.delete(key);
+    }
+  }
+}, 60 * 60 * 1000);
+
 /**
  * Sync selection state
  * POST /api/viewer/selection
  */
 exports.syncSelection = async (req, res) => {
   try {
-    const { itemId, itemType, action, timestamp, studyInstanceUID, frameIndex } = req.body
+    const { itemId, itemType, action, timestamp, studyInstanceUID, frameIndex, itemData } = req.body
 
     // Validate request body
     if (!itemId || !itemType || !action) {
@@ -35,7 +49,54 @@ exports.syncSelection = async (req, res) => {
       })
     }
 
-    // Log the selection event (for analytics/audit)
+    // ✅ NEW: Store annotation/measurement data for report generation
+    if (studyInstanceUID && itemData && action === 'select') {
+      const storeKey = `${studyInstanceUID}_${req.user?.userId || 'anonymous'}`;
+      
+      if (!viewerDataStore.has(storeKey)) {
+        viewerDataStore.set(storeKey, {
+          studyInstanceUID,
+          userId: req.user?.userId,
+          measurements: [],
+          annotations: [],
+          timestamp: Date.now()
+        });
+      }
+      
+      const store = viewerDataStore.get(storeKey);
+      
+      if (itemType === 'measurement') {
+        // Remove existing if updating
+        store.measurements = store.measurements.filter(m => m.id !== itemId);
+        store.measurements.push({
+          id: itemId,
+          type: itemData.type || 'length',
+          value: itemData.value,
+          unit: itemData.unit || 'mm',
+          label: itemData.label || itemData.type,
+          points: itemData.points || [],
+          frameIndex: frameIndex || 0,
+          timestamp: new Date()
+        });
+      } else if (itemType === 'annotation') {
+        // Remove existing if updating
+        store.annotations = store.annotations.filter(a => a.id !== itemId);
+        store.annotations.push({
+          id: itemId,
+          type: itemData.type || 'text',
+          text: itemData.text || '',
+          color: itemData.color || '#FF0000',
+          points: itemData.points || [],
+          frameIndex: frameIndex || 0,
+          timestamp: new Date()
+        });
+      }
+      
+      store.timestamp = Date.now();
+      console.log(`✅ Stored ${itemType} for study ${studyInstanceUID}:`, itemId);
+    }
+
+    // Log the selection event
     console.log('Selection sync:', {
       itemId,
       itemType,
@@ -46,13 +107,6 @@ exports.syncSelection = async (req, res) => {
       user: req.user?.username || 'anonymous'
     })
 
-    // In a real implementation, you might:
-    // 1. Store selection events in a database for analytics
-    // 2. Broadcast to other connected clients via WebSocket
-    // 3. Update user session state
-    // 4. Track user interactions for ML/analytics
-
-    // For now, just acknowledge the sync
     res.json({
       success: true,
       itemId,
@@ -92,6 +146,21 @@ exports.syncRemoval = async (req, res) => {
       })
     }
 
+    // ✅ NEW: Remove from store
+    if (studyInstanceUID) {
+      const storeKey = `${studyInstanceUID}_${req.user?.userId || 'anonymous'}`;
+      const store = viewerDataStore.get(storeKey);
+      
+      if (store) {
+        if (itemType === 'measurement') {
+          store.measurements = store.measurements.filter(m => m.id !== itemId);
+        } else if (itemType === 'annotation') {
+          store.annotations = store.annotations.filter(a => a.id !== itemId);
+        }
+        console.log(`✅ Removed ${itemType} ${itemId} from study ${studyInstanceUID}`);
+      }
+    }
+
     // Log the removal event
     console.log('Item removal sync:', {
       itemId,
@@ -101,13 +170,6 @@ exports.syncRemoval = async (req, res) => {
       user: req.user?.username || 'anonymous'
     })
 
-    // In a real implementation, you might:
-    // 1. Remove the item from a database
-    // 2. Broadcast removal to other connected clients
-    // 3. Update study metadata
-    // 4. Create audit trail
-
-    // For now, just acknowledge the removal
     res.json({
       success: true,
       itemId,
@@ -119,5 +181,73 @@ exports.syncRemoval = async (req, res) => {
       success: false,
       error: 'Failed to sync removal'
     })
+  }
+}
+
+/**
+ * Get viewer data for a study (annotations + measurements)
+ * GET /api/viewer/data/:studyInstanceUID
+ */
+exports.getViewerData = async (req, res) => {
+  try {
+    const { studyInstanceUID } = req.params;
+    const storeKey = `${studyInstanceUID}_${req.user?.userId || 'anonymous'}`;
+    
+    const store = viewerDataStore.get(storeKey);
+    
+    if (!store) {
+      return res.json({
+        success: true,
+        studyInstanceUID,
+        measurements: [],
+        annotations: [],
+        message: 'No viewer data found for this study'
+      });
+    }
+    
+    console.log(`✅ Retrieved viewer data for study ${studyInstanceUID}:`, {
+      measurements: store.measurements.length,
+      annotations: store.annotations.length
+    });
+    
+    res.json({
+      success: true,
+      studyInstanceUID,
+      measurements: store.measurements,
+      annotations: store.annotations,
+      timestamp: store.timestamp
+    });
+  } catch (error) {
+    console.error('Error getting viewer data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get viewer data'
+    });
+  }
+}
+
+/**
+ * Clear viewer data for a study
+ * DELETE /api/viewer/data/:studyInstanceUID
+ */
+exports.clearViewerData = async (req, res) => {
+  try {
+    const { studyInstanceUID } = req.params;
+    const storeKey = `${studyInstanceUID}_${req.user?.userId || 'anonymous'}`;
+    
+    viewerDataStore.delete(storeKey);
+    
+    console.log(`✅ Cleared viewer data for study ${studyInstanceUID}`);
+    
+    res.json({
+      success: true,
+      message: 'Viewer data cleared'
+    });
+  } catch (error) {
+    console.error('Error clearing viewer data:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to clear viewer data'
+    });
   }
 }

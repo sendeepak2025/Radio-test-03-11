@@ -61,7 +61,7 @@ const Contact = () => {
                     </div>
                     <div>
                       <div className="font-semibold text-white">Phone</div>
-                      <div className="text-gray-300">+1 (555) 123-4567</div>
+                      <div className="text-gray-300">+1 (512) 668-9794</div>
                     </div>
                   </div>
 
@@ -71,7 +71,7 @@ const Contact = () => {
                     </div>
                     <div>
                       <div className="font-semibold text-white">Location</div>
-                      <div className="text-gray-300">Healthcare District, USA</div>
+                      <div className="text-gray-300">16192 Coastal Highway Lewes,DE 19958</div>
                     </div>
                   </div>
                 </div>

@@ -308,7 +308,7 @@ Authorization: Bearer YOUR_TOKEN
     "zipCode": "10001",
     "country": "USA"
   },
-  "contactPhone": "+1 (555) 123-4567",
+  "contactPhone": "+1 (512) 668-9794",
   "contactEmail": "info@citymedical.com"
 }
 ```

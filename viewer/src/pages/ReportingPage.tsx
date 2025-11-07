@@ -67,7 +67,30 @@ const ReportingPage: React.FC = () => {
         setReportData(data.report);
         console.log('✅ Loaded existing report:', reportId);
       } else {
-        // New report - show template selector
+        // New report - load viewer annotations/measurements
+        const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+        let viewerData = { measurements: [], annotations: [] };
+        
+        try {
+          const viewerResponse = await fetch(`/api/viewer/data/${studyUID}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          
+          if (viewerResponse.ok) {
+            const viewerResult = await viewerResponse.json();
+            if (viewerResult.success) {
+              viewerData = viewerResult;
+              console.log('✅ Loaded viewer data:', {
+                measurements: viewerData.measurements?.length || 0,
+                annotations: viewerData.annotations?.length || 0
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('Could not load viewer data:', err);
+        }
+        
+        // Show template selector with viewer data
         setShowTemplateSelector(true);
         setReportData({
           studyInstanceUID: studyUID,
@@ -78,9 +101,11 @@ const ReportingPage: React.FC = () => {
             modality: params.get('modality') || 'CT',
             studyDescription: params.get('studyDescription')
           },
+          measurements: viewerData.measurements || [],
+          annotations: viewerData.annotations || [],
           creationMode: analysisId ? 'ai-assisted' : 'manual'
         });
-        console.log('✅ Prepared for new report');
+        console.log('✅ Prepared for new report with viewer data');
       }
 
       telemetryEmit('reporting.page.loaded', { studyUID, reportId, analysisId });

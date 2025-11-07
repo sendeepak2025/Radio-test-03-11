@@ -24,12 +24,26 @@ import {
   Edit as EditIcon
 } from '@mui/icons-material';
 import { useReporting } from '../../../contexts/ReportingContext';
+import QuickPhraseButton from '../QuickPhraseButton';
+import { getQuickPhrases } from '../../../data/quickPhrases';
 
 const ReportContentPanel: React.FC = () => {
   const { state, actions } = useReporting();
   
   const handleFieldChange = (field: keyof typeof state, value: string) => {
     actions.updateField(field, value);
+  };
+  
+  // Get modality for quick phrases
+  const modality = state.patientInfo?.modality || 'CT';
+  
+  // Helper to insert phrase into field
+  const insertPhrase = (field: keyof typeof state, phrase: string) => {
+    const currentValue = state[field] as string || '';
+    const newValue = currentValue 
+      ? `${currentValue}\n${phrase}` 
+      : phrase;
+    actions.updateField(field, newValue);
   };
   
   return (
@@ -40,9 +54,16 @@ const ReportContentPanel: React.FC = () => {
       
       {/* Clinical History */}
       <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold' }}>
-          Clinical History
-        </Typography>
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+            Clinical History
+          </Typography>
+          <QuickPhraseButton
+            phrases={getQuickPhrases(modality, 'clinicalHistory')}
+            onInsert={(phrase) => insertPhrase('clinicalHistory', phrase)}
+            label="Common Indications"
+          />
+        </Box>
         <TextField
           fullWidth
           multiline
@@ -51,14 +72,22 @@ const ReportContentPanel: React.FC = () => {
           onChange={(e) => handleFieldChange('clinicalHistory', e.target.value)}
           placeholder="Enter clinical history and indication for study..."
           variant="outlined"
+          sx={{ mt: 1 }}
         />
       </Paper>
       
       {/* Technique */}
       <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold' }}>
-          Technique
-        </Typography>
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+            Technique
+          </Typography>
+          <QuickPhraseButton
+            phrases={getQuickPhrases(modality, 'technique')}
+            onInsert={(phrase) => insertPhrase('technique', phrase)}
+            label="Common Techniques"
+          />
+        </Box>
         <TextField
           fullWidth
           multiline
@@ -67,6 +96,7 @@ const ReportContentPanel: React.FC = () => {
           onChange={(e) => handleFieldChange('technique', e.target.value)}
           placeholder="Describe imaging technique, contrast, protocols..."
           variant="outlined"
+          sx={{ mt: 1 }}
         />
       </Paper>
       
@@ -148,9 +178,16 @@ const ReportContentPanel: React.FC = () => {
       
       {/* Findings Text */}
       <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold' }}>
-          Findings (Free Text)
-        </Typography>
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+            Findings (Free Text)
+          </Typography>
+          <QuickPhraseButton
+            phrases={getQuickPhrases(modality, 'findings')}
+            onInsert={(phrase) => insertPhrase('findingsText', phrase)}
+            label="Common Findings"
+          />
+        </Box>
         <TextField
           fullWidth
           multiline
@@ -159,14 +196,22 @@ const ReportContentPanel: React.FC = () => {
           onChange={(e) => handleFieldChange('findingsText', e.target.value)}
           placeholder="Describe detailed findings..."
           variant="outlined"
+          sx={{ mt: 1 }}
         />
       </Paper>
       
       {/* Impression */}
       <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-          Impression *
-        </Typography>
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+            Impression *
+          </Typography>
+          <QuickPhraseButton
+            phrases={getQuickPhrases(modality, 'impression')}
+            onInsert={(phrase) => insertPhrase('impression', phrase)}
+            label="Common Impressions"
+          />
+        </Box>
         <TextField
           fullWidth
           multiline
@@ -176,14 +221,22 @@ const ReportContentPanel: React.FC = () => {
           placeholder="Enter impression and conclusions..."
           variant="outlined"
           required
+          sx={{ mt: 1 }}
         />
       </Paper>
       
       {/* Recommendations */}
       <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold' }}>
-          Recommendations
-        </Typography>
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+            Recommendations
+          </Typography>
+          <QuickPhraseButton
+            phrases={getQuickPhrases(modality, 'recommendations')}
+            onInsert={(phrase) => insertPhrase('recommendations', phrase)}
+            label="Common Recommendations"
+          />
+        </Box>
         <TextField
           fullWidth
           multiline
@@ -192,6 +245,7 @@ const ReportContentPanel: React.FC = () => {
           onChange={(e) => handleFieldChange('recommendations', e.target.value)}
           placeholder="Enter follow-up recommendations..."
           variant="outlined"
+          sx={{ mt: 1 }}
         />
       </Paper>
       

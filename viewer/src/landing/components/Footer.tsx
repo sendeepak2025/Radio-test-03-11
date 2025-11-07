@@ -96,13 +96,13 @@ const Footer = () => {
                 <div className="w-8 h-8 bg-slate-700/50 rounded-lg flex items-center justify-center">
                   <Phone className="w-4 h-4 text-cyan-400" />
                 </div>
-                +1 (555) 123-4567
+                +1 (512) 668-9794
               </li>
               <li className="flex items-center gap-3 text-sm text-gray-300">
                 <div className="w-8 h-8 bg-slate-700/50 rounded-lg flex items-center justify-center">
                   <MapPin className="w-4 h-4 text-cyan-400" />
                 </div>
-                Healthcare District, USA
+                16192 Coastal Highway Lewes,DE 19958
               </li>
             </ul>
           </div>

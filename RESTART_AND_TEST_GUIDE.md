@@ -145,7 +145,7 @@ PUT /api/hospitals/:hospitalId
     "state": "NY",
     "zipCode": "10001"
   },
-  "contactPhone": "+1 (555) 123-4567",
+  "contactPhone": "+1 (512) 668-9794",
   "contactEmail": "info@hospital.com"
 }
 ```

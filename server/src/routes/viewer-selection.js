@@ -50,4 +50,20 @@ router.post('/selection', viewerSelectionController.syncSelection)
  */
 router.delete('/items/:itemId', viewerSelectionController.syncRemoval)
 
+/**
+ * @route   GET /api/viewer/data/:studyInstanceUID
+ * @desc    Get all viewer data (annotations + measurements) for a study
+ * @access  Private (requires authentication)
+ * @params  studyInstanceUID - Study UID
+ */
+router.get('/data/:studyInstanceUID', viewerSelectionController.getViewerData)
+
+/**
+ * @route   DELETE /api/viewer/data/:studyInstanceUID
+ * @desc    Clear viewer data for a study
+ * @access  Private (requires authentication)
+ * @params  studyInstanceUID - Study UID
+ */
+router.delete('/data/:studyInstanceUID', viewerSelectionController.clearViewerData)
+
 module.exports = router

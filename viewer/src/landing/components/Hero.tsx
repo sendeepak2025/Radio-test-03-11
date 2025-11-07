@@ -47,28 +47,28 @@ const Hero = () => {
                   <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
                 </Button>
               </Link>
-              <Button
+              {/* <Button
                 size="lg"
                 variant="outline"
                 className="border-slate-600 hover:bg-slate-800 text-white text-lg px-8 py-4 rounded-xl backdrop-blur-sm group"
               >
                 <Play className="mr-2 w-5 h-5 group-hover:scale-110 transition-transform" />
                 Watch Demo
-              </Button>
+              </Button> */}
             </div>
 
             {/* Stats */}
             <div className="grid grid-cols-3 gap-6 pt-8 border-t border-slate-700">
               <div className="text-center">
-                <div className="text-3xl font-bold text-gradient bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">99.9%</div>
+                <div className="text-3xl font-bold text-gradient bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">0%</div>
                 <div className="text-sm text-gray-400 font-medium">Accuracy Rate</div>
               </div>
               <div className="text-center">
-                <div className="text-3xl font-bold text-gradient bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">10M+</div>
+                <div className="text-3xl font-bold text-gradient bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">0+</div>
                 <div className="text-sm text-gray-400 font-medium">Images Analyzed</div>
               </div>
               <div className="text-center">
-                <div className="text-3xl font-bold text-gradient bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">500+</div>
+                <div className="text-3xl font-bold text-gradient bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">0+</div>
                 <div className="text-sm text-gray-400 font-medium">Healthcare Facilities</div>
               </div>
             </div>

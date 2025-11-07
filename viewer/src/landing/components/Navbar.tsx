@@ -78,7 +78,7 @@ const Navbar = () => {
               <Button
                 size="lg"
                 variant="outline"
-                className="border-slate-600 hover:bg-slate-800 text-white backdrop-blur-sm"
+                className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white font-semibold shadow-lg hover:shadow-cyan-500/25 transition-all duration-300"
               >
                 Sign In
               </Button>

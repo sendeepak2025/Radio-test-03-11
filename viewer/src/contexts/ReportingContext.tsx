@@ -60,6 +60,23 @@ export interface ReportState {
   // Report content
   sections: Record<string, string>;
   findings: Finding[];
+  measurements?: Array<{
+    id: string;
+    type: string;
+    value: number;
+    unit: string;
+    label: string;
+    points?: Array<{ x: number; y: number }>;
+    frameIndex?: number;
+  }>;
+  annotations?: Array<{
+    id: string;
+    type: string;
+    text?: string;
+    color?: string;
+    points?: Array<{ x: number; y: number }>;
+    frameIndex?: number;
+  }>;
   anatomicalMarkings: AnatomicalMarking[];
   keyImages: CapturedImage[];
   
@@ -277,6 +294,21 @@ export const ReportingProvider: React.FC<{
     ...initialData
   } as ReportState);
   
+  // ✅ NEW: Auto-generate findings text from viewer annotations
+  useEffect(() => {
+    if (initialData.annotations && initialData.annotations.length > 0 && !initialData.findingsText) {
+      const generatedFindings = initialData.annotations
+        .map((ann: any) => ann.text || `${ann.type} annotation`)
+        .filter(Boolean)
+        .join('\n');
+      
+      if (generatedFindings) {
+        console.log('✅ Auto-generated findings from annotations');
+        dispatch({ type: 'UPDATE_FIELD', payload: { field: 'findingsText', value: generatedFindings } });
+      }
+    }
+  }, []);
+  
   // Auto-save every 30 seconds if there are unsaved changes
   useEffect(() => {
     if (state.hasUnsavedChanges && state.reportId && !state.saving) {
@@ -311,6 +343,8 @@ export const ReportingProvider: React.FC<{
           body: JSON.stringify({
             sections: state.sections,
             findings: state.findings,
+            measurements: state.measurements || [],
+            annotations: state.annotations || [],
             anatomicalMarkings: state.anatomicalMarkings,
             keyImages: state.keyImages,
             clinicalHistory: state.clinicalHistory,
