@@ -24,7 +24,8 @@ import {
   Visibility as PreviewIcon,
   Print as PrintIcon,
   Download as DownloadIcon,
-  Close as CloseIcon
+  Close as CloseIcon,
+  CheckCircle
 } from '@mui/icons-material';
 
 interface ReportPreviewDialogProps {
@@ -47,6 +48,10 @@ interface ReportPreviewDialogProps {
     reportStatus: string;
     createdAt?: Date;
     lastSaved?: Date;
+    signedAt?: Date;
+    signedBy?: string;
+    signatureUrl?: string;
+    radiologistSignature?: string;
   };
   canvasRef?: React.RefObject<HTMLCanvasElement>; // For capturing canvas snapshot
 }
@@ -323,6 +328,107 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
                   </Paper>
                 ))}
               </Box>
+            </Box>
+          )}
+          
+          <Divider sx={{ my: 2 }} />
+          
+          {/* Signature Section (if signed) */}
+          {reportData.reportStatus === 'final' && reportData.signedAt && (
+            <Box sx={{ mt: 4, mb: 3 }}>
+              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                Digital Signature
+              </Typography>
+              
+              <Paper 
+                elevation={2} 
+                sx={{ 
+                  p: 3, 
+                  border: 2, 
+                  borderColor: 'success.main',
+                  bgcolor: 'success.50'
+                }}
+              >
+                <Box display="flex" alignItems="center" justifyContent="space-between">
+                  <Box flex={1}>
+                    <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                      Electronically Signed By:
+                    </Typography>
+                    
+                    {/* Signature Image */}
+                    {reportData.signatureUrl && (
+                      <Box sx={{ mb: 2, maxWidth: 300 }}>
+                        <img 
+                          src={reportData.signatureUrl}
+                          alt="Digital Signature"
+                          style={{ 
+                            maxWidth: '100%', 
+                            height: 'auto',
+                            border: '1px solid #ddd',
+                            backgroundColor: 'white',
+                            padding: '8px',
+                            borderRadius: '4px'
+                          }}
+                          onError={(e) => {
+                            console.error('Failed to load signature image');
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      </Box>
+                    )}
+                    
+                    {/* Text Signature */}
+                    {reportData.radiologistSignature && (
+                      <Typography 
+                        variant="h6" 
+                        sx={{ 
+                          fontFamily: 'cursive',
+                          fontStyle: 'italic',
+                          color: 'primary.main',
+                          mb: 1
+                        }}
+                      >
+                        {reportData.radiologistSignature}
+                      </Typography>
+                    )}
+                    
+                    <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                      {reportData.signedBy || 'Radiologist'}
+                    </Typography>
+                    
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Signed on: {new Date(reportData.signedAt).toLocaleString()}
+                    </Typography>
+                    
+                    <Box sx={{ mt: 2 }}>
+                      <Chip 
+                        label="FDA 21 CFR Part 11 Compliant" 
+                        size="small" 
+                        color="success"
+                        sx={{ mr: 1 }}
+                      />
+                      <Chip 
+                        label="Legally Binding" 
+                        size="small" 
+                        color="success"
+                      />
+                    </Box>
+                  </Box>
+                  
+                  <Box sx={{ textAlign: 'center' }}>
+                    <CheckCircle 
+                      sx={{ 
+                        fontSize: 60, 
+                        color: 'success.main',
+                        mb: 1
+                      }} 
+                    />
+                    <Typography variant="caption" color="success.main" sx={{ fontWeight: 'bold' }}>
+                      VERIFIED
+                    </Typography>
+                  </Box>
+                </Box>
+              </Paper>
             </Box>
           )}
           

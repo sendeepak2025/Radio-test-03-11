@@ -16,50 +16,28 @@ export const SignatureButton: React.FC<SignatureButtonProps> = ({
   disabled = false
 }) => {
   const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleSign = async (password: string, meaning: 'author' | 'reviewer' | 'approver') => {
-    setLoading(true)
-    setError(null)
-
-    try {
-      const result = await signatureService.signReport(reportId, password, meaning)
-      
-      if (result.success) {
-        setOpen(false)
-        onSigned?.()
-      } else {
-        setError(result.message || 'Failed to sign report')
-      }
-    } catch (err: any) {
-      setError(err.message || 'An error occurred while signing')
-    } finally {
-      setLoading(false)
-    }
-  }
+  // Signing is handled inside SignatureModal
 
   return (
     <>
       <Button
         variant="contained"
         color="primary"
-        startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <SignatureIcon />}
+        startIcon={<SignatureIcon />}
         onClick={() => setOpen(true)}
-        disabled={disabled || loading}
+        disabled={disabled}
       >
-        Sign Report
+        Sign Report 
       </Button>
 
       <SignatureModal
         open={open}
-        onClose={() => {
+        reportId={reportId}
+        onClose={() => setOpen(false)}
+        onSigned={() => {
           setOpen(false)
-          setError(null)
+          onSigned?.()
         }}
-        onSign={handleSign}
-        loading={loading}
-        error={error}
       />
     </>
   )

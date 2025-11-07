@@ -107,10 +107,18 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({
     setError(null)
 
     try {
-      const signature = await signatureService.signReport(reportId, meaning, password)
-      onSigned(signature)
+      const result = await signatureService.signReport(reportId, meaning, password)
+      
+      // Check if the result indicates failure
+      if (!result.success) {
+        setError(result.message || result.error || 'Failed to sign report. Please try again.')
+        return
+      }
+      
+      onSigned(result)
       handleClose()
     } catch (err: any) {
+      console.error('Sign report error:', err)
       setError(err.message || 'Failed to sign report. Please try again.')
     } finally {
       setLoading(false)

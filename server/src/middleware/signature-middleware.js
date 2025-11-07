@@ -28,14 +28,17 @@ function hasSignaturePermission(user, meaning) {
   }
 
   // Super admin can sign with any meaning
-  if (user.roles.includes('system:admin') || user.roles.includes('super_admin')) {
+  if (user.roles.includes('system:admin') || user.roles.includes('super_admin') || user.roles.includes('superadmin')) {
     return true;
   }
 
   // Check if user has any of the allowed roles for this meaning
   const allowedRoles = SIGNATURE_ROLES[meaning] || [];
   
-  return user.roles.some(role => allowedRoles.includes(role));
+  // Also check user.role (singular) for backward compatibility
+  const userRoles = Array.isArray(user.roles) ? user.roles : [user.role];
+  
+  return userRoles.some(role => allowedRoles.includes(role));
 }
 
 /**

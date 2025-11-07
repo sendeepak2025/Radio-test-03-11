@@ -65,6 +65,7 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
     try {
       await actions.signReport(signatureData);
       setSnackbar({ open: true, message: 'Report signed successfully', severity: 'success' });
+      setShowSignDialog(false);
     } catch (error: any) {
       throw error; // Re-throw to be handled by dialog
     }
@@ -292,7 +293,11 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
           anatomicalMarkings: state.anatomicalMarkings,
           keyImages: state.keyImages,
           reportStatus: state.reportStatus,
-          lastSaved: state.lastSaved
+          lastSaved: state.lastSaved,
+          signedAt: state.signedAt,
+          signedBy: state.signedBy,
+          signatureUrl: state.signatureUrl,
+          radiologistSignature: state.radiologistSignature
         }}
       />
     </Box>

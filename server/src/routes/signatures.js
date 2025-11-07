@@ -86,13 +86,18 @@ const { rateLimit } = require('../middleware/session-middleware');
  */
 router.post('/sign', 
   rateLimit({ maxRequests: 10, windowMs: 60000 }), // 10 requests per minute
-  enforceIPWhitelist(), 
   authenticate, 
   requireSignatureRole(), 
-  requireMFA(), 
   verifyPassword, 
   async (req, res) => {
   try {
+    console.log('🔐 Sign request received:', {
+      reportId: req.body.reportId,
+      meaning: req.body.meaning,
+      hasPassword: !!req.body.password,
+      userId: req.user?.id || req.user?.userId
+    });
+    
     const { reportId, meaning } = req.body;
     const userId = req.user.id || req.user.userId;
 

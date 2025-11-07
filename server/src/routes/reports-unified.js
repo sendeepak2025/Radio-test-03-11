@@ -821,8 +821,7 @@ router.post('/:reportId/sign', upload.single('signatureFile'), async (req, res) 
     
     const { 
       signatureText = signatureData.signatureText,
-      signatureImage = signatureData.signatureImage,
-      signatureMeaning = signatureData.signatureMeaning || 'authored',
+      signatureMeaning = signatureData.signatureMeaning || 'author',
       password = signatureData.password,
       reason = signatureData.reason
     } = signatureData;
@@ -830,7 +829,7 @@ router.post('/:reportId/sign', upload.single('signatureFile'), async (req, res) 
     console.log('📝 Sign request received:', {
       reportId,
       hasSignatureText: !!signatureText,
-      hasSignatureImage: !!signatureImage,
+      hasSignatureImage: !!req.file,
       hasFile: !!req.file,
       signatureMeaning
     });
@@ -852,8 +851,8 @@ router.post('/:reportId/sign', upload.single('signatureFile'), async (req, res) 
       });
     }
 
-    // ✅ SIGNATURE FIX: Require either signature image OR signature text
-    if (!req.file && !signatureText && !signatureImage) {
+    // ✅ SIGNATURE FIX: Require either signature file OR signature text
+    if (!req.file && !signatureText) {
       return res.status(400).json({
         success: false,
         error: 'SIGNATURE_REQUIRED',
@@ -920,26 +919,23 @@ router.post('/:reportId/sign', upload.single('signatureFile'), async (req, res) 
       licenseNumber: licenseNumber,
       specialty: specialty,
       at: new Date(),
-      method: signatureImage || req.file ? 'image' : 'text',
-      meaning: signatureMeaning || 'authored',
+      method: req.file ? 'image' : 'text',
+      meaning: signatureMeaning || 'author',
       reason: reason,
       ip: req.ip || req.connection.remoteAddress,
       userAgent: req.get('user-agent') || 'Unknown',
       contentHash: hash
     };
 
-    // ✅ FIX: Store signature image (base64 or file)
-    if (signatureImage) {
-      // Base64 image from frontend
-      report.radiologistSignatureUrl = signatureImage;
-      report.radiologistSignaturePublicId = 'base64-signature';
-    } else if (req.file) {
-      // Uploaded file
-      report.radiologistSignatureUrl = `/private/signatures/${req.file.filename}`;
+    // ✅ FIX: Store signature image file (uploaded to server)
+    if (req.file) {
+      // Uploaded file - store relative path
+      report.radiologistSignatureUrl = `/uploads/signatures/${req.file.filename}`;
       report.radiologistSignaturePublicId = req.file.filename;
+      console.log('✅ Signature file saved:', req.file.filename);
     }
 
-    // Store text signature
+    // Store text signaturere
     if (signatureText) {
       report.radiologistSignature = signatureText;
     }
@@ -1016,8 +1012,8 @@ router.post('/:reportId/sign', upload.single('signatureFile'), async (req, res) 
       resourceId: reportId,
       details: {
         contentHash: hash,
-        signatureMethod: req.file || signatureImage ? 'image' : 'text',
-        meaning: signatureMeaning || 'authored',
+        signatureMethod: req.file ? 'image' : 'text',
+        meaning: signatureMeaning || 'author',
         templateVersion: report.templateVersion
       },
       ipAddress: req.ip || req.connection.remoteAddress
@@ -1844,7 +1840,7 @@ async function generateReportPDF(report) {
     // ===== CLINICAL HISTORY =====
     if (report.clinicalHistory) {
       doc.fontSize(12).font('Helvetica-Bold').text('CLINICAL HISTORY', { underline: true });
-      doc.fontSize(10).font('Helvetica').text(report.technique, { align: 'justify' });
+      doc.fontSize(10).font('Helvetica').text(report.clinicalHistory, { align: 'justify' });
       doc.moveDown();
     }
 

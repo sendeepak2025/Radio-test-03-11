@@ -49,7 +49,7 @@ interface SignReportDialogProps {
 }
 
 export interface SignatureData {
-  signatureImage?: string;
+  signatureFile?: File;
   signatureText: string;
   signatureMeaning: 'authored' | 'reviewed' | 'approved' | 'verified';
   password: string;
@@ -109,12 +109,20 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
     setSigning(true);
     
     try {
+      // Convert signature canvas to blob if drawn
+      let signatureFile: File | undefined;
+      if (activeTab === 1 && signatureCanvasRef.current) {
+        const dataUrl = signatureCanvasRef.current.toDataURL('image/png');
+        const blob = await fetch(dataUrl).then(r => r.blob());
+        signatureFile = new File([blob], 'signature.png', { type: 'image/png' });
+      }
+      
       const signatureData: SignatureData = {
         signatureText: signatureText.trim(),
         signatureMeaning,
         password,
         timestamp: new Date(),
-        signatureImage: activeTab === 1 ? signatureCanvasRef.current?.toDataURL() : undefined
+        signatureFile // Pass file instead of base64
       };
       
       await onSign(signatureData);

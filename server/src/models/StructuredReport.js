@@ -22,6 +22,8 @@ const StructuredReportSchema = new mongoose.Schema({
 
   // Template linkage and structured sections (added for modern SR workflows)
   templateId: { type: String },
+  templateName: { type: String },
+  templateVersion: { type: String },
   sections: { type: mongoose.Schema.Types.Mixed, default: {} },
   
   // Report Metadata
@@ -41,6 +43,9 @@ const StructuredReportSchema = new mongoose.Schema({
   radiologistSignatureUrl: String, // Local filesystem URL for signature image
   radiologistSignaturePublicId: String, // Signature file identifier
   signedAt: Date,
+  // Digital signature block and exported JSON snapshot
+  signature: { type: mongoose.Schema.Types.Mixed },
+  exportedJSON: { type: mongoose.Schema.Types.Mixed },
   
   // Clinical Findings
   findings: [{
@@ -93,6 +98,10 @@ const StructuredReportSchema = new mongoose.Schema({
   findingsText: String, // Narrative findings
   impression: String, // Summary/conclusion
   recommendations: String,
+  // Addenda and sharing/critical communication metadata
+  addenda: [{ type: mongoose.Schema.Types.Mixed }],
+  sharedExports: [{ type: mongoose.Schema.Types.Mixed }],
+  criticalComms: [{ type: mongoose.Schema.Types.Mixed }],
   
   // Additional Metadata
   keyImages: [{

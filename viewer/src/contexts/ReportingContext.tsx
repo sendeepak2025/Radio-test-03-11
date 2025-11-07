@@ -90,6 +90,12 @@ export interface ReportState {
   // Version control
   version: number;
   reportStatus: 'draft' | 'preliminary' | 'final' | 'amended';
+  
+  // Signature
+  signedAt?: Date;
+  signedBy?: string;
+  signatureUrl?: string;
+  radiologistSignature?: string;
 }
 
 export type ReportAction =
@@ -221,7 +227,7 @@ interface ReportContextValue {
   dispatch: React.Dispatch<ReportAction>;
   actions: {
     saveReport: () => Promise<void>;
-    signReport: () => Promise<void>;
+    signReport: (signatureData: any) => Promise<void>;
     addFinding: (finding: Finding) => void;
     updateFinding: (id: string, updates: Partial<Finding>) => void;
     deleteFinding: (id: string) => void;
@@ -343,24 +349,29 @@ export const ReportingProvider: React.FC<{
       try {
         const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
         
+        // Create FormData for file upload
+        const formData = new FormData();
+        
+        // Add signature file if exists
+        if (signatureData.signatureFile) {
+          formData.append('signatureFile', signatureData.signatureFile);
+        }
+        
+        // Add signature data as JSON
+        formData.append('signatureData', JSON.stringify({
+          signatureText: signatureData.signatureText,
+          signatureMeaning: signatureData.signatureMeaning,
+          password: signatureData.password,
+          reason: signatureData.reason || 'Final report'
+        }));
+        
         const response = await fetch(`/api/reports/${state.reportId}/sign`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
+            // Don't set Content-Type - browser will set it with boundary for FormData
           },
-          body: JSON.stringify({
-            signatureData,
-            reportContent: {
-              clinicalHistory: state.clinicalHistory,
-              technique: state.technique,
-              findingsText: state.findingsText,
-              impression: state.impression,
-              recommendations: state.recommendations,
-              findings: state.findings,
-              anatomicalMarkings: state.anatomicalMarkings
-            }
-          })
+          body: formData
         });
         
         if (!response.ok) {
@@ -373,6 +384,10 @@ export const ReportingProvider: React.FC<{
         
         // Update state to final
         dispatch({ type: 'UPDATE_FIELD', payload: { field: 'reportStatus', value: 'final' } });
+        dispatch({ type: 'UPDATE_FIELD', payload: { field: 'signedAt', value: new Date() } });
+        dispatch({ type: 'UPDATE_FIELD', payload: { field: 'signatureUrl', value: data.report?.radiologistSignatureUrl } });
+        dispatch({ type: 'UPDATE_FIELD', payload: { field: 'signedBy', value: data.report?.radiologistName } });
+        dispatch({ type: 'UPDATE_FIELD', payload: { field: 'radiologistSignature', value: data.report?.radiologistSignature } });
         dispatch({ type: 'MARK_SAVED' });
         
       } catch (error: any) {
