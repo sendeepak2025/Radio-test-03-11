@@ -261,6 +261,7 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
         open={showSignDialog}
         onClose={() => setShowSignDialog(false)}
         onSign={handleSign}
+        reportId={state.reportId || ''}
         reportData={{
           patientName: state.patientInfo.patientName,
           patientID: state.patientInfo.patientID,
@@ -287,6 +288,7 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
           templateId: state.templateId,
           templateName: state.templateName,
           templateSections: state.selectedTemplate?.sections || [],
+          templateUiModules: state.selectedTemplate?.uiModules || [],
           sections: state.sections,
           clinicalHistory: state.clinicalHistory,
           technique: state.technique,

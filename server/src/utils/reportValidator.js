@@ -23,8 +23,11 @@ class ReportValidator {
     
     // Validate each section
     template.sections.forEach(section => {
+      // Get section content from either sections object or top-level field
+      const sectionContent = report.sections?.[section.id] || report[section.id] || '';
+      
       // Required field check
-      if (section.required && !report[section.id]) {
+      if (section.required && !sectionContent.trim()) {
         errors.push({
           field: section.id,
           message: `${section.title} is required`,
@@ -33,10 +36,10 @@ class ReportValidator {
       }
       
       // Custom validation rules
-      if (section.validationRules && report[section.id]) {
+      if (section.validationRules && sectionContent) {
         const sectionErrors = this.validateSection(
           section.id,
-          report[section.id],
+          sectionContent,
           section.validationRules,
           report
         );
@@ -225,9 +228,22 @@ class ReportValidator {
       { keyword: 'line malposition', category: 'Line Malposition' }
     ];
     
-    const findingsText = (report.findingsText || report.findings || '').toLowerCase();
-    const impression = (report.impression || '').toLowerCase();
-    const combinedText = `${findingsText} ${impression}`;
+    // Get findings text from sections or top-level fields
+    // Handle both string (findingsText) and array (findings) formats
+    let findingsText = '';
+    if (report.sections?.findings) {
+      findingsText = report.sections.findings;
+    } else if (report.findingsText) {
+      findingsText = report.findingsText;
+    } else if (Array.isArray(report.findings)) {
+      // If findings is an array, extract descriptions
+      findingsText = report.findings.map(f => f.description || '').join(' ');
+    } else if (typeof report.findings === 'string') {
+      findingsText = report.findings;
+    }
+    
+    const impression = report.sections?.impression || report.impression || '';
+    const combinedText = `${findingsText} ${impression}`.toLowerCase();
     
     criticalKeywords.forEach(({ keyword, category }) => {
       if (combinedText.includes(keyword.toLowerCase())) {
@@ -259,22 +275,50 @@ class ReportValidator {
     // Additional signing requirements
     const signingErrors = [];
     
-    // Check findings field (supports both 'findingsText' and 'findings' field names)
-    const findingsContent = report.findingsText || report.findings || '';
-    if (findingsContent.trim().length < 10) {
-      signingErrors.push({
-        field: 'findingsText',
-        message: 'Findings section must have meaningful content',
-        severity: 'error'
-      });
-    }
+    // Only check fields that exist in the template
+    // If template exists, rely on template validation
+    // If no template, check standard fields
     
-    if (!report.impression || report.impression.trim().length < 5) {
-      signingErrors.push({
-        field: 'impression',
-        message: 'Impression is required for signing',
-        severity: 'error'
-      });
+    if (template && template.sections) {
+      // Template-based report: validation already done by validateReport
+      // No additional checks needed - template defines what's required
+      console.log('✅ Template-based validation: Using template section requirements');
+    } else {
+      // Non-template report: Check standard fields
+      console.log('✅ Non-template validation: Checking standard fields');
+      
+      // Check findings field (supports sections, findingsText, and findings array)
+      let findingsContent = '';
+      if (report.sections?.findings) {
+        findingsContent = report.sections.findings;
+      } else if (report.findingsText) {
+        findingsContent = report.findingsText;
+      } else if (Array.isArray(report.findings) && report.findings.length > 0) {
+        // If findings is an array with items, extract descriptions
+        findingsContent = report.findings.map(f => f.description || '').join(' ');
+      } else if (typeof report.findings === 'string') {
+        findingsContent = report.findings;
+      }
+      
+      if (findingsContent.trim().length < 10) {
+        signingErrors.push({
+          field: 'findings',
+          message: 'Findings section must have meaningful content (at least 10 characters)',
+          severity: 'error',
+          suggestion: 'Add detailed findings or use "No significant findings" if appropriate'
+        });
+      }
+      
+      // Check impression (from sections or top-level)
+      const impressionContent = report.sections?.impression || report.impression || '';
+      if (impressionContent.trim().length < 5) {
+        signingErrors.push({
+          field: 'impression',
+          message: 'Impression is required for signing (at least 5 characters)',
+          severity: 'error',
+          suggestion: 'Provide a clear diagnostic impression or conclusion'
+        });
+      }
     }
     
     return {

@@ -641,17 +641,40 @@ router.post('/', async (req, res) => {
     // If template is used, store ALL content in sections object
     // Top-level fields are ONLY for backward compatibility and preview
     if (templateId) {
-      // Template-based report: Initialize sections if needed
-      if (!report.sections || typeof report.sections !== 'object') {
+      // Template-based report: Check if template changed
+      const templateChanged = report.templateId && report.templateId !== templateId;
+      
+      if (templateChanged) {
+        console.log(`⚠️  Template changed from ${report.templateId} to ${templateId} - clearing old sections`);
+        // Clear old template data when switching templates
+        report.sections = {};
+      } else if (!report.sections || typeof report.sections !== 'object') {
+        // Initialize sections if needed
         report.sections = {};
       }
       
-      // Merge incoming sections
+      // Merge incoming sections (this includes all UI module data)
       if (sections && typeof sections === 'object') {
-        Object.assign(report.sections, sections);
+        // Replace sections entirely to avoid stale data
+        // Also decode any HTML entities that might have been encoded
+        const cleanedSections = {};
+        for (const [key, value] of Object.entries(sections)) {
+          if (typeof value === 'string' && key.startsWith('uiModule_')) {
+            // Decode HTML entities in UI module data
+            cleanedSections[key] = value
+              .replace(/&quot;/g, '"')
+              .replace(/&amp;/g, '&')
+              .replace(/&lt;/g, '<')
+              .replace(/&gt;/g, '>')
+              .replace(/&#x2F;/g, '/');
+          } else {
+            cleanedSections[key] = value;
+          }
+        }
+        report.sections = cleanedSections;
       }
       
-      // Store narrative fields in sections with proper keys
+      // Store narrative fields in sections with proper keys (if provided)
       if (req.body.technique !== undefined) {
         report.sections.technique = req.body.technique;
       }
@@ -663,19 +686,30 @@ router.post('/', async (req, res) => {
       }
       if (req.body.clinicalHistory !== undefined) {
         report.sections.clinical_indication = req.body.clinicalHistory;
+        report.sections.clinical_history = req.body.clinicalHistory; // Also store with underscore for compatibility
       }
       if (req.body.recommendations !== undefined) {
         report.sections.recommendations = req.body.recommendations;
       }
       
-      // Derive top-level fields from sections for backward compatibility
+      // ✅ FIX: Always sync sections to top-level fields (even if empty)
+      // This ensures preview and exports work correctly
+      // Try all possible section keys for each field
       report.technique = report.sections.technique || '';
       report.findingsText = report.sections.findings || report.sections.findingsText || '';
       report.impression = report.sections.impression || '';
-      report.clinicalHistory = report.sections.clinical_indication || report.sections.clinicalHistory || report.sections.indication || '';
+      report.clinicalHistory = report.sections.clinical_history || report.sections.clinical_indication || report.sections.clinicalHistory || report.sections.indication || '';
       report.recommendations = report.sections.recommendations || '';
       
-      console.log('✅ Template report created/updated - sections:', Object.keys(report.sections));
+      console.log('✅ Template report synced:', {
+        sectionsKeys: Object.keys(report.sections).length,
+        topLevelFields: {
+          clinicalHistory: report.clinicalHistory ? 'SET' : 'EMPTY',
+          technique: report.technique ? 'SET' : 'EMPTY',
+          findingsText: report.findingsText ? 'SET' : 'EMPTY',
+          impression: report.impression ? 'SET' : 'EMPTY'
+        }
+      });
     } else {
       // Non-template report: Use top-level fields directly
       report.sections = sections || {};
@@ -734,9 +768,46 @@ router.post('/', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error creating/updating report:', error);
+    
+    // Handle specific MongoDB errors
+    if (error.code === 11000) {
+      // Duplicate key error
+      const field = Object.keys(error.keyPattern || {})[0] || 'unknown';
+      return res.status(409).json({
+        success: false,
+        error: 'DUPLICATE_KEY',
+        message: `A report with this ${field} already exists. Please refresh and try again.`,
+        field
+      });
+    }
+    
+    if (error.name === 'ValidationError') {
+      // Mongoose validation error
+      const errors = Object.keys(error.errors).map(key => ({
+        field: key,
+        message: error.errors[key].message
+      }));
+      return res.status(400).json({
+        success: false,
+        error: 'VALIDATION_ERROR',
+        message: 'Report validation failed',
+        errors
+      });
+    }
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({
+        success: false,
+        error: 'INVALID_DATA',
+        message: `Invalid value for field: ${error.path}`
+      });
+    }
+    
+    // Generic server error
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'SERVER_ERROR',
+      message: error.message || 'An unexpected error occurred while saving the report'
     });
   }
 });
@@ -808,187 +879,285 @@ router.get('/:reportId', async (req, res) => {
  * Update report (with access control and versioning)
  * ✅ COMPLIANCE UPDATE: Optimistic locking with ETag/version checking
  */
+// router.put('/:reportId', async (req, res) => {
+//   try {
+//     const { reportId } = req.params;
+//     const updates = req.body;
+//     const clientVersion = req.headers['if-match']; // ETag from client
+
+//     const report = await StructuredReport.findOne({ reportId });
+    
+//     if (!report) {
+//       return res.status(404).json({
+//         success: false,
+//         error: 'Report not found'
+//       });
+//     }
+
+//     // Access control check
+//     if (!canAccessReport(req, report)) {
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Access denied: You do not have permission to edit this report'
+//       });
+//     }
+
+//     // ✅ COMPLIANCE UPDATE: Check if report is signed/final - reject modifications
+//     if (report.reportStatus === 'final' || report.reportStatus === 'final_with_addendum') {
+//       return res.status(409).json({
+//         success: false,
+//         error: 'SIGNED_IMMUTABLE',
+//         message: 'Cannot edit signed report. Signed fields are immutable. Use addendum instead.'
+//       });
+//     }
+
+//     // ✅ COMPLIANCE UPDATE: Optimistic locking - version conflict detection
+//     if (clientVersion && String(report.version) !== String(clientVersion)) {
+//       return res.status(409).json({
+//         success: false,
+//         error: 'VERSION_CONFLICT',
+//         message: 'Report has been modified by another user',
+//         serverVersion: report.version,
+//         clientVersion: clientVersion
+//       });
+//     }
+
+//     // Capture previous status before mutation
+//     const previousStatus = report.reportStatus;
+
+//     // ✅ TEMPLATE FIX: Check if template changed
+//     const templateChanged = updates.templateId && String(updates.templateId) !== String(report.templateId);
+    
+//     if (templateChanged) {
+//       console.log('🔄 Template changed:', report.templateId, '→', updates.templateId);
+      
+//       // ✅ TEMPLATE FIX: When template changes, replace sections entirely (do not merge)
+//       if (updates.sections) {
+//         report.sections = updates.sections; // Replace, not merge
+//       }
+      
+//       // ✅ TEMPLATE FIX: Update template metadata
+//       report.templateId = updates.templateId;
+//       if (updates.templateName) report.templateName = updates.templateName;
+//       if (updates.templateVersion) report.templateVersion = updates.templateVersion;
+//     }
+
+//     // Update allowed fields
+//     const allowedFields = [
+//       'findings', 'measurements', 'sections', 'templateId', 'templateName', 'templateVersion',
+//       'technique', 'findingsText', 'impression', 'keyImages', 'tags',
+//       'clinicalHistory', 'recommendations', 'criticalComms', 'moduleData', 'anatomicalMarkings'
+//     ];
+
+//     allowedFields.forEach(field => {
+//       if (updates[field] !== undefined) {
+//         report[field] = updates[field];
+//       }
+//     });
+
+//     // ✅ TEMPLATE STRUCTURE FIX: Maintain data according to template structure
+//     // If template is used, sections is the source of truth
+//     // Top-level fields are derived for backward compatibility
+//     if (report.templateId) {
+//       console.log('📝 Processing template-based report update:', {
+//         templateId: report.templateId,
+//         incomingSectionsKeys: updates.sections ? Object.keys(updates.sections) : [],
+//         hasTopLevelFields: {
+//           technique: updates.technique !== undefined,
+//           findingsText: updates.findingsText !== undefined,
+//           impression: updates.impression !== undefined
+//         }
+//       });
+      
+//       // Template-based report: sections is source of truth
+//       // Initialize sections if not exists
+//       if (!report.sections || typeof report.sections !== 'object') {
+//         report.sections = {};
+//         console.log('  → Initialized empty sections object');
+//       }
+      
+//       // Update sections from incoming data (sections object takes priority)
+//       if (updates.sections && typeof updates.sections === 'object') {
+//         // Merge sections
+//         Object.assign(report.sections, updates.sections);
+//         console.log('  → Merged incoming sections');
+//       }
+      
+//       // Update sections from top-level fields (for backward compatibility)
+//       if (updates.technique !== undefined) {
+//         report.sections.technique = updates.technique;
+//         console.log('  → Stored technique in sections');
+//       }
+//       if (updates.findingsText !== undefined) {
+//         report.sections.findings = updates.findingsText;
+//         console.log('  → Stored findingsText in sections.findings');
+//       }
+//       if (updates.impression !== undefined) {
+//         report.sections.impression = updates.impression;
+//         console.log('  → Stored impression in sections');
+//       }
+//       if (updates.clinicalHistory !== undefined) {
+//         report.sections.clinical_indication = updates.clinicalHistory;
+//         console.log('  → Stored clinicalHistory in sections.clinical_indication');
+//       }
+//       if (updates.recommendations !== undefined) {
+//         report.sections.recommendations = updates.recommendations;
+//         console.log('  → Stored recommendations in sections');
+//       }
+      
+//       // Derive top-level fields from sections (for preview/export compatibility)
+//       report.technique = report.sections.technique || '';
+//       report.findingsText = report.sections.findings || report.sections.findingsText || '';
+//       report.impression = report.sections.impression || '';
+//       report.clinicalHistory = report.sections.clinical_indication || report.sections.clinicalHistory || report.sections.indication || '';
+//       report.recommendations = report.sections.recommendations || '';
+      
+//       console.log('✅ Template report updated - sections keys:', Object.keys(report.sections));
+//       console.log('✅ Top-level fields derived:', {
+//         technique: report.technique.substring(0, 30) + '...',
+//         findingsText: report.findingsText.substring(0, 30) + '...',
+//         impression: report.impression.substring(0, 30) + '...'
+//       });
+//     } else {
+//       // Non-template report: top-level fields are source of truth
+//       if (updates.technique !== undefined) {
+//         report.technique = updates.technique;
+//       }
+//       if (updates.findingsText !== undefined) {
+//         report.findingsText = updates.findingsText;
+//       }
+//       if (updates.impression !== undefined) {
+//         report.impression = updates.impression;
+//       }
+//       if (updates.clinicalHistory !== undefined) {
+//         report.clinicalHistory = updates.clinicalHistory;
+//       }
+//       if (updates.recommendations !== undefined) {
+//         report.recommendations = updates.recommendations;
+//       }
+//     }
+
+//     // Bump version and add revision
+//     bumpVersion(report);
+//     pushRevision(report, req.user, 'Report updated', previousStatus);
+
+//     await report.save();
+
+//     // ✅ COMPLIANCE UPDATE: Return ETag header with new version
+//     res.setHeader('ETag', String(report.version));
+
+//     res.json({
+//       success: true,
+//       report: report.toObject(),
+//       version: report.version // Include version in response
+//     });
+
+//   } catch (error) {
+//     console.error('❌ Error updating report:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message
+//     });
+//   }
+// });
+
+// NEW UPDATE REPORTS ROUTE
+
 router.put('/:reportId', async (req, res) => {
   try {
+    console.log("\n==============================");
+    console.log("🔵 PUT REPORT (AS-IS STORE MODE)");
+    console.log("==============================");
+
     const { reportId } = req.params;
     const updates = req.body;
-    const clientVersion = req.headers['if-match']; // ETag from client
+    const clientVersion = req.headers["if-match"];
 
     const report = await StructuredReport.findOne({ reportId });
-    
+
     if (!report) {
-      return res.status(404).json({
-        success: false,
-        error: 'Report not found'
-      });
+      return res.status(404).json({ success: false, error: "Report not found" });
     }
 
-    // Access control check
-    if (!canAccessReport(req, report)) {
-      return res.status(403).json({
-        success: false,
-        error: 'Access denied: You do not have permission to edit this report'
-      });
-    }
+    console.log("🧾 Found report version:", report.version);
 
-    // ✅ COMPLIANCE UPDATE: Check if report is signed/final - reject modifications
-    if (report.reportStatus === 'final' || report.reportStatus === 'final_with_addendum') {
+    // Immutable final reports
+    if (["final", "final_with_addendum"].includes(report.reportStatus)) {
       return res.status(409).json({
         success: false,
-        error: 'SIGNED_IMMUTABLE',
-        message: 'Cannot edit signed report. Signed fields are immutable. Use addendum instead.'
+        error: "SIGNED_IMMUTABLE"
       });
     }
 
-    // ✅ COMPLIANCE UPDATE: Optimistic locking - version conflict detection
+    // Optimistic locking check
     if (clientVersion && String(report.version) !== String(clientVersion)) {
       return res.status(409).json({
         success: false,
-        error: 'VERSION_CONFLICT',
-        message: 'Report has been modified by another user',
+        error: "VERSION_CONFLICT",
         serverVersion: report.version,
-        clientVersion: clientVersion
+        clientVersion
       });
     }
 
-    // Capture previous status before mutation
-    const previousStatus = report.reportStatus;
+    console.log("➡ Incoming sections:", JSON.stringify(updates.sections, null, 2));
 
-    // ✅ TEMPLATE FIX: Check if template changed
-    const templateChanged = updates.templateId && String(updates.templateId) !== String(report.templateId);
-    
-    if (templateChanged) {
-      console.log('🔄 Template changed:', report.templateId, '→', updates.templateId);
-      
-      // ✅ TEMPLATE FIX: When template changes, replace sections entirely (do not merge)
-      if (updates.sections) {
-        report.sections = updates.sections; // Replace, not merge
-      }
-      
-      // ✅ TEMPLATE FIX: Update template metadata
-      report.templateId = updates.templateId;
-      if (updates.templateName) report.templateName = updates.templateName;
-      if (updates.templateVersion) report.templateVersion = updates.templateVersion;
+    //
+    // ⭐⭐⭐ MAIN CHANGE: STORE EVERYTHING AS-IS ⭐⭐⭐
+    //
+    // Whatever comes in payload.sections → directly overwrite entire sections object
+    //
+    if (updates.sections && typeof updates.sections === "object") {
+      report.sections = { ...updates.sections };
+      console.log("✔ Stored SECTIONS (AS-IS)");
     }
 
-    // Update allowed fields
-    const allowedFields = [
-      'findings', 'measurements', 'sections', 'templateId', 'templateName', 'templateVersion',
-      'technique', 'findingsText', 'impression', 'keyImages', 'tags',
-      'clinicalHistory', 'recommendations', 'criticalComms', 'moduleData', 'anatomicalMarkings'
-    ];
+    // Arrays stored directly
+    if (updates.findings !== undefined) report.findings = updates.findings;
+    if (updates.measurements !== undefined) report.measurements = updates.measurements;
+    if (updates.annotations !== undefined) report.annotations = updates.annotations;
+    if (updates.keyImages !== undefined) report.keyImages = updates.keyImages;
+    if (updates.anatomicalMarkings !== undefined) report.anatomicalMarkings = updates.anatomicalMarkings;
 
-    allowedFields.forEach(field => {
-      if (updates[field] !== undefined) {
-        report[field] = updates[field];
-      }
-    });
+    // Template metadata
+    if (updates.templateId) report.templateId = updates.templateId;
+    if (updates.templateName) report.templateName = updates.templateName;
+    if (updates.templateVersion) report.templateVersion = updates.templateVersion;
 
-    // ✅ TEMPLATE STRUCTURE FIX: Maintain data according to template structure
-    // If template is used, sections is the source of truth
-    // Top-level fields are derived for backward compatibility
-    if (report.templateId) {
-      console.log('📝 Processing template-based report update:', {
-        templateId: report.templateId,
-        incomingSectionsKeys: updates.sections ? Object.keys(updates.sections) : [],
-        hasTopLevelFields: {
-          technique: updates.technique !== undefined,
-          findingsText: updates.findingsText !== undefined,
-          impression: updates.impression !== undefined
-        }
-      });
-      
-      // Template-based report: sections is source of truth
-      // Initialize sections if not exists
-      if (!report.sections || typeof report.sections !== 'object') {
-        report.sections = {};
-        console.log('  → Initialized empty sections object');
-      }
-      
-      // Update sections from incoming data (sections object takes priority)
-      if (updates.sections && typeof updates.sections === 'object') {
-        // Merge sections
-        Object.assign(report.sections, updates.sections);
-        console.log('  → Merged incoming sections');
-      }
-      
-      // Update sections from top-level fields (for backward compatibility)
-      if (updates.technique !== undefined) {
-        report.sections.technique = updates.technique;
-        console.log('  → Stored technique in sections');
-      }
-      if (updates.findingsText !== undefined) {
-        report.sections.findings = updates.findingsText;
-        console.log('  → Stored findingsText in sections.findings');
-      }
-      if (updates.impression !== undefined) {
-        report.sections.impression = updates.impression;
-        console.log('  → Stored impression in sections');
-      }
-      if (updates.clinicalHistory !== undefined) {
-        report.sections.clinical_indication = updates.clinicalHistory;
-        console.log('  → Stored clinicalHistory in sections.clinical_indication');
-      }
-      if (updates.recommendations !== undefined) {
-        report.sections.recommendations = updates.recommendations;
-        console.log('  → Stored recommendations in sections');
-      }
-      
-      // Derive top-level fields from sections (for preview/export compatibility)
-      report.technique = report.sections.technique || '';
-      report.findingsText = report.sections.findings || report.sections.findingsText || '';
-      report.impression = report.sections.impression || '';
-      report.clinicalHistory = report.sections.clinical_indication || report.sections.clinicalHistory || report.sections.indication || '';
-      report.recommendations = report.sections.recommendations || '';
-      
-      console.log('✅ Template report updated - sections keys:', Object.keys(report.sections));
-      console.log('✅ Top-level fields derived:', {
-        technique: report.technique.substring(0, 30) + '...',
-        findingsText: report.findingsText.substring(0, 30) + '...',
-        impression: report.impression.substring(0, 30) + '...'
-      });
-    } else {
-      // Non-template report: top-level fields are source of truth
-      if (updates.technique !== undefined) {
-        report.technique = updates.technique;
-      }
-      if (updates.findingsText !== undefined) {
-        report.findingsText = updates.findingsText;
-      }
-      if (updates.impression !== undefined) {
-        report.impression = updates.impression;
-      }
-      if (updates.clinicalHistory !== undefined) {
-        report.clinicalHistory = updates.clinicalHistory;
-      }
-      if (updates.recommendations !== undefined) {
-        report.recommendations = updates.recommendations;
-      }
-    }
+    //
+    // ⭐ No auto-sync to top-level narrative fields
+    // ⭐ No blank ignore
+    // ⭐ Only store AS-IS if user explicitly sends them
+    //
+    if (updates.technique !== undefined) report.technique = updates.technique;
+    if (updates.findingsText !== undefined) report.findingsText = updates.findingsText;
+    if (updates.impression !== undefined) report.impression = updates.impression;
+    if (updates.clinicalHistory !== undefined) report.clinicalHistory = updates.clinicalHistory;
+    if (updates.recommendations !== undefined) report.recommendations = updates.recommendations;
 
-    // Bump version and add revision
-    bumpVersion(report);
-    pushRevision(report, req.user, 'Report updated', previousStatus);
+    // Version bump
+    report.version += 1;
+    pushRevision(report, req.user, "Report updated", report.reportStatus);
 
     await report.save();
 
-    // ✅ COMPLIANCE UPDATE: Return ETag header with new version
-    res.setHeader('ETag', String(report.version));
+    console.log("\n🔥 FINAL SAVED REPORT:", JSON.stringify(report.toObject(), null, 2));
 
-    res.json({
+    res.setHeader("ETag", String(report.version));
+
+    return res.json({
       success: true,
       report: report.toObject(),
-      version: report.version // Include version in response
+      version: report.version
     });
 
-  } catch (error) {
-    console.error('❌ Error updating report:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+  } catch (err) {
+    console.error("❌ PUT ERROR:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
+
+
+
 
 /**
  * DELETE /api/reports/:reportId

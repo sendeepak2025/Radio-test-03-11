@@ -32,25 +32,26 @@ const ReportContentPanel: React.FC = () => {
   const { state, actions } = useReporting();
   
   // ✅ TEMPLATE STRUCTURE FIX: Get field values from correct location
-  // If template is used, read from sections; otherwise use top-level fields
+  // If template is used, read from state (which was initialized from sections)
+  // Otherwise use top-level fields
   const getFieldValue = (fieldName: string): string => {
-    if (state.templateId && state.sections) {
-      // Template-based: read from sections
-      const sectionKey = fieldName === 'clinicalHistory' ? 'clinical_indication' : 
-                         fieldName === 'findingsText' ? 'findings' : 
-                         fieldName;
-      return state.sections[sectionKey] || '';
-    }
-    // Non-template: read from top-level field
+    // For template-based reports, state was already initialized from sections
+    // So we can just read from state directly
     return (state as any)[fieldName] || '';
   };
   
   const handleFieldChange = (field: keyof typeof state, value: string) => {
     if (state.templateId) {
-      // Template-based: update both section and top-level field
-      const sectionKey = field === 'clinicalHistory' ? 'clinical_indication' : 
-                         field === 'findingsText' ? 'findings' : 
-                         field as string;
+      // Template-based: update section with proper key mapping
+      let sectionKey = field as string;
+      
+      // Map field names to section keys
+      if (field === 'clinicalHistory') {
+        sectionKey = 'clinical_history'; // Use clinical_history (not clinical_indication)
+      } else if (field === 'findingsText') {
+        sectionKey = 'findings';
+      }
+      
       actions.updateSection(sectionKey, value);
     }
     // Always update top-level field for UI consistency
@@ -79,8 +80,18 @@ const ReportContentPanel: React.FC = () => {
     const rawData = state.sections[`uiModule_${moduleId}`];
     if (!rawData) return undefined;
     try {
-      return JSON.parse(rawData as string);
-    } catch {
+      // Decode HTML entities before parsing
+      const decodedData = String(rawData)
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&#x2F;/g, '/');
+      
+      return JSON.parse(decodedData);
+    } catch (error) {
+      console.error(`Failed to parse module data for ${moduleId}:`, error);
+      console.error('Raw data:', rawData);
       return undefined;
     }
   };
@@ -188,7 +199,7 @@ const ReportContentPanel: React.FC = () => {
       
       {/* Render Template Sections OR Standard Fields (not both) */}
       {state.selectedTemplate?.sections && state.selectedTemplate.sections.length > 0 ? (
-        // Template-based: Show template sections
+        // Template-based: Show template sections ONLY
         <Box mb={3}>
           <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
             Report Sections
@@ -196,6 +207,9 @@ const ReportContentPanel: React.FC = () => {
           {state.selectedTemplate.sections
             .sort((a: any, b: any) => (a.order || 0) - (b.order || 0))
             .map((section: any) => renderTemplateSection(section))}
+          
+          {/* Note: Structured Findings are NOT shown for template-based reports */}
+          {/* Templates use their own "Findings" text section instead */}
         </Box>
       ) : (
         // Non-template: Show standard fields
@@ -403,40 +417,8 @@ const ReportContentPanel: React.FC = () => {
         </Box>
       )}
       
-      {/* Template-Specific Sections (excluding standard fields and UI modules) */}
-      {(() => {
-        // Filter out standard fields and UI modules
-        const standardFields = ['technique', 'findings', 'findingsText', 'impression', 'clinical_indication', 'clinicalHistory', 'indication', 'recommendations'];
-        const templateSpecificSections = Object.entries(state.sections).filter(([key]) => 
-          !standardFields.includes(key) && !key.startsWith('uiModule_')
-        );
-        
-        if (templateSpecificSections.length === 0) return null;
-        
-        return (
-          <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-            <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold' }}>
-              Additional Template Fields
-            </Typography>
-            {templateSpecificSections.map(([key, value]) => (
-              <Box key={key} mb={2}>
-                <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
-                  {key.replace(/_/g, ' ').toUpperCase()}
-                </Typography>
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={3}
-                  value={value}
-                  onChange={(e) => actions.updateSection(key, e.target.value)}
-                  variant="outlined"
-                  placeholder={`Enter ${key.replace(/_/g, ' ')}...`}
-                />
-              </Box>
-            ))}
-          </Paper>
-        );
-      })()}
+      {/* Note: Additional template fields are now handled in Report Sections above */}
+      {/* This section is removed to avoid showing fields from old templates */}
     </Box>
   );
 };

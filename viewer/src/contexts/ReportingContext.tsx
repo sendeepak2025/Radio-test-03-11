@@ -4,6 +4,7 @@
  */
 
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
+import { ReportTemplate } from '@medical-imaging/shared-types';
 
 // ============================================================================
 // TYPES
@@ -331,12 +332,29 @@ export const ReportingProvider: React.FC<{
   let recommendations = initialData.recommendations || '';
   
   if (initialData.templateId && mergedSections) {
-    // Template-based report: Read from sections
-    clinicalHistory = mergedSections.clinical_indication || mergedSections.clinicalHistory || mergedSections.indication || clinicalHistory;
+    // Template-based report: Read from sections (try all possible keys)
+    clinicalHistory = mergedSections.clinical_history || mergedSections.clinical_indication || mergedSections.clinicalHistory || mergedSections.indication || clinicalHistory;
     technique = mergedSections.technique || technique;
     findingsText = mergedSections.findings || mergedSections.findingsText || findingsText;
     impression = mergedSections.impression || impression;
     recommendations = mergedSections.recommendations || recommendations;
+    
+    // Also check for comparison field (used in some templates)
+    if (mergedSections.comparison && !mergedSections.comparison.startsWith('uiModule_')) {
+      // Store comparison in sections if it exists
+      mergedSections.comparison = mergedSections.comparison;
+    }
+    
+    console.log('✅ ReportingContext initialized from sections:', {
+      templateId: initialData.templateId,
+      clinicalHistory: clinicalHistory ? `"${clinicalHistory.substring(0, 30)}..."` : '(empty)',
+      technique: technique ? `"${technique.substring(0, 30)}..."` : '(empty)',
+      findingsText: findingsText ? `"${findingsText.substring(0, 30)}..."` : '(empty)',
+      impression: impression ? `"${impression.substring(0, 30)}..."` : '(empty)',
+      recommendations: recommendations ? `"${recommendations.substring(0, 30)}..."` : '(empty)',
+      totalSectionKeys: Object.keys(mergedSections).length,
+      sectionKeys: Object.keys(mergedSections).filter(k => !k.startsWith('uiModule_'))
+    });
   }
   
   const [state, dispatch] = useReducer(reportReducer, {

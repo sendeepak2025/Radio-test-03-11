@@ -167,7 +167,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           path: '/app/connection-manager',
           requiredRoles: ['admin', 'system:admin', 'technician']
         },
-        { text: 'Reports', icon: <AssessmentIcon />, path: '/app/reports' },
+        // { text: 'Reports', icon: <AssessmentIcon />, path: '/app/reports' },
       ]
     },
     {
@@ -186,7 +186,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             { text: 'Administrators', icon: <AdminIcon />, path: '/app/users/admins' },
           ]
         },
-        { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
+        { text: 'Settings', icon: <SettingsIcon />, path: '/app/settings' },
       ]
     },
   ]

@@ -40,6 +40,7 @@ interface ReportPreviewDialogProps {
     templateId?: string;
     templateName?: string;
     templateSections?: any[]; // Template section definitions
+    templateUiModules?: any[]; // Template UI module definitions
     sections?: Record<string, string>;
     clinicalHistory: string;
     technique: string;
@@ -273,9 +274,15 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
           
           {/* UI Module Results */}
           {reportData.templateId && reportData.sections && (() => {
-            const uiModules = Object.entries(reportData.sections).filter(([key]) => 
-              key.startsWith('uiModule_')
-            );
+            // Get template's UI module IDs if available
+            const templateModuleIds = reportData.templateUiModules?.map((m: any) => `uiModule_${m.id}`) || [];
+            
+            // Filter UI modules: only show those in current template OR all if template not loaded
+            const uiModules = Object.entries(reportData.sections).filter(([key]) => {
+              if (!key.startsWith('uiModule_')) return false;
+              // If template modules known, only show those; otherwise show all
+              return templateModuleIds.length === 0 || templateModuleIds.includes(key);
+            });
             
             if (uiModules.length === 0) return null;
             

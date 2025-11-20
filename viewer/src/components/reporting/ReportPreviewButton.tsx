@@ -35,10 +35,12 @@ export const ReportPreviewButton: React.FC<ReportPreviewButtonProps> = ({
       
       // Fetch template if templateId exists
       let templateSections = [];
+      let templateUiModules = [];
       if (report.templateId) {
         try {
           const templateResponse = await reportsApi.getTemplate(report.templateId);
           templateSections = templateResponse.data?.sections || [];
+          templateUiModules = templateResponse.data?.uiModules || [];
         } catch (err) {
           console.warn('Failed to fetch template:', err);
         }
@@ -54,6 +56,7 @@ export const ReportPreviewButton: React.FC<ReportPreviewButtonProps> = ({
         templateId: report.templateId,
         templateName: report.templateName,
         templateSections: templateSections,
+        templateUiModules: templateUiModules,
         sections: report.sections || {},
         clinicalHistory: report.clinicalHistory || '',
         technique: report.technique || '',
