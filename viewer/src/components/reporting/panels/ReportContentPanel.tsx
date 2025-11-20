@@ -31,7 +31,29 @@ import { MeasurementModule, ChecklistModule, CalculatorModule, DiagramInlineModu
 const ReportContentPanel: React.FC = () => {
   const { state, actions } = useReporting();
   
+  // ✅ TEMPLATE STRUCTURE FIX: Get field values from correct location
+  // If template is used, read from sections; otherwise use top-level fields
+  const getFieldValue = (fieldName: string): string => {
+    if (state.templateId && state.sections) {
+      // Template-based: read from sections
+      const sectionKey = fieldName === 'clinicalHistory' ? 'clinical_indication' : 
+                         fieldName === 'findingsText' ? 'findings' : 
+                         fieldName;
+      return state.sections[sectionKey] || '';
+    }
+    // Non-template: read from top-level field
+    return (state as any)[fieldName] || '';
+  };
+  
   const handleFieldChange = (field: keyof typeof state, value: string) => {
+    if (state.templateId) {
+      // Template-based: update both section and top-level field
+      const sectionKey = field === 'clinicalHistory' ? 'clinical_indication' : 
+                         field === 'findingsText' ? 'findings' : 
+                         field as string;
+      actions.updateSection(sectionKey, value);
+    }
+    // Always update top-level field for UI consistency
     actions.updateField(field, value);
   };
   
@@ -40,11 +62,11 @@ const ReportContentPanel: React.FC = () => {
   
   // Helper to insert phrase into field
   const insertPhrase = (field: keyof typeof state, phrase: string) => {
-    const currentValue = state[field] as string || '';
+    const currentValue = getFieldValue(field as string);
     const newValue = currentValue 
       ? `${currentValue}\n${phrase}` 
       : phrase;
-    actions.updateField(field, newValue);
+    handleFieldChange(field, newValue);
   };
   
   // Handle UI module data changes
@@ -109,6 +131,38 @@ const ReportContentPanel: React.FC = () => {
     }
   };
   
+  // Render template section field
+  const renderTemplateSection = (section: any) => {
+    const sectionId = section.id;
+    const sectionValue = state.sections[sectionId] || '';
+    
+    return (
+      <Paper key={sectionId} elevation={1} sx={{ p: 2, mb: 2 }}>
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+            {section.title} {section.required && '*'}
+          </Typography>
+        </Box>
+        <TextField
+          fullWidth
+          multiline
+          rows={section.rows || 3}
+          value={sectionValue}
+          onChange={(e) => actions.updateSection(sectionId, e.target.value)}
+          placeholder={section.placeholder || `Enter ${section.title.toLowerCase()}...`}
+          variant="outlined"
+          required={section.required}
+          sx={{ mt: 1 }}
+        />
+        {section.defaultContent && !sectionValue && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+            Default: {section.defaultContent}
+          </Typography>
+        )}
+      </Paper>
+    );
+  };
+
   return (
     <Box>
       <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold' }}>
@@ -116,80 +170,87 @@ const ReportContentPanel: React.FC = () => {
       </Typography>
       
       {/* Render UI Modules from Template (if any) */}
-      {state.selectedTemplate?.uiModules && state.selectedTemplate.uiModules.length > 0 ? (
+      {state.selectedTemplate?.uiModules && state.selectedTemplate.uiModules.length > 0 && (
         <Box mb={3}>
           <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
             Specialized Assessment Tools ({state.selectedTemplate.uiModules.length})
           </Typography>
           {state.selectedTemplate.uiModules
-            .sort((a, b) => (a.order || 0) - (b.order || 0))
-            .map((module) => {
-              console.log('🔧 Rendering module:', { 
-                id: module.id, 
-                type: module.type, 
-                title: module.title,
-                bodyPart: module.config?.bodyPart 
-              });
-              return (
-                <Box key={module.id} mb={2}>
-                  {renderUIModule(module)}
-                </Box>
-              );
-            })}
+            .sort((a: any, b: any) => (a.order || 0) - (b.order || 0))
+            .map((module: any) => (
+              <Box key={module.id} mb={2}>
+                {renderUIModule(module)}
+              </Box>
+            ))}
           <Divider sx={{ my: 3 }} />
         </Box>
-      ) : (
-        console.log('⚠️ No UI modules to render. Template:', state.selectedTemplate?.name, 'Modules:', state.selectedTemplate?.uiModules?.length),
-        null
       )}
       
-      {/* Clinical History */}
-      <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-        <Box display="flex" alignItems="center" justifyContent="space-between">
-          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-            Clinical History
+      {/* Render Template Sections OR Standard Fields (not both) */}
+      {state.selectedTemplate?.sections && state.selectedTemplate.sections.length > 0 ? (
+        // Template-based: Show template sections
+        <Box mb={3}>
+          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+            Report Sections
           </Typography>
-          <QuickPhraseButton
-            phrases={getQuickPhrases(modality, 'clinicalHistory')}
-            onInsert={(phrase) => insertPhrase('clinicalHistory', phrase)}
-            label="Common Indications"
-          />
+          {state.selectedTemplate.sections
+            .sort((a: any, b: any) => (a.order || 0) - (b.order || 0))
+            .map((section: any) => renderTemplateSection(section))}
         </Box>
-        <TextField
-          fullWidth
-          multiline
-          rows={2}
-          value={state.clinicalHistory}
-          onChange={(e) => handleFieldChange('clinicalHistory', e.target.value)}
-          placeholder="Enter clinical history and indication for study..."
-          variant="outlined"
-          sx={{ mt: 1 }}
-        />
-      </Paper>
-      
-      {/* Technique */}
-      <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-        <Box display="flex" alignItems="center" justifyContent="space-between">
-          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-            Technique
-          </Typography>
-          <QuickPhraseButton
-            phrases={getQuickPhrases(modality, 'technique')}
-            onInsert={(phrase) => insertPhrase('technique', phrase)}
-            label="Common Techniques"
+      ) : (
+        // Non-template: Show standard fields
+        <Box mb={3}>
+        <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+          Standard Report Fields
+        </Typography>
+        
+        {/* Clinical History */}
+        <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+              Clinical History
+            </Typography>
+            <QuickPhraseButton
+              phrases={getQuickPhrases(modality, 'clinicalHistory')}
+              onInsert={(phrase) => insertPhrase('clinicalHistory', phrase)}
+              label="Common Indications"
+            />
+          </Box>
+          <TextField
+            fullWidth
+            multiline
+            rows={2}
+            value={getFieldValue('clinicalHistory')}
+            onChange={(e) => handleFieldChange('clinicalHistory', e.target.value)}
+            placeholder="Enter clinical history and indication for study..."
+            variant="outlined"
+            sx={{ mt: 1 }}
           />
-        </Box>
-        <TextField
-          fullWidth
-          multiline
-          rows={2}
-          value={state.technique}
-          onChange={(e) => handleFieldChange('technique', e.target.value)}
-          placeholder="Describe imaging technique, contrast, protocols..."
-          variant="outlined"
-          sx={{ mt: 1 }}
-        />
-      </Paper>
+        </Paper>
+        
+        {/* Technique */}
+        <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+              Technique
+            </Typography>
+            <QuickPhraseButton
+              phrases={getQuickPhrases(modality, 'technique')}
+              onInsert={(phrase) => insertPhrase('technique', phrase)}
+              label="Common Techniques"
+            />
+          </Box>
+          <TextField
+            fullWidth
+            multiline
+            rows={2}
+            value={getFieldValue('technique')}
+            onChange={(e) => handleFieldChange('technique', e.target.value)}
+            placeholder="Describe imaging technique, contrast, protocols..."
+            variant="outlined"
+            sx={{ mt: 1 }}
+          />
+        </Paper>
       
       {/* Structured Findings */}
       <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
@@ -283,7 +344,7 @@ const ReportContentPanel: React.FC = () => {
           fullWidth
           multiline
           rows={6}
-          value={state.findingsText}
+          value={getFieldValue('findingsText')}
           onChange={(e) => handleFieldChange('findingsText', e.target.value)}
           placeholder="Describe detailed findings..."
           variant="outlined"
@@ -307,7 +368,7 @@ const ReportContentPanel: React.FC = () => {
           fullWidth
           multiline
           rows={4}
-          value={state.impression}
+          value={getFieldValue('impression')}
           onChange={(e) => handleFieldChange('impression', e.target.value)}
           placeholder="Enter impression and conclusions..."
           variant="outlined"
@@ -316,53 +377,66 @@ const ReportContentPanel: React.FC = () => {
         />
       </Paper>
       
-      {/* Recommendations */}
-      <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-        <Box display="flex" alignItems="center" justifyContent="space-between">
-          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-            Recommendations
-          </Typography>
-          <QuickPhraseButton
-            phrases={getQuickPhrases(modality, 'recommendations')}
-            onInsert={(phrase) => insertPhrase('recommendations', phrase)}
-            label="Common Recommendations"
-          />
-        </Box>
-        <TextField
-          fullWidth
-          multiline
-          rows={3}
-          value={state.recommendations}
-          onChange={(e) => handleFieldChange('recommendations', e.target.value)}
-          placeholder="Enter follow-up recommendations..."
-          variant="outlined"
-          sx={{ mt: 1 }}
-        />
-      </Paper>
-      
-      {/* Template Sections (if any) */}
-      {Object.keys(state.sections).length > 0 && (
-        <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-          <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold' }}>
-            Template Sections
-          </Typography>
-          {Object.entries(state.sections).map(([key, value]) => (
-            <Box key={key} mb={2}>
-              <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
-                {key.replace(/_/g, ' ').toUpperCase()}
+          {/* Recommendations */}
+          <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+            <Box display="flex" alignItems="center" justifyContent="space-between">
+              <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+                Recommendations
               </Typography>
-              <TextField
-                fullWidth
-                multiline
-                rows={3}
-                value={value}
-                onChange={(e) => actions.updateSection(key, e.target.value)}
-                variant="outlined"
+              <QuickPhraseButton
+                phrases={getQuickPhrases(modality, 'recommendations')}
+                onInsert={(phrase) => insertPhrase('recommendations', phrase)}
+                label="Common Recommendations"
               />
             </Box>
-          ))}
-        </Paper>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              value={getFieldValue('recommendations')}
+              onChange={(e) => handleFieldChange('recommendations', e.target.value)}
+              placeholder="Enter follow-up recommendations..."
+              variant="outlined"
+              sx={{ mt: 1 }}
+            />
+          </Paper>
+        </Box>
       )}
+      
+      {/* Template-Specific Sections (excluding standard fields and UI modules) */}
+      {(() => {
+        // Filter out standard fields and UI modules
+        const standardFields = ['technique', 'findings', 'findingsText', 'impression', 'clinical_indication', 'clinicalHistory', 'indication', 'recommendations'];
+        const templateSpecificSections = Object.entries(state.sections).filter(([key]) => 
+          !standardFields.includes(key) && !key.startsWith('uiModule_')
+        );
+        
+        if (templateSpecificSections.length === 0) return null;
+        
+        return (
+          <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+            <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold' }}>
+              Additional Template Fields
+            </Typography>
+            {templateSpecificSections.map(([key, value]) => (
+              <Box key={key} mb={2}>
+                <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                  {key.replace(/_/g, ' ').toUpperCase()}
+                </Typography>
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={3}
+                  value={value}
+                  onChange={(e) => actions.updateSection(key, e.target.value)}
+                  variant="outlined"
+                  placeholder={`Enter ${key.replace(/_/g, ' ')}...`}
+                />
+              </Box>
+            ))}
+          </Paper>
+        );
+      })()}
     </Box>
   );
 };

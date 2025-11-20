@@ -628,7 +628,6 @@ router.post('/', async (req, res) => {
     }
 
     // Update fields
-    report.sections = sections;
     report.findings = findings;
     report.measurements = measurements;
     report.templateId = templateId || report.templateId;
@@ -638,13 +637,54 @@ router.post('/', async (req, res) => {
       report.keyImages = req.body.keyImages;
     }
 
-    // ✅ TEMPLATE FIX: Build narrative fields with proper precedence
-    // Priority: direct field > sections field > existing value
-    report.technique = req.body.technique ?? sections.technique ?? report.technique ?? '';
-    report.findingsText = req.body.findingsText ?? sections.findings ?? sections.findingsText ?? report.findingsText ?? '';
-    report.impression = req.body.impression ?? sections.impression ?? report.impression ?? '';
-    report.clinicalHistory = req.body.clinicalHistory ?? sections.clinicalHistory ?? sections.indication ?? report.clinicalHistory ?? '';
-    report.recommendations = req.body.recommendations ?? sections.recommendations ?? report.recommendations ?? '';
+    // ✅ TEMPLATE STRUCTURE FIX: Store data according to template structure
+    // If template is used, store ALL content in sections object
+    // Top-level fields are ONLY for backward compatibility and preview
+    if (templateId) {
+      // Template-based report: Initialize sections if needed
+      if (!report.sections || typeof report.sections !== 'object') {
+        report.sections = {};
+      }
+      
+      // Merge incoming sections
+      if (sections && typeof sections === 'object') {
+        Object.assign(report.sections, sections);
+      }
+      
+      // Store narrative fields in sections with proper keys
+      if (req.body.technique !== undefined) {
+        report.sections.technique = req.body.technique;
+      }
+      if (req.body.findingsText !== undefined) {
+        report.sections.findings = req.body.findingsText;
+      }
+      if (req.body.impression !== undefined) {
+        report.sections.impression = req.body.impression;
+      }
+      if (req.body.clinicalHistory !== undefined) {
+        report.sections.clinical_indication = req.body.clinicalHistory;
+      }
+      if (req.body.recommendations !== undefined) {
+        report.sections.recommendations = req.body.recommendations;
+      }
+      
+      // Derive top-level fields from sections for backward compatibility
+      report.technique = report.sections.technique || '';
+      report.findingsText = report.sections.findings || report.sections.findingsText || '';
+      report.impression = report.sections.impression || '';
+      report.clinicalHistory = report.sections.clinical_indication || report.sections.clinicalHistory || report.sections.indication || '';
+      report.recommendations = report.sections.recommendations || '';
+      
+      console.log('✅ Template report created/updated - sections:', Object.keys(report.sections));
+    } else {
+      // Non-template report: Use top-level fields directly
+      report.sections = sections || {};
+      report.technique = req.body.technique ?? report.technique ?? '';
+      report.findingsText = req.body.findingsText ?? report.findingsText ?? '';
+      report.impression = req.body.impression ?? report.impression ?? '';
+      report.clinicalHistory = req.body.clinicalHistory ?? report.clinicalHistory ?? '';
+      report.recommendations = req.body.recommendations ?? report.recommendations ?? '';
+    }
     
     // ✅ TEMPLATE FIX: Store template metadata
     if (req.body.templateName) report.templateName = req.body.templateName;
@@ -844,26 +884,86 @@ router.put('/:reportId', async (req, res) => {
       }
     });
 
-    // ✅ TEMPLATE FIX: Recompute narrative fields with proper precedence
-    // Priority: direct field > sections field > existing value
-    if (updates.sections || updates.technique !== undefined) {
-      report.technique = updates.technique ?? updates.sections?.technique ?? report.technique ?? '';
-    }
-    
-    if (updates.sections || updates.findingsText !== undefined) {
-      report.findingsText = updates.findingsText ?? updates.sections?.findings ?? updates.sections?.findingsText ?? report.findingsText ?? '';
-    }
-    
-    if (updates.sections || updates.impression !== undefined) {
-      report.impression = updates.impression ?? updates.sections?.impression ?? report.impression ?? '';
-    }
-    
-    if (updates.sections || updates.clinicalHistory !== undefined) {
-      report.clinicalHistory = updates.clinicalHistory ?? updates.sections?.clinicalHistory ?? updates.sections?.indication ?? report.clinicalHistory ?? '';
-    }
-    
-    if (updates.sections || updates.recommendations !== undefined) {
-      report.recommendations = updates.recommendations ?? updates.sections?.recommendations ?? report.recommendations ?? '';
+    // ✅ TEMPLATE STRUCTURE FIX: Maintain data according to template structure
+    // If template is used, sections is the source of truth
+    // Top-level fields are derived for backward compatibility
+    if (report.templateId) {
+      console.log('📝 Processing template-based report update:', {
+        templateId: report.templateId,
+        incomingSectionsKeys: updates.sections ? Object.keys(updates.sections) : [],
+        hasTopLevelFields: {
+          technique: updates.technique !== undefined,
+          findingsText: updates.findingsText !== undefined,
+          impression: updates.impression !== undefined
+        }
+      });
+      
+      // Template-based report: sections is source of truth
+      // Initialize sections if not exists
+      if (!report.sections || typeof report.sections !== 'object') {
+        report.sections = {};
+        console.log('  → Initialized empty sections object');
+      }
+      
+      // Update sections from incoming data (sections object takes priority)
+      if (updates.sections && typeof updates.sections === 'object') {
+        // Merge sections
+        Object.assign(report.sections, updates.sections);
+        console.log('  → Merged incoming sections');
+      }
+      
+      // Update sections from top-level fields (for backward compatibility)
+      if (updates.technique !== undefined) {
+        report.sections.technique = updates.technique;
+        console.log('  → Stored technique in sections');
+      }
+      if (updates.findingsText !== undefined) {
+        report.sections.findings = updates.findingsText;
+        console.log('  → Stored findingsText in sections.findings');
+      }
+      if (updates.impression !== undefined) {
+        report.sections.impression = updates.impression;
+        console.log('  → Stored impression in sections');
+      }
+      if (updates.clinicalHistory !== undefined) {
+        report.sections.clinical_indication = updates.clinicalHistory;
+        console.log('  → Stored clinicalHistory in sections.clinical_indication');
+      }
+      if (updates.recommendations !== undefined) {
+        report.sections.recommendations = updates.recommendations;
+        console.log('  → Stored recommendations in sections');
+      }
+      
+      // Derive top-level fields from sections (for preview/export compatibility)
+      report.technique = report.sections.technique || '';
+      report.findingsText = report.sections.findings || report.sections.findingsText || '';
+      report.impression = report.sections.impression || '';
+      report.clinicalHistory = report.sections.clinical_indication || report.sections.clinicalHistory || report.sections.indication || '';
+      report.recommendations = report.sections.recommendations || '';
+      
+      console.log('✅ Template report updated - sections keys:', Object.keys(report.sections));
+      console.log('✅ Top-level fields derived:', {
+        technique: report.technique.substring(0, 30) + '...',
+        findingsText: report.findingsText.substring(0, 30) + '...',
+        impression: report.impression.substring(0, 30) + '...'
+      });
+    } else {
+      // Non-template report: top-level fields are source of truth
+      if (updates.technique !== undefined) {
+        report.technique = updates.technique;
+      }
+      if (updates.findingsText !== undefined) {
+        report.findingsText = updates.findingsText;
+      }
+      if (updates.impression !== undefined) {
+        report.impression = updates.impression;
+      }
+      if (updates.clinicalHistory !== undefined) {
+        report.clinicalHistory = updates.clinicalHistory;
+      }
+      if (updates.recommendations !== undefined) {
+        report.recommendations = updates.recommendations;
+      }
     }
 
     // Bump version and add revision

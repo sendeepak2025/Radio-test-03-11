@@ -98,6 +98,11 @@ export const CalculatorModule: React.FC<CalculatorModuleProps> = ({
 
     criteria.forEach((criterion) => {
       const selectedValue = currentSelections[criterion.id];
+      
+      // Skip if no options defined
+      if (!criterion.options || criterion.options.length === 0) {
+        return;
+      }
       if (selectedValue) {
         const option = criterion.options.find(opt => opt.value === selectedValue);
         if (option) {

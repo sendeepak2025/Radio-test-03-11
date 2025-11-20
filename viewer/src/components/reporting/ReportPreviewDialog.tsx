@@ -37,6 +37,10 @@ interface ReportPreviewDialogProps {
     patientID: string;
     modality: string;
     studyDate?: string;
+    templateId?: string;
+    templateName?: string;
+    templateSections?: any[]; // Template section definitions
+    sections?: Record<string, string>;
     clinicalHistory: string;
     technique: string;
     findingsText: string;
@@ -149,31 +153,88 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
           
           <Divider sx={{ my: 2 }} />
           
-          {/* Clinical History */}
-          {reportData.clinicalHistory && (
-            <Box sx={{ mb: 3 }}>
-              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-                Clinical History
-              </Typography>
-              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                {reportData.clinicalHistory}
-              </Typography>
-            </Box>
+          {/* Dynamic Template Sections - Render based on template structure */}
+          {reportData.templateId && reportData.templateSections && reportData.templateSections.length > 0 ? (
+            // Template-based report: Render sections in template order
+            reportData.templateSections
+              .sort((a: any, b: any) => (a.order || 0) - (b.order || 0))
+              .map((section: any) => {
+                const sectionValue = reportData.sections?.[section.id];
+                if (!sectionValue || String(sectionValue).trim() === '') return null;
+                
+                return (
+                  <Box key={section.id} sx={{ mb: 3 }}>
+                    <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                      {section.title} {section.required && '*'}
+                    </Typography>
+                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                      {sectionValue}
+                    </Typography>
+                  </Box>
+                );
+              })
+          ) : (
+            // Non-template report: Show standard fields
+            <>
+              {/* Clinical History */}
+              {reportData.clinicalHistory && (
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                    Clinical History
+                  </Typography>
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                    {reportData.clinicalHistory}
+                  </Typography>
+                </Box>
+              )}
+              
+              {/* Technique */}
+              {reportData.technique && (
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                    Technique
+                  </Typography>
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                    {reportData.technique}
+                  </Typography>
+                </Box>
+              )}
+              
+              {/* Findings */}
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                  Findings
+                </Typography>
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                  {reportData.findingsText || 'No findings documented.'}
+                </Typography>
+              </Box>
+              
+              {/* Impression */}
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                  Impression
+                </Typography>
+                <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontWeight: 'bold' }}>
+                  {reportData.impression || 'No impression documented.'}
+                </Typography>
+              </Box>
+              
+              {/* Recommendations */}
+              {reportData.recommendations && (
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                    Recommendations
+                  </Typography>
+                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                    {reportData.recommendations}
+                  </Typography>
+                </Box>
+              )}
+            </>
           )}
           
-          {/* Technique */}
-          {reportData.technique && (
-            <Box sx={{ mb: 3 }}>
-              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-                Technique
-              </Typography>
-              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                {reportData.technique}
-              </Typography>
-            </Box>
-          )}
-          
-          {/* Structured Findings */}
+          {/* Structured Findings (always show if present) */}
           {reportData.findings && reportData.findings.length > 0 && (
             <Box sx={{ mb: 3 }}>
               <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
@@ -210,37 +271,105 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
             </Box>
           )}
           
-          {/* Findings */}
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-              Findings
-            </Typography>
-            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-              {reportData.findingsText || 'No findings documented.'}
-            </Typography>
-          </Box>
+          {/* UI Module Results */}
+          {reportData.templateId && reportData.sections && (() => {
+            const uiModules = Object.entries(reportData.sections).filter(([key]) => 
+              key.startsWith('uiModule_')
+            );
+            
+            if (uiModules.length === 0) return null;
+            
+            return (
+              <>
+                <Divider sx={{ my: 2 }} />
+                <Box sx={{ mb: 3 }}>
+                  <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                    Assessment Tools Results
+                  </Typography>
+                  {uiModules.map(([key, value]) => {
+                    const moduleId = key.replace('uiModule_', '');
+                    const moduleName = moduleId.replace(/_/g, ' ').toUpperCase();
+                    
+                    let parsedData;
+                    try {
+                      parsedData = JSON.parse(value as string);
+                    } catch {
+                      parsedData = value;
+                    }
+                    
+                    return (
+                      <Box key={key} sx={{ mb: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 'bold', color: 'primary.main', mb: 1 }}>
+                          {moduleName}
+                        </Typography>
+                        
+                        {/* BI-RADS Calculator */}
+                        {moduleId === 'birads_calculator' && parsedData?.category && (
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                              BI-RADS Category: {parsedData.category}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              {parsedData.recommendation}
+                            </Typography>
+                            {parsedData.findings && parsedData.findings.length > 0 && (
+                              <Box sx={{ mt: 1 }}>
+                                <Typography variant="caption" sx={{ fontWeight: 'bold' }}>Findings:</Typography>
+                                {parsedData.findings.map((finding: string, idx: number) => (
+                                  <Typography key={idx} variant="caption" display="block">
+                                    • {finding}
+                                  </Typography>
+                                ))}
+                              </Box>
+                            )}
+                          </Box>
+                        )}
+                        
+                        {/* Measurements */}
+                        {(moduleId.includes('measurement') || moduleId.includes('nodule')) && Array.isArray(parsedData) && parsedData.length > 0 && (
+                          <Box>
+                            {parsedData.map((measurement: any, idx: number) => (
+                              <Typography key={idx} variant="body2">
+                                • {measurement.label || `Measurement ${idx + 1}`}: {measurement.value} {measurement.unit}
+                                {measurement.notes && ` (${measurement.notes})`}
+                              </Typography>
+                            ))}
+                          </Box>
+                        )}
+                        
+                        {/* Checklist */}
+                        {moduleId.includes('checklist') && parsedData?.items && (
+                          <Box>
+                            {Object.entries(parsedData.items).map(([item, status]: [string, any]) => (
+                              <Typography key={item} variant="body2">
+                                • {item}: {status}
+                              </Typography>
+                            ))}
+                          </Box>
+                        )}
+                        
+                        {/* Diagram - just show count */}
+                        {moduleId.includes('diagram') && Array.isArray(parsedData) && (
+                          <Typography variant="body2">
+                            {parsedData.length} marking(s) on diagram
+                          </Typography>
+                        )}
+                        
+                        {/* Generic fallback */}
+                        {!moduleId.includes('birads') && !moduleId.includes('measurement') && !moduleId.includes('checklist') && !moduleId.includes('diagram') && (
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                            {typeof parsedData === 'object' ? JSON.stringify(parsedData, null, 2) : String(parsedData)}
+                          </Typography>
+                        )}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              </>
+            );
+          })()}
           
-          {/* Impression */}
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-              Impression
-            </Typography>
-            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontWeight: 'bold' }}>
-              {reportData.impression || 'No impression documented.'}
-            </Typography>
-          </Box>
-          
-          {/* Recommendations */}
-          {reportData.recommendations && (
-            <Box sx={{ mb: 3 }}>
-              <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-                Recommendations
-              </Typography>
-              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                {reportData.recommendations}
-              </Typography>
-            </Box>
-          )}
+
           
           {/* Anatomical Markings with Visual */}
           {reportData.anatomicalMarkings && reportData.anatomicalMarkings.length > 0 && (

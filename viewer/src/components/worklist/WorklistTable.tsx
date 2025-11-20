@@ -24,6 +24,7 @@ import {
   Person as PatientIcon,
 } from '@mui/icons-material'
 import { format, parseISO } from 'date-fns'
+import { ReportPreviewButton } from '../reporting/ReportPreviewButton'
 
 import type { Study, SortOptions } from '@/types/worklist'
 
@@ -318,6 +319,15 @@ export const WorklistTable: React.FC<WorklistTableProps> = ({
                       <ViewIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
+                  
+                  {/* Preview Report Button (if report exists) */}
+                  {study.reportId && (
+                    <ReportPreviewButton 
+                      reportId={study.reportId}
+                      size="small"
+                      tooltip="Preview Report"
+                    />
+                  )}
                   
                   <Tooltip title="Assign Study">
                     <IconButton

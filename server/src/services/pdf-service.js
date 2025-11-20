@@ -152,6 +152,109 @@ class PDFService {
         this.addSection(doc, 'Findings', report.findings || report.findingsText);
         this.addSection(doc, 'Impression', report.impression);
         this.addSection(doc, 'Recommendations', report.recommendations);
+        
+        // UI Module Results
+        if (report.templateId && report.sections) {
+          const uiModules = Object.entries(report.sections).filter(([key]) => 
+            key.startsWith('uiModule_')
+          );
+          
+          if (uiModules.length > 0) {
+            doc.moveDown(0.5);
+            doc.fontSize(12)
+              .fillColor('#1976d2')
+              .text('ASSESSMENT TOOLS RESULTS', this.margin, doc.y);
+            doc.moveDown(0.5);
+            
+            uiModules.forEach(([key, value]) => {
+              const moduleId = key.replace('uiModule_', '');
+              const moduleName = moduleId.replace(/_/g, ' ').toUpperCase();
+              
+              let parsedData;
+              try {
+                parsedData = JSON.parse(value);
+              } catch {
+                parsedData = value;
+              }
+              
+              doc.fontSize(11)
+                .fillColor('#000000')
+                .font('Helvetica-Bold')
+                .text(moduleName, this.margin, doc.y);
+              doc.font('Helvetica');
+              doc.moveDown(0.3);
+              
+              // BI-RADS Calculator
+              if (moduleId === 'birads_calculator' && parsedData?.category) {
+                doc.fontSize(10)
+                  .text(`BI-RADS Category: ${parsedData.category}`, this.margin + 20, doc.y);
+                doc.text(`Recommendation: ${parsedData.recommendation || 'N/A'}`, this.margin + 20, doc.y);
+                if (parsedData.findings && parsedData.findings.length > 0) {
+                  doc.text('Findings:', this.margin + 20, doc.y);
+                  parsedData.findings.forEach(finding => {
+                    doc.text(`  • ${finding}`, this.margin + 30, doc.y);
+                  });
+                }
+              }
+              
+              // Measurements
+              else if ((moduleId.includes('measurement') || moduleId.includes('nodule')) && Array.isArray(parsedData) && parsedData.length > 0) {
+                parsedData.forEach(measurement => {
+                  doc.fontSize(10)
+                    .text(`  • ${measurement.label || 'Measurement'}: ${measurement.value} ${measurement.unit}${measurement.notes ? ` (${measurement.notes})` : ''}`, 
+                      this.margin + 20, doc.y);
+                });
+              }
+              
+              // Checklist
+              else if (moduleId.includes('checklist') && parsedData?.items) {
+                Object.entries(parsedData.items).forEach(([item, status]) => {
+                  doc.fontSize(10)
+                    .text(`  • ${item}: ${status}`, this.margin + 20, doc.y);
+                });
+              }
+              
+              // Diagram
+              else if (moduleId.includes('diagram') && Array.isArray(parsedData)) {
+                doc.fontSize(10)
+                  .text(`  ${parsedData.length} marking(s) on diagram`, this.margin + 20, doc.y);
+              }
+              
+              // Generic fallback
+              else {
+                const dataStr = typeof parsedData === 'object' ? JSON.stringify(parsedData, null, 2) : String(parsedData);
+                doc.fontSize(9)
+                  .text(dataStr, this.margin + 20, doc.y, { width: this.contentWidth - 20 });
+              }
+              
+              doc.moveDown(0.5);
+            });
+          }
+        }
+        
+        // Template-Specific Sections
+        if (report.templateId && report.sections) {
+          const standardFields = ['technique', 'findings', 'findingsText', 'impression', 'clinical_indication', 'clinicalHistory', 'indication', 'recommendations', 'comparison'];
+          const templateSpecificSections = Object.entries(report.sections).filter(([key, value]) => 
+            !standardFields.includes(key) && 
+            !key.startsWith('uiModule_') &&
+            value && 
+            String(value).trim() !== ''
+          );
+          
+          if (templateSpecificSections.length > 0) {
+            doc.moveDown(0.5);
+            doc.fontSize(12)
+              .fillColor('#1976d2')
+              .text('ADDITIONAL TEMPLATE FIELDS', this.margin, doc.y);
+            doc.moveDown(0.5);
+            
+            templateSpecificSections.forEach(([key, value]) => {
+              const title = key.replace(/_/g, ' ').toUpperCase();
+              this.addSection(doc, title, value);
+            });
+          }
+        }
 
         // Structured Findings Table
         if (report.structuredFindings && report.structuredFindings.length > 0) {

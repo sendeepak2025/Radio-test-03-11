@@ -15,6 +15,8 @@ export interface Study {
   aiStatus: string
   assignedTo?: string
   accessionNumber?: string
+  reportId?: string
+  reportStatus?: string
   createdAt?: string
   updatedAt?: string
 }

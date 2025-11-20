@@ -323,6 +323,22 @@ export const ReportingProvider: React.FC<{
     ...moduleDataToSections((initialData as any).moduleData || {})
   };
   
+  // ✅ TEMPLATE STRUCTURE FIX: Initialize fields from sections if template is used
+  let clinicalHistory = initialData.clinicalHistory || '';
+  let technique = initialData.technique || '';
+  let findingsText = initialData.findingsText || '';
+  let impression = initialData.impression || '';
+  let recommendations = initialData.recommendations || '';
+  
+  if (initialData.templateId && mergedSections) {
+    // Template-based report: Read from sections
+    clinicalHistory = mergedSections.clinical_indication || mergedSections.clinicalHistory || mergedSections.indication || clinicalHistory;
+    technique = mergedSections.technique || technique;
+    findingsText = mergedSections.findings || mergedSections.findingsText || findingsText;
+    impression = mergedSections.impression || impression;
+    recommendations = mergedSections.recommendations || recommendations;
+  }
+  
   const [state, dispatch] = useReducer(reportReducer, {
     studyInstanceUID: initialData.studyInstanceUID || '',
     patientInfo: initialData.patientInfo || {
@@ -334,11 +350,11 @@ export const ReportingProvider: React.FC<{
     findings: initialData.findings || [],
     anatomicalMarkings: initialData.anatomicalMarkings || [],
     keyImages: initialData.keyImages || [],
-    clinicalHistory: initialData.clinicalHistory || '',
-    technique: initialData.technique || '',
-    findingsText: initialData.findingsText || '',
-    impression: initialData.impression || '',
-    recommendations: initialData.recommendations || '',
+    clinicalHistory,
+    technique,
+    findingsText,
+    impression,
+    recommendations,
     workflowStep: initialData.workflowStep || 'editing',
     creationMode: initialData.creationMode || 'manual',
     activePanel: 'content',
@@ -390,27 +406,57 @@ export const ReportingProvider: React.FC<{
       try {
         const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
         
+        // ✅ TEMPLATE STRUCTURE FIX: Build sections object properly
+        // If using a template, store ALL content in sections
+        // Top-level fields are only for backward compatibility
+        const sectionsToSave = { ...state.sections };
+        
+        if (state.templateId) {
+          // Template-based report: Ensure narrative fields are in sections
+          // Use section-specific keys based on template structure
+          if (state.technique) sectionsToSave.technique = state.technique;
+          if (state.findingsText) sectionsToSave.findings = state.findingsText;
+          if (state.impression) sectionsToSave.impression = state.impression;
+          if (state.clinicalHistory) sectionsToSave.clinical_indication = state.clinicalHistory;
+          if (state.recommendations) sectionsToSave.recommendations = state.recommendations;
+        }
+        
+        const payload = {
+          sections: sectionsToSave,
+          findings: state.findings,
+          measurements: state.measurements || [],
+          annotations: state.annotations || [],
+          anatomicalMarkings: state.anatomicalMarkings,
+          keyImages: state.keyImages,
+          // Always send top-level fields - backend will handle storage based on template
+          clinicalHistory: state.clinicalHistory,
+          technique: state.technique,
+          findingsText: state.findingsText,
+          impression: state.impression,
+          recommendations: state.recommendations,
+          templateId: state.templateId,
+          templateName: state.templateName,
+          version: state.version
+        };
+        
+        console.log('💾 Saving report with payload:', {
+          reportId: state.reportId,
+          templateId: payload.templateId,
+          sectionsKeys: Object.keys(payload.sections),
+          hasTopLevelFields: {
+            technique: !!payload.technique,
+            findingsText: !!payload.findingsText,
+            impression: !!payload.impression
+          }
+        });
+        
         const response = await fetch(`/api/reports/${state.reportId}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`
           },
-          body: JSON.stringify({
-            sections: state.sections,
-            findings: state.findings,
-            measurements: state.measurements || [],
-            annotations: state.annotations || [],
-            anatomicalMarkings: state.anatomicalMarkings,
-            keyImages: state.keyImages,
-            clinicalHistory: state.clinicalHistory,
-            technique: state.technique,
-            findingsText: state.findingsText,
-            impression: state.impression,
-            recommendations: state.recommendations,
-            moduleData: extractModuleData(state.sections), // Extract module data from sections
-            version: state.version
-          })
+          body: JSON.stringify(payload)
         });
         
         if (!response.ok) {
