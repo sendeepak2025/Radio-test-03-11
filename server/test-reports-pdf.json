@@ -1,0 +1,120 @@
+{
+  "criticalFindings": {
+    "reportId": "SR-TEST-001",
+    "patientName": "Test Patient",
+    "patientID": "P123456",
+    "studyInstanceUID": "1.2.3.4.5.6.7.8.9.0",
+    "modality": "CT",
+    "reportDate": "2025-11-18T16:32:16.139Z",
+    "radiologistName": "Dr. Test Radiologist",
+    "hospitalId": null,
+    "reportStatus": "final",
+    "templateId": "TPL-CT-CHEST-001",
+    "technique": "CT chest with IV contrast",
+    "clinicalHistory": "Shortness of breath",
+    "findingsText": "Large pulmonary embolism identified in the right main pulmonary artery extending into segmental branches.",
+    "impression": "Large acute pulmonary embolism - right main PA with RV strain.",
+    "recommendations": "Immediate anticoagulation therapy recommended. Consider thrombolysis.",
+    "criticalFindings": [
+      "Large pulmonary embolism in right main pulmonary artery",
+      "Right ventricular strain pattern present"
+    ],
+    "criticalComms": [
+      {
+        "recipient": "Dr. John Smith (Cardiology)",
+        "method": "Phone",
+        "communicatedAt": "2025-11-18T16:32:16.139Z",
+        "communicatedBy": "Dr. Test Radiologist"
+      }
+    ],
+    "signedAt": "2025-11-18T16:32:16.139Z"
+  },
+  "biRads": {
+    "reportId": "SR-TEST-002",
+    "patientName": "Jane Doe",
+    "patientID": "P789012",
+    "studyInstanceUID": "1.2.3.4.5.6.7.8.9.1",
+    "modality": "MG",
+    "reportDate": "2025-11-18T16:32:16.139Z",
+    "radiologistName": "Dr. Breast Specialist",
+    "hospitalId": null,
+    "reportStatus": "final",
+    "templateId": "TPL-MAMMO-001",
+    "technique": "Digital mammography with tomosynthesis. Bilateral CC and MLO views.",
+    "clinicalHistory": "Routine screening mammography. No palpable mass.",
+    "findingsText": "BI-RADS Breast Density: B - Scattered fibroglandular density\n\nRIGHT BREAST:\n  Masses: None\n  Calcifications: Benign scattered calcifications\n  Asymmetries: None\n  Architectural distortion: None\n\nLEFT BREAST:\n  Masses: 8mm irregular mass at 2 o'clock, 5cm from nipple\n  Calcifications: Fine pleomorphic calcifications associated with mass\n  Asymmetries: None\n  Architectural distortion: None\n\nAXILLAE: Lymph nodes are within normal limits bilaterally.",
+    "impression": "BI-RADS Category 4. Suspicious 8mm irregular mass with associated microcalcifications in left breast upper inner quadrant. Findings are suspicious for malignancy.\n\nRECOMMENDATION: Ultrasound-guided core needle biopsy recommended.",
+    "recommendations": "Biopsy of left breast mass recommended. Follow-up consultation with breast surgeon.",
+    "signedAt": "2025-11-18T16:32:16.139Z"
+  },
+  "spineLevels": {
+    "reportId": "SR-TEST-003",
+    "patientName": "Back Pain Patient",
+    "patientID": "P345678",
+    "studyInstanceUID": "1.2.3.4.5.6.7.8.9.2",
+    "modality": "MR",
+    "reportDate": "2025-11-18T16:32:16.139Z",
+    "radiologistName": "Dr. Spine Expert",
+    "hospitalId": null,
+    "reportStatus": "final",
+    "templateId": "TPL-MRI-LSPINE-001",
+    "technique": "MRI lumbar spine without IV contrast. Field strength: 1.5T. Sequences: Sagittal T1, Sagittal T2, Sagittal STIR, Axial T2 through disc spaces. Slice thickness: 4 mm",
+    "clinicalHistory": "Low back pain radiating to left leg. Rule out disc herniation.",
+    "findingsText": "VERTEBRAL ALIGNMENT: Normal lumbar lordosis. No spondylolisthesis.\n\nVERTEBRAL BODIES: Normal marrow signal and height. No compression fractures.\n\nCONUS MEDULLARIS: Terminates at L1-L2 level. Normal signal.\n\nT12-L1: Normal disc height and signal. No herniation or stenosis.\nL1-L2: Normal disc height. Mild disc desiccation. No herniation or stenosis.\nL2-L3: Mild disc desiccation. Small broad-based disc bulge. No significant stenosis.\nL3-L4: Moderate disc desiccation. Moderate central disc herniation with mild central canal narrowing.\nL4-L5: Severe disc desiccation and height loss. Large left paracentral disc extrusion with superior migration, compressing left L5 nerve root and causing moderate to severe left foraminal stenosis.\nL5-S1: Moderate disc desiccation. Broad-based disc bulge with mild bilateral foraminal narrowing.\n\nNEURAL FORAMINA: Severe left foraminal stenosis at L4-L5 as described above. Mild bilateral narrowing at L5-S1. Otherwise patent.\n\nFACET JOINTS: Mild degenerative changes at L4-L5 and L5-S1 levels.\n\nPARASPINAL SOFT TISSUES: Unremarkable. No paraspinal mass or fluid collection.",
+    "impression": "1. Large left paracentral disc extrusion at L4-L5 with superior migration, causing severe left foraminal stenosis and left L5 nerve root compression. This correlates with patient's left leg radiculopathy.\n2. Moderate central disc herniation at L3-L4 with mild central canal narrowing.\n3. Degenerative disc disease most pronounced at L4-L5 and L5-S1 levels.\n4. Mild degenerative facet arthropathy at L4-L5 and L5-S1.",
+    "recommendations": "Clinical correlation recommended. Consider neurosurgical or orthopedic spine consultation for management of symptomatic L4-L5 disc extrusion.",
+    "measurements": [
+      {
+        "type": "L4-L5 disc extrusion",
+        "value": 8,
+        "unit": "mm"
+      },
+      {
+        "type": "Spinal canal AP diameter at L4-L5",
+        "value": 11,
+        "unit": "mm"
+      }
+    ],
+    "signedAt": "2025-11-18T16:32:16.139Z"
+  },
+  "longReport": {
+    "reportId": "SR-TEST-004",
+    "patientName": "Long Report Patient",
+    "patientID": "P901234",
+    "studyInstanceUID": "1.2.3.4.5.6.7.8.9.3",
+    "modality": "CT",
+    "reportDate": "2025-11-18T16:32:16.139Z",
+    "radiologistName": "Dr. Verbose Radiologist",
+    "hospitalId": null,
+    "reportStatus": "final",
+    "templateId": "TPL-CT-CHEST-001",
+    "technique": "CT chest performed with intravenous contrast. Slice thickness: 1.25 mm. Contrast: 100 mL of iodinated contrast. Phase: Portal venous. Reconstruction: Axial, coronal, and sagittal reformats.",
+    "clinicalHistory": "Follow-up CT for known lung nodules. History of smoking. Evaluate for interval change.",
+    "findingsText": "LUNGS:\nMultiple pulmonary nodules are identified, described as follows:\n1. Right upper lobe anterior segment: 8mm solid nodule (previously 6mm on prior CT from 6 months ago). Location: 2cm from pleural surface.\n2. Right upper lobe posterior segment: 12mm part-solid nodule with 8mm solid component (previously 11mm with 7mm solid component). This shows slow growth concerning for adenocarcinoma.\n3. Right middle lobe: 5mm solid nodule, stable compared to prior.\n4. Right lower lobe: Three small nodules measuring 3-4mm, stable.\n5. Left upper lobe: 6mm solid nodule, new since prior study.\n6. Left lower lobe: 9mm solid nodule, stable.\n\nPatchy ground-glass opacities are seen in both lower lobes, likely representing atelectasis or infection.\n\nNo pleural effusion or pneumothorax.\n\nAIRWAYS:\nThe trachea and main bronchi are patent. No endobronchial lesion.\nMild bronchial wall thickening in the lower lobes bilaterally, suggestive of chronic bronchitis.\n\nMEDIASTINUM:\nNo mediastinal or hilar lymphadenopathy by size criteria (nodes <1cm short axis).\nThe thymus is atrophic, appropriate for age.\nSmall calcified lymph nodes in the prevascular space, likely related to prior granulomatous disease.\n\nHEART AND GREAT VESSELS:\nThe heart is normal in size. No pericardial effusion.\nThe aorta shows mild atherosclerotic calcifications. No aneurysm or dissection.\nMain pulmonary artery measures 27mm (normal).\nNo pulmonary embolism.\n\nPLEURA:\nNo pleural thickening, mass, or effusion.\nNo pneumothorax.\n\nCHEST WALL:\nNo chest wall mass or soft tissue abnormality.\nMild degenerative changes of the thoracic spine.\n\nBONES:\nMild degenerative changes of the thoracic spine with anterior osteophytes.\nNo suspicious lytic or blastic lesions.\nOld healed rib fracture on the left, unchanged.\n\nUPPER ABDOMEN (included in field of view):\nLiver, spleen, adrenal glands, and visualized kidneys are unremarkable.\nSmall hiatal hernia.",
+    "impression": "1. Multiple pulmonary nodules with GROWTH of right upper lobe part-solid nodule from 11mm to 12mm with increase in solid component from 7mm to 8mm over 6 months. This is highly suspicious for adenocarcinoma and warrants further evaluation with PET-CT or biopsy.\n\n2. New 6mm left upper lobe solid nodule. Recommend short-interval follow-up.\n\n3. Stable nodules in right middle and lower lobes and left lower lobe.\n\n4. Patchy ground-glass opacities in both lower lobes, likely atelectasis or infection. Clinical correlation recommended.\n\n5. Mild bronchial wall thickening consistent with chronic bronchitis.\n\n6. No mediastinal lymphadenopathy or pleural disease.",
+    "recommendations": "URGENT RECOMMENDATION:\n1. PET-CT scan recommended to further characterize the growing right upper lobe part-solid nodule.\n2. Multidisciplinary tumor board discussion recommended.\n3. Consider CT-guided biopsy if PET-CT shows FDG avidity.\n4. Short-interval (3-month) follow-up CT for new left upper lobe nodule.\n5. Annual CT surveillance for stable nodules per Fleischner Society guidelines.",
+    "measurements": [
+      {
+        "type": "RUL anterior nodule",
+        "value": 8,
+        "unit": "mm"
+      },
+      {
+        "type": "RUL posterior nodule (total)",
+        "value": 12,
+        "unit": "mm"
+      },
+      {
+        "type": "RUL posterior nodule (solid)",
+        "value": 8,
+        "unit": "mm"
+      },
+      {
+        "type": "LUL nodule (new)",
+        "value": 6,
+        "unit": "mm"
+      }
+    ],
+    "signedAt": "2025-11-18T16:32:16.139Z"
+  }
+}

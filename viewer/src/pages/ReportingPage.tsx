@@ -23,6 +23,7 @@ import { ReportingProvider } from '../contexts/ReportingContext';
 import UnifiedReportEditor from '../components/reporting/UnifiedReportEditor';
 import TemplateSelector from '../components/reporting/TemplateSelectorUnified';
 import { telemetryEmit } from '../utils/reportingUtils';
+import { reportsApi } from '../services/ReportsApi';
 
 const ReportingPage: React.FC = () => {
   // State
@@ -43,18 +44,20 @@ const ReportingPage: React.FC = () => {
       const params = new URLSearchParams(window.location.search);
       const studyUID = params.get('studyUID') || params.get('studyInstanceUID');
       const reportId = params.get('reportId');
+      const templateId = params.get('templateId');
       const analysisId = params.get('analysisId');
       
-      console.log('📋 Reporting Page initialized:', { studyUID, reportId, analysisId });
+      console.log('📋 Reporting Page initialized:', { studyUID, reportId, templateId, analysisId });
 
       if (!studyUID) {
         throw new Error('Study UID is required. Please provide studyUID parameter in the URL.');
       }
 
+      const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+
       // Load existing report OR prepare for new report
       if (reportId) {
         // Load existing report
-        const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
         const response = await fetch(`/api/reports/${reportId}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -64,11 +67,45 @@ const ReportingPage: React.FC = () => {
         }
         
         const data = await response.json();
-        setReportData(data.report);
+        const loadedReport = data.report;
+        
+        // Fetch template if templateId is available
+        let selectedTemplate = null;
+        const reportTemplateId = templateId || loadedReport.templateId;
+        
+        if (reportTemplateId) {
+          console.log('📋 Fetching template:', reportTemplateId);
+          try {
+            const response = await reportsApi.getTemplate(reportTemplateId);
+            console.log(response,"response12345")
+            if (response.data) {
+              selectedTemplate = response.data;
+              console.log('✅ Template fetched:', selectedTemplate.name);
+              console.log('✅ UI Modules:', selectedTemplate.uiModules?.length || 0);
+              if (!selectedTemplate.uiModules || selectedTemplate.uiModules.length === 0) {
+                console.warn('⚠️ Template has no uiModules configured');
+              } else {
+                console.log('✅ UI Modules details:', selectedTemplate.uiModules.map(m => ({ 
+                  id: m.id, 
+                  type: m.type, 
+                  bodyPart: m.config?.bodyPart 
+                })));
+              }
+            } else {
+              console.warn('⚠️ Template response missing data:', response);
+            }
+          } catch (err) {
+            console.warn('⚠️ Failed to fetch template:', err);
+          }
+        }
+        
+        setReportData({
+          ...loadedReport,
+          selectedTemplate
+        });
         console.log('✅ Loaded existing report:', reportId);
       } else {
         // New report - load viewer annotations/measurements
-        const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
         let viewerData = { measurements: [], annotations: [] };
         
         try {
@@ -108,7 +145,7 @@ const ReportingPage: React.FC = () => {
         console.log('✅ Prepared for new report with viewer data');
       }
 
-      telemetryEmit('reporting.page.loaded', { studyUID, reportId, analysisId });
+      telemetryEmit('reporting.page.loaded', { studyUID, reportId, templateId, analysisId });
       setLoading(false);
     } catch (err: any) {
       console.error('❌ Failed to load reporting page:', err);
@@ -122,12 +159,19 @@ const ReportingPage: React.FC = () => {
    */
   const handleTemplateSelected = (templateId: string, createdReportId: string) => {
     console.log('✅ Template selected, report created:', createdReportId);
-    setShowTemplateSelector(false);
-    setReportData({ 
-      ...reportData, 
-      reportId: createdReportId, 
-      templateId 
-    });
+    console.log('✅ Template ID:', templateId);
+    
+    // Build new URL with templateId and reportId
+    const params = new URLSearchParams(window.location.search);
+    params.set('reportId', createdReportId);
+    params.set('templateId', templateId);
+    
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    
+    console.log('🔄 Navigating to:', newUrl);
+    
+    // Navigate immediately (triggers full page reload with templateId in URL)
+    window.location.href = newUrl;
   };
 
   /**

@@ -34,6 +34,7 @@ import {
 } from '@mui/icons-material';
 import ApiService from '../../services/ApiService';
 import { useAuth } from '../../hooks/useAuth';
+import FollowUpCreationDialog from '../../components/followup/FollowUpCreationDialog';
 
 interface FollowUp {
   _id: string;
@@ -81,6 +82,9 @@ const FollowUpPage: React.FC = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [noteDialogOpen, setNoteDialogOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -151,6 +155,18 @@ const FollowUpPage: React.FC = () => {
     }
   };
 
+  const handleCreateFollowUp = async (followUpData: any) => {
+    try {
+      await ApiService.createFollowUp(followUpData);
+      setSuccess('Follow-up created successfully');
+      setCreateDialogOpen(false);
+      loadData();
+    } catch (error: any) {
+      setError(error.message || 'Failed to create follow-up');
+      throw error;
+    }
+  };
+
   const getPriorityColor = (priority: number) => {
     if (priority >= 5) return 'error';
     if (priority >= 4) return 'warning';
@@ -187,11 +203,23 @@ const FollowUpPage: React.FC = () => {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={() => {/* TODO: Add create dialog */}}
+          onClick={() => setCreateDialogOpen(true)}
         >
           Create Follow-up
         </Button>
       </Box>
+
+      {/* Alert Messages */}
+      {error && (
+        <Alert severity="error" onClose={() => setError(null)} sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+      {success && (
+        <Alert severity="success" onClose={() => setSuccess(null)} sx={{ mb: 2 }}>
+          {success}
+        </Alert>
+      )}
 
       {/* Statistics Cards */}
       {statistics && (
@@ -467,6 +495,13 @@ const FollowUpPage: React.FC = () => {
           <Button variant="contained" onClick={submitNote}>Add Note</Button>
         </DialogActions>
       </Dialog>
+
+      {/* Create Follow-up Dialog */}
+      <FollowUpCreationDialog
+        open={createDialogOpen}
+        onClose={() => setCreateDialogOpen(false)}
+        onCreateFollowUp={handleCreateFollowUp}
+      />
     </Box>
   );
 };

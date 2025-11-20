@@ -163,6 +163,11 @@ class PDFService {
           this.addMeasurements(doc, report.measurements);
         }
 
+        // Anatomical Diagrams
+        if (report.moduleData) {
+          this.addAnatomicalDiagrams(doc, report.moduleData);
+        }
+
         // Key Images
         if (report.keyImages && report.keyImages.length > 0 && options.includeImages) {
           this.addKeyImages(doc, report.keyImages);
@@ -512,6 +517,87 @@ class PDFService {
         }
       }
     });
+
+    doc.moveDown(2);
+  }
+
+  /**
+   * Add anatomical diagrams with markings
+   * @param {PDFDocument} doc - PDF document
+   * @param {Object} moduleData - Module data containing diagram markings
+   */
+  addAnatomicalDiagrams(doc, moduleData) {
+    if (!moduleData) return;
+
+    // Find diagram modules
+    const diagramModules = Object.entries(moduleData).filter(([key, value]) => 
+      Array.isArray(value) && value.length > 0 && value[0].type && value[0].points
+    );
+
+    if (diagramModules.length === 0) return;
+
+    doc.addPage();
+
+    doc.fontSize(14)
+      .fillColor('#1976d2')
+      .font('Helvetica-Bold')
+      .text('ANATOMICAL DIAGRAMS', {
+        underline: true
+      });
+
+    doc.moveDown(1);
+
+    diagramModules.forEach(([moduleId, markings], index) => {
+      if (index > 0) doc.moveDown(2);
+
+      // Module title
+      const moduleName = moduleId
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, l => l.toUpperCase());
+
+      doc.fontSize(11)
+        .fillColor('#333')
+        .font('Helvetica-Bold')
+        .text(moduleName);
+
+      doc.moveDown(0.5);
+
+      // Markings summary
+      doc.fontSize(9)
+        .fillColor('#666')
+        .font('Helvetica')
+        .text(`Total markings: ${markings.length}`);
+
+      // List markings
+      markings.slice(0, 10).forEach((marking, idx) => {
+        const markingType = marking.type || 'unknown';
+        const color = marking.color || '#000000';
+        const linkedText = marking.linkedFindingId ? ' (linked to finding)' : '';
+
+        doc.fontSize(8)
+          .fillColor('#333')
+          .text(`  ${idx + 1}. ${markingType.toUpperCase()}${linkedText}`, {
+            indent: 20
+          });
+      });
+
+      if (markings.length > 10) {
+        doc.fontSize(8)
+          .fillColor('#999')
+          .text(`  ... and ${markings.length - 10} more markings`, {
+            indent: 20
+          });
+      }
+
+      doc.moveDown(1);
+    });
+
+    doc.fontSize(8)
+      .fillColor('#999')
+      .text('Note: Diagram images are not included in this PDF export. Please refer to the DICOM images or web-based report viewer for visual diagram annotations.', {
+        align: 'left',
+        width: this.contentWidth
+      });
 
     doc.moveDown(2);
   }

@@ -5,13 +5,11 @@ const SuperbillSchema = new mongoose.Schema({
   superbillNumber: { 
     type: String, 
     required: true, 
-    unique: true,
-    index: true 
+    unique: true
   },
   studyInstanceUID: { 
     type: String, 
-    required: true,
-    index: true 
+    required: true
   },
   reportId: { 
     type: mongoose.Schema.Types.ObjectId, 
@@ -138,7 +136,6 @@ const SuperbillSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Indexes for efficient querying
-SuperbillSchema.index({ superbillNumber: 1 });
 SuperbillSchema.index({ studyInstanceUID: 1 });
 SuperbillSchema.index({ patientID: 1, hospitalId: 1 });
 SuperbillSchema.index({ dateOfService: 1 });

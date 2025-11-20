@@ -233,6 +233,16 @@ async function startServer() {
       console.warn('   You may need to create an admin user manually');
     }
 
+    // Seed comprehensive report templates covering entire radiology industry
+    try {
+      const { seedComprehensiveTemplates } = require('./seed/seedComprehensiveTemplates');
+      await seedComprehensiveTemplates();
+      console.log('✅ Comprehensive radiology templates seeded (30+ templates with specialized modules)');
+    } catch (error) {
+      console.warn('⚠️  Comprehensive template seeding failed:', error.message);
+      console.warn('   Some templates may not be available');
+    }
+
     // Check Orthanc PACS connection if PACS integration is enabled
     if (process.env.ENABLE_PACS_INTEGRATION !== 'false') {
       console.log('Checking Orthanc PACS connection...');

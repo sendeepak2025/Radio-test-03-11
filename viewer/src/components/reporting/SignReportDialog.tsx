@@ -3,7 +3,7 @@
  * FDA-compliant digital signature with preview
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -22,7 +22,8 @@ import {
   Select,
   MenuItem,
   Tabs,
-  Tab
+  Tab,
+  CircularProgress
 } from '@mui/material';
 import {
   CheckCircle as SignIcon,
@@ -30,11 +31,14 @@ import {
   Draw as DrawIcon
 } from '@mui/icons-material';
 import SignatureCanvas from 'react-signature-canvas';
+import { useReportValidation } from '@/hooks/useReportValidation';
+import { ValidationAlerts } from './ValidationAlerts';
 
 interface SignReportDialogProps {
   open: boolean;
   onClose: () => void;
   onSign: (signatureData: SignatureData) => Promise<void>;
+  reportId: string;
   reportData: {
     patientName: string;
     patientID: string;
@@ -60,8 +64,12 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
   open,
   onClose,
   onSign,
+  reportId,
   reportData
 }) => {
+  // Validation hook
+  const { validate, validationResult, isValidating, hasErrors } = useReportValidation(reportId);
+  
   // Convert a data URL to a Blob without using fetch (CSP-safe)
   const dataUrlToBlob = (dataUrl: string): Blob => {
     const parts = dataUrl.split(',');
@@ -85,6 +93,13 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
   
   const signatureCanvasRef = useRef<SignatureCanvas>(null);
   
+  // Validate when dialog opens
+  useEffect(() => {
+    if (open && reportId) {
+      validate(true); // Strict validation for signing
+    }
+  }, [open, reportId, validate]);
+  
   const handleClearSignature = () => {
     signatureCanvasRef.current?.clear();
   };
@@ -92,7 +107,15 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
   const handleSign = async () => {
     setError(null);
     
-    // Validation
+    // Run validation first
+    const validationCheck = await validate(true);
+    
+    if (!validationCheck.valid) {
+      setError('Cannot sign: Please fix all validation errors before signing.');
+      return;
+    }
+    
+    // Signature validation
     if (!signatureText.trim()) {
       setError('Please enter your name');
       return;
@@ -109,17 +132,6 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
       return;
     }
     
-    // Validate report content
-    if (!reportData.impression || reportData.impression.trim() === '') {
-      setError('Impression is required before signing');
-      return;
-    }
-    
-    if (!reportData.findingsText || reportData.findingsText.trim() === '') {
-      setError('Findings are required before signing');
-      return;
-    }
-    
     setSigning(true);
     
     try {
@@ -127,7 +139,6 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
       let signatureFile: File | undefined;
       if (activeTab === 1 && signatureCanvasRef.current) {
         const dataUrl = signatureCanvasRef.current.toDataURL('image/png');
-        // Avoid fetch(data:) which may be blocked by CSP; convert inline
         const blob = dataUrlToBlob(dataUrl);
         signatureFile = new File([blob], 'signature.png', { type: 'image/png' });
       }
@@ -137,7 +148,7 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
         signatureMeaning,
         password,
         timestamp: new Date(),
-        signatureFile // Pass file instead of base64
+        signatureFile
       };
       
       await onSign(signatureData);
@@ -169,6 +180,23 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
       </DialogTitle>
       
       <DialogContent>
+        {/* Validation Results */}
+        {isValidating && (
+          <Box display="flex" alignItems="center" gap={2} mb={2}>
+            <CircularProgress size={20} />
+            <Typography variant="body2" color="text.secondary">
+              Validating report...
+            </Typography>
+          </Box>
+        )}
+        
+        {validationResult && (
+          <ValidationAlerts
+            errors={validationResult.errors}
+            warnings={validationResult.warnings}
+          />
+        )}
+        
         {error && (
           <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
@@ -336,10 +364,10 @@ const SignReportDialog: React.FC<SignReportDialogProps> = ({
           variant="contained" 
           color="success"
           onClick={handleSign}
-          disabled={signing}
-          startIcon={<SignIcon />}
+          disabled={signing || hasErrors || isValidating}
+          startIcon={signing ? <CircularProgress size={16} /> : <SignIcon />}
         >
-          {signing ? 'Signing...' : 'Sign Report'}
+          {signing ? 'Signing...' : hasErrors ? 'Fix Errors to Sign' : 'Sign Report'}
         </Button>
       </DialogActions>
     </Dialog>

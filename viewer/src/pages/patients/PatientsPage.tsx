@@ -125,10 +125,12 @@ const PatientsPage: React.FC = () => {
   const [includeImages, setIncludeImages] = useState(true)
   
   // Enhanced search and filter state
-  const [searchQuery, setSearchQuery] = useState("")
+  const [searchTerm, setSearchTerm] = useState("") // Immediate input value
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("") // Value used for filtering
   const [filterSex, setFilterSex] = useState<string>("all")
   const [filterModality, setFilterModality] = useState<string>("all")
-  const [sortBy, setSortBy] = useState<string>("name")
+  const [studyDateFilter, setStudyDateFilter] = useState<string>("30days") // Default to last 30 days
+  const [sortBy, setSortBy] = useState<string>("date") // Default sort by date (newest first)
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const [isListening, setIsListening] = useState(false)
   const [voiceSupported, setVoiceSupported] = useState(false)
@@ -138,6 +140,15 @@ const PatientsPage: React.FC = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     setVoiceSupported(!!SpeechRecognition)
   }, [])
+
+  // Debounce search term to prevent UI lag on large lists
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm)
+    }, 300) // 300ms delay
+
+    return () => clearTimeout(timer)
+  }, [searchTerm])
 
   useEffect(() => {
     const loadPatients = async () => {
@@ -261,7 +272,7 @@ const PatientsPage: React.FC = () => {
 
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript
-      setSearchQuery(transcript)
+      setSearchTerm(transcript)
       setIsListening(false)
     }
 
@@ -282,9 +293,9 @@ const PatientsPage: React.FC = () => {
   const filteredPatients = useMemo(() => {
     let filtered = patients.filter((patient) => {
       const matchesSearch = 
-        searchQuery === "" ||
-        patient.patientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        patient.patientID.toLowerCase().includes(searchQuery.toLowerCase())
+        debouncedSearchTerm === "" ||
+        patient.patientName?.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+        patient.patientID.toLowerCase().includes(debouncedSearchTerm.toLowerCase())
       
       const matchesSex = filterSex === "all" || patient.sex === filterSex
       
@@ -301,6 +312,8 @@ const PatientsPage: React.FC = () => {
         case "studies":
           return (b.studyCount || 0) - (a.studyCount || 0)
         case "date":
+          // Sort by birth date as a proxy for recent activity/relevance in this context if needed
+          // Or keep as is. Original code sorted by birthDate.
           return (b.birthDate || "").localeCompare(a.birthDate || "")
         default:
           return 0
@@ -308,24 +321,59 @@ const PatientsPage: React.FC = () => {
     })
 
     return filtered
-  }, [patients, searchQuery, filterSex, sortBy])
+  }, [patients, debouncedSearchTerm, filterSex, sortBy])
 
   // Filtered and sorted studies
   const filteredStudies = useMemo(() => {
     let filtered = allStudies.filter((study) => {
       const matchesSearch = 
-        searchQuery === "" ||
-        study.patientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        study.patientID.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        study.studyDescription?.toLowerCase().includes(searchQuery.toLowerCase())
+        debouncedSearchTerm === "" ||
+        study.patientName?.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+        study.patientID.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+        study.studyDescription?.toLowerCase().includes(debouncedSearchTerm.toLowerCase())
       
       const matchesModality = filterModality === "all" || study.modality === filterModality
       
-      return matchesSearch && matchesModality
+      // Date filtering
+      let matchesDate = true
+      if (studyDateFilter !== "all") {
+        // Parse study date (YYYYMMDD format)
+        // Handle potentially missing or malformed dates gracefully
+        if (!study.studyDate || study.studyDate.length !== 8) {
+           matchesDate = false // Or true, depending on if we want to show undated studies
+        } else {
+          const year = parseInt(study.studyDate.substring(0, 4))
+          const month = parseInt(study.studyDate.substring(4, 6)) - 1
+          const day = parseInt(study.studyDate.substring(6, 8))
+          const studyDateObj = new Date(year, month, day)
+          
+          const today = new Date()
+          // Reset time part for accurate date comparison
+          today.setHours(0, 0, 0, 0)
+          
+          const diffTime = Math.abs(today.getTime() - studyDateObj.getTime())
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+          
+          if (studyDateFilter === "today") {
+             matchesDate = diffDays === 0
+          } else if (studyDateFilter === "7days") {
+             matchesDate = diffDays <= 7
+          } else if (studyDateFilter === "30days") {
+             matchesDate = diffDays <= 30
+          }
+        }
+      }
+
+      return matchesSearch && matchesModality && matchesDate
+    })
+    
+    // Always sort studies by date (newest first) for the worklist view
+    filtered.sort((a, b) => {
+       return (b.studyDate || "").localeCompare(a.studyDate || "")
     })
 
     return filtered
-  }, [allStudies, searchQuery, filterModality])
+  }, [allStudies, debouncedSearchTerm, filterModality, studyDateFilter])
 
   // Get unique modalities for filter
   const availableModalities = useMemo(() => {
@@ -507,20 +555,20 @@ const PatientsPage: React.FC = () => {
                         <TextField
                           fullWidth
                           placeholder="Search by patient name or ID..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
                           InputProps={{
                             startAdornment: (
                               <InputAdornment position="start">
                                 <Search color="action" />
                               </InputAdornment>
                             ),
-                            endAdornment: searchQuery || isListening ? (
+                            endAdornment: searchTerm || isListening ? (
                               <InputAdornment position="end">
                                 {isListening ? (
                                   <CircularProgress size={20} />
                                 ) : (
-                                  <IconButton size="small" onClick={() => setSearchQuery("")}>
+                                  <IconButton size="small" onClick={() => setSearchTerm("")}>
                                     <Clear fontSize="small" />
                                   </IconButton>
                                 )}
@@ -619,16 +667,16 @@ const PatientsPage: React.FC = () => {
                       </Grid>
                     </Grid>
                     
-                    {(searchQuery || filterSex !== "all") && (
+                    {(debouncedSearchTerm || filterSex !== "all") && (
                       <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
                         <Typography variant="caption" color="text.secondary">
                           Active filters:
                         </Typography>
-                        {searchQuery && (
+                        {debouncedSearchTerm && (
                           <Chip
-                            label={`Search: "${searchQuery}"`}
+                            label={`Search: "${debouncedSearchTerm}"`}
                             size="small"
-                            onDelete={() => setSearchQuery("")}
+                            onDelete={() => setSearchTerm("")}
                           />
                         )}
                         {filterSex !== "all" && (
@@ -641,7 +689,7 @@ const PatientsPage: React.FC = () => {
                         <Button
                           size="small"
                           onClick={() => {
-                            setSearchQuery("")
+                            setSearchTerm("")
                             setFilterSex("all")
                           }}
                           sx={{ textTransform: "none", ml: 1 }}
@@ -876,20 +924,20 @@ const PatientsPage: React.FC = () => {
                         <TextField
                           fullWidth
                           placeholder="Search by patient name, ID, or study description..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
                           InputProps={{
                             startAdornment: (
                               <InputAdornment position="start">
                                 <Search color="action" />
                               </InputAdornment>
                             ),
-                            endAdornment: searchQuery || isListening ? (
+                            endAdornment: searchTerm || isListening ? (
                               <InputAdornment position="end">
                                 {isListening ? (
                                   <CircularProgress size={20} />
                                 ) : (
-                                  <IconButton size="small" onClick={() => setSearchQuery("")}>
+                                  <IconButton size="small" onClick={() => setSearchTerm("")}>
                                     <Clear fontSize="small" />
                                   </IconButton>
                                 )}
@@ -926,6 +974,23 @@ const PatientsPage: React.FC = () => {
                         </Grid>
                       )}
                       
+                      <Grid item xs={12} sm={6} md={2}>
+                        <FormControl fullWidth size="small">
+                          <InputLabel>Study Date</InputLabel>
+                          <Select
+                            value={studyDateFilter}
+                            label="Study Date"
+                            onChange={(e) => setStudyDateFilter(e.target.value)}
+                            sx={{ bgcolor: 'background.paper' }}
+                          >
+                            <MenuItem value="all">All Time</MenuItem>
+                            <MenuItem value="today">Today</MenuItem>
+                            <MenuItem value="7days">Last 7 Days</MenuItem>
+                            <MenuItem value="30days">Last 30 Days</MenuItem>
+                          </Select>
+                        </FormControl>
+                      </Grid>
+
                       <Grid item xs={12} sm={6} md={3}>
                         <FormControl fullWidth size="small">
                           <InputLabel>Filter by Modality</InputLabel>
@@ -946,16 +1011,23 @@ const PatientsPage: React.FC = () => {
                       </Grid>
                     </Grid>
                     
-                    {(searchQuery || filterModality !== "all") && (
+                    {(debouncedSearchTerm || filterModality !== "all" || studyDateFilter !== "all") && (
                       <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
                         <Typography variant="caption" color="text.secondary">
                           Active filters:
                         </Typography>
-                        {searchQuery && (
+                        {debouncedSearchTerm && (
                           <Chip
-                            label={`Search: "${searchQuery}"`}
+                            label={`Search: "${debouncedSearchTerm}"`}
                             size="small"
-                            onDelete={() => setSearchQuery("")}
+                            onDelete={() => setSearchTerm("")}
+                          />
+                        )}
+                        {studyDateFilter !== "all" && (
+                          <Chip
+                            label={`Date: ${studyDateFilter === 'today' ? 'Today' : studyDateFilter === '7days' ? 'Last 7 Days' : studyDateFilter === '30days' ? 'Last 30 Days' : studyDateFilter}`}
+                            size="small"
+                            onDelete={() => setStudyDateFilter("all")}
                           />
                         )}
                         {filterModality !== "all" && (
@@ -968,8 +1040,9 @@ const PatientsPage: React.FC = () => {
                         <Button
                           size="small"
                           onClick={() => {
-                            setSearchQuery("")
+                            setSearchTerm("")
                             setFilterModality("all")
+                            setStudyDateFilter("all")
                           }}
                           sx={{ textTransform: "none", ml: 1 }}
                         >

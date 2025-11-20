@@ -58,7 +58,7 @@ export const apiCall = async (
 
   // Get auth token
   const token = getAuthToken()
-  
+  console.log(token,"API TOKEN IN SERVICES")
   // Get CSRF token for state-changing operations
   const csrfToken = getCSRFToken()
 
@@ -833,6 +833,107 @@ export default {
   },
   uploadPriorAuthDocument: async (id: string, file: File) => {
     const response = await uploadFile(`/api/prior-auth/${id}/documents`, file)
+    return response.json()
+  },
+  // AI Assistant API
+  checkAIHealth: async () => {
+    const response = await apiCall('/api/reports/ai/health')
+    return response.json()
+  },
+  analyzeReportWithAI: async (reportId: string, analysisType: 'full' | 'impression' | 'critical' = 'full') => {
+    const response = await apiCall(`/api/reports/${reportId}/ai-analyze`, {
+      method: 'POST',
+      body: JSON.stringify({ analysisType }),
+    })
+    return response.json()
+  },
+  generateImpressionWithAI: async (reportId: string) => {
+    const response = await apiCall(`/api/reports/${reportId}/ai-impression`, {
+      method: 'POST',
+    })
+    return response.json()
+  },
+  suggestTemplateFieldsWithAI: async (templateId: string, studyMetadata: any) => {
+    const response = await apiCall(`/api/reports/templates/${templateId}/ai-suggest`, {
+      method: 'POST',
+      body: JSON.stringify({ studyMetadata }),
+    })
+    return response.json()
+  },
+  // Telemetry API
+  logTelemetryEvent: async (eventData: any) => {
+    const response = await apiCall('/api/telemetry/events', {
+      method: 'POST',
+      body: JSON.stringify(eventData),
+    })
+    return response.json()
+  },
+  logTelemetryEventsBatch: async (events: any[]) => {
+    const response = await apiCall('/api/telemetry/events/batch', {
+      method: 'POST',
+      body: JSON.stringify({ events }),
+    })
+    return response.json()
+  },
+  // Analytics API
+  getReportAnalytics: async (startDate?: string, endDate?: string, filters?: any) => {
+    const params = new URLSearchParams()
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    if (filters?.modality) params.append('modality', filters.modality)
+    if (filters?.hospitalId) params.append('hospitalId', filters.hospitalId)
+    
+    const response = await apiCall(`/api/analytics/reports?${params.toString()}`)
+    return response.json()
+  },
+  getUserAnalytics: async (userId?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (userId) params.append('userId', userId)
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    
+    const response = await apiCall(`/api/analytics/users?${params.toString()}`)
+    return response.json()
+  },
+  getTemplateAnalytics: async (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    
+    const response = await apiCall(`/api/analytics/templates?${params.toString()}`)
+    return response.json()
+  },
+  getPerformanceAnalytics: async (modality?: string, startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (modality) params.append('modality', modality)
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    
+    const response = await apiCall(`/api/analytics/performance?${params.toString()}`)
+    return response.json()
+  },
+  getAIAnalytics: async (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    
+    const response = await apiCall(`/api/analytics/ai?${params.toString()}`)
+    return response.json()
+  },
+  getSystemAnalytics: async (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    
+    const response = await apiCall(`/api/analytics/system?${params.toString()}`)
+    return response.json()
+  },
+  getDashboardAnalytics: async (startDate?: string, endDate?: string) => {
+    const params = new URLSearchParams()
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    
+    const response = await apiCall(`/api/analytics/dashboard?${params.toString()}`)
     return response.json()
   },
 }

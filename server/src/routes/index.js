@@ -39,6 +39,10 @@ const ipWhitelistRoutes = require('./ip-whitelist');
 const dataRetentionRoutes = require('./data-retention');
 const billingRoutes = require('./billing');
 const fhirRoutes = require('./fhir');
+// Enhanced reporting features
+const templatesRoutes = require('./templates');
+const annotationsRoutes = require('./annotations');
+const templateBuilderRoutes = require('./template-builder');
 
 const router = express.Router();
 
@@ -237,5 +241,51 @@ router.use('/api/billing', billingRoutes);
 
 // FHIR API - HL7 FHIR R4 export for healthcare interoperability
 router.use('/api/fhir', fhirRoutes);
+
+// HL7/FHIR Integration API - HL7 ADT messages and FHIR export
+const hl7FhirRoutes = require('./hl7-fhir');
+router.use('/api/hl7', hl7FhirRoutes);
+router.use('/api/fhir', hl7FhirRoutes);
+
+// Template Management API - Custom template creation and management
+router.use('/api/templates', templatesRoutes);
+
+// Template Builder API - User-created custom templates
+router.use('/api/templates', templateBuilderRoutes);
+
+// Diagram Annotations API - Interactive anatomical diagram annotations
+router.use('/api/annotations', annotationsRoutes);
+
+// Telemetry API - Event tracking and ingestion
+const telemetryRoutes = require('./telemetry');
+router.use('/api/telemetry', telemetryRoutes);
+
+// Analytics API - Metrics and statistics
+const analyticsRoutes = require('./analytics');
+router.use('/api/analytics', analyticsRoutes);
+
+// Feedback API - User feedback and feature requests
+const feedbackRoutes = require('./feedback');
+router.use('/api/feedback', feedbackRoutes);
+
+// Collaboration API - Peer review, consultations, and real-time collaboration
+const collaborationRoutes = require('./collaboration');
+router.use('/api/collaboration', collaborationRoutes);
+
+// Template Marketplace API - Template version control, AI generation, and sharing
+const templateMarketplaceRoutes = require('./template-marketplace');
+router.use('/api/template-marketplace', templateMarketplaceRoutes);
+
+// Batch Operations API - Bulk operations with job queue
+const batchOperationsRoutes = require('./batch-operations');
+router.use('/api/batch-operations', batchOperationsRoutes);
+
+// System Monitoring API - Production monitoring and health checks
+const monitoringRoutes = require('./monitoring');
+router.use('/api/monitoring', monitoringRoutes);
+
+// Advanced Search API - Elasticsearch full-text search and saved searches
+const searchRoutes = require('./search');
+router.use('/api/search', searchRoutes);
 
 module.exports = router;

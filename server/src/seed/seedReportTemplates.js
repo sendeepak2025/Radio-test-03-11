@@ -98,14 +98,14 @@ const defaultTemplates = [
 
   {
     templateId: 'TPL-CHEST-XRAY-001',
-    name: 'Chest X-Ray Report',
-    description: 'Standard template for chest radiography',
+    name: 'Chest X-Ray Report (Enhanced)',
+    description: 'Comprehensive structured template for chest radiography with systematic review',
     category: 'radiology',
     matchingCriteria: {
       modalities: ['CR', 'DX', 'RF'],
       bodyParts: ['CHEST', 'THORAX', 'LUNG'],
-      keywords: ['chest', 'thorax', 'cxr', 'chest x-ray', 'chest radiograph'],
-      procedureTypes: ['diagnostic', 'screening']
+      keywords: ['chest', 'thorax', 'cxr', 'chest x-ray', 'chest radiograph', 'portable chest'],
+      procedureTypes: ['diagnostic', 'screening', 'follow-up']
     },
     matchingWeights: {
       modalityWeight: 50,
@@ -119,52 +119,213 @@ const defaultTemplates = [
         title: 'Clinical Indication',
         order: 1,
         required: true,
-        placeholder: 'Reason for examination'
+        placeholder: 'Clinical indication for chest radiography (e.g., cough, shortness of breath, chest pain, post-procedure follow-up)'
       },
       {
         id: 'technique',
         title: 'Technique',
         order: 2,
         required: true,
-        placeholder: 'PA and lateral views, portable AP, etc.'
+        defaultContent: 'PA and lateral views of the chest. Adequate inspiration and penetration.',
+        placeholder: 'Views obtained (PA/lateral, AP portable, etc.) and technical quality',
+        validationRules: {
+          requireViewDocumentation: true,
+          minimumViews: 1
+        }
       },
       {
         id: 'comparison',
         title: 'Comparison',
         order: 3,
         required: false,
-        placeholder: 'Prior studies for comparison'
+        placeholder: 'Prior chest radiograph dated [DATE] available for comparison. No prior studies available for comparison.',
+        defaultContent: 'No prior studies available for comparison.'
       },
       {
         id: 'findings',
         title: 'Findings',
         order: 4,
         required: true,
-        placeholder: 'Detailed findings'
+        defaultContent: `LUNGS AND AIRWAYS:
+The lungs are clear bilaterally. No focal consolidation, pleural effusion, or pneumothorax.
+
+HEART AND MEDIASTINUM:
+Cardiomediastinal silhouette is normal in size and contour. No mediastinal widening.
+
+PLEURA:
+No pleural effusion or pneumothorax.
+
+BONES AND SOFT TISSUES:
+Visualized osseous structures are intact. No acute fracture or destructive lesion. Soft tissues are unremarkable.
+
+LINES AND TUBES:
+[If applicable] None. / [Describe position and placement]
+
+ADDITIONAL FINDINGS:
+None.`,
+        placeholder: 'Systematic review of all anatomic structures',
+        validationRules: {
+          minimumFindings: ['lungs', 'heart', 'mediastinum'],
+          requireSystemicReview: true
+        }
       },
       {
         id: 'impression',
         title: 'Impression',
         order: 5,
         required: true,
-        placeholder: 'Summary and clinical significance'
+        placeholder: 'Summary and clinical significance (e.g., 1. No acute cardiopulmonary process. 2. Clear lungs.)',
+        defaultContent: '1. No acute cardiopulmonary process.'
+      },
+      {
+        id: 'recommendations',
+        title: 'Recommendations',
+        order: 6,
+        required: false,
+        placeholder: 'Follow-up recommendations if needed (e.g., Follow-up chest CT recommended for further evaluation of nodule.)'
       }
     ],
     fieldOptions: new Map([
-      ['lungFields', ['Clear', 'Infiltrate', 'Consolidation', 'Effusion', 'Pneumothorax', 'Atelectasis', 'Mass', 'Nodule']],
-      ['heartSize', ['Normal', 'Borderline', 'Enlarged', 'Cardiomegaly']],
-      ['mediastinum', ['Normal', 'Widened', 'Mass', 'Lymphadenopathy']],
-      ['bones', ['Normal', 'Fracture', 'Degenerative changes', 'Lytic lesion', 'Sclerotic lesion']],
-      ['softTissues', ['Normal', 'Subcutaneous emphysema', 'Mass', 'Calcification']]
+      ['lungFields', [
+        'Clear',
+        'Hyperinflated',
+        'Infiltrate',
+        'Consolidation - RUL',
+        'Consolidation - RML',
+        'Consolidation - RLL',
+        'Consolidation - LUL',
+        'Consolidation - Lingula',
+        'Consolidation - LLL',
+        'Ground-glass opacity',
+        'Reticular pattern',
+        'Reticulonodular pattern',
+        'Nodule',
+        'Mass',
+        'Cavitation',
+        'Atelectasis',
+        'Volume loss',
+        'Scarring'
+      ]],
+      ['heartSize', [
+        'Normal (CTR <50%)',
+        'Borderline (CTR ~50%)',
+        'Enlarged (CTR >50%)',
+        'Mild cardiomegaly',
+        'Moderate cardiomegaly',
+        'Severe cardiomegaly'
+      ]],
+      ['mediastinum', [
+        'Normal',
+        'Widened - superior',
+        'Widened - middle',
+        'Mass',
+        'Lymphadenopathy',
+        'Hilar enlargement - right',
+        'Hilar enlargement - left',
+        'Hilar enlargement - bilateral'
+      ]],
+      ['pleura', [
+        'Normal',
+        'Effusion - right small',
+        'Effusion - right moderate',
+        'Effusion - right large',
+        'Effusion - left small',
+        'Effusion - left moderate',
+        'Effusion - left large',
+        'Effusion - bilateral',
+        'Pneumothorax - right small',
+        'Pneumothorax - right moderate',
+        'Pneumothorax - right large/tension',
+        'Pneumothorax - left small',
+        'Pneumothorax - left moderate',
+        'Pneumothorax - left large/tension',
+        'Pleural thickening',
+        'Pleural calcification',
+        'Pleural mass'
+      ]],
+      ['airways', [
+        'Normal',
+        'Tracheal deviation - right',
+        'Tracheal deviation - left',
+        'Bronchial wall thickening',
+        'Bronchiectasis'
+      ]],
+      ['bones', [
+        'Normal',
+        'Degenerative changes - thoracic spine',
+        'Degenerative changes - shoulders',
+        'Rib fracture - acute',
+        'Rib fracture - healing',
+        'Rib fracture - old',
+        'Lytic lesion',
+        'Sclerotic lesion',
+        'Compression fracture',
+        'Scoliosis',
+        'Kyphosis'
+      ]],
+      ['softTissues', [
+        'Normal',
+        'Subcutaneous emphysema',
+        'Soft tissue mass',
+        'Breast shadow - normal',
+        'Mastectomy - right',
+        'Mastectomy - left',
+        'Gynecomastia'
+      ]],
+      ['linesAndTubes', [
+        'None',
+        'NGT - appropriate position',
+        'NGT - malpositioned',
+        'ETT - appropriate position',
+        'ETT - too high',
+        'ETT - too low',
+        'Central line - right IJ',
+        'Central line - left IJ',
+        'Central line - right subclavian',
+        'Central line - left subclavian',
+        'Chest tube - right',
+        'Chest tube - left',
+        'Pacemaker/ICD - left',
+        'Pacemaker/ICD - right',
+        'Port-a-cath',
+        'Swan-Ganz catheter'
+      ]],
+      ['technicalQuality', [
+        'Adequate',
+        'Suboptimal - rotation',
+        'Suboptimal - low inspiration',
+        'Suboptimal - underpenetrated',
+        'Suboptimal - overpenetrated',
+        'Suboptimal - motion artifact',
+        'Limited - portable technique',
+        'Limited - patient factors'
+      ]],
+      ['views', [
+        'PA and lateral',
+        'PA only',
+        'AP portable',
+        'AP and lateral',
+        'Lateral only',
+        'Lordotic view',
+        'Expiratory view',
+        'Decubitus - right',
+        'Decubitus - left'
+      ]]
     ]),
     aiIntegration: {
       enabled: true,
-      autoFillFields: ['lungFields', 'heartSize', 'mediastinum'],
-      suggestedFindings: ['infiltrate', 'consolidation', 'effusion', 'pneumothorax', 'cardiomegaly']
+      autoFillFields: ['lungFields', 'heartSize', 'mediastinum', 'pleura', 'technicalQuality'],
+      suggestedFindings: [
+        'infiltrate', 'consolidation', 'effusion', 'pneumothorax', 'cardiomegaly',
+        'atelectasis', 'nodule', 'mass', 'hyperinflation', 'edema',
+        'fracture', 'line position', 'tube position'
+      ]
     },
-    priority: 90,
+    priority: 95,
     active: true,
-    isDefault: true
+    isDefault: true,
+    version: '2.0',
+    customizable: true
   },
 
   {

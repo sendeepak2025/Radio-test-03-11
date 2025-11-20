@@ -25,6 +25,9 @@ import {
   AdminPanelSettings,
   VpnLock,
   Storage,
+  Description,
+  Feedback,
+  Assignment,
 } from '@mui/icons-material'
 import { useAppSelector } from '../../store/hooks'
 import { selectSidebarOpen, selectSidebarWidth } from '../../store/slices/uiSlice'
@@ -58,6 +61,13 @@ const navigationItems: NavigationItem[] = [
     label: 'Patients',
     icon: <People />,
     path: '/app/patients',
+    permission: 'studies:read',
+  },
+  {
+    id: 'reporting',
+    label: 'Reports',
+    icon: <Assignment />,
+    path: '/app/reporting',
     permission: 'studies:read',
   },
   {
@@ -106,10 +116,24 @@ const adminItems: NavigationItem[] = [
     permission: 'admin:manage',
   },
   {
+    id: 'templates',
+    label: 'Templates',
+    icon: <Description />,
+    path: '/app/admin/templates',
+    permission: 'admin:manage',
+  },
+  {
     id: 'data-retention',
     label: 'Data Retention',
     icon: <Storage />,
     path: '/app/admin/data-retention',
+    permission: 'admin:manage',
+  },
+  {
+    id: 'feedback',
+    label: 'Feedback',
+    icon: <Feedback />,
+    path: '/app/admin/feedback',
     permission: 'admin:manage',
   },
 ]

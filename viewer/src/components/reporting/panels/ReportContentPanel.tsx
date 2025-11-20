@@ -26,6 +26,7 @@ import {
 import { useReporting } from '../../../contexts/ReportingContext';
 import QuickPhraseButton from '../QuickPhraseButton';
 import { getQuickPhrases } from '../../../data/quickPhrases';
+import { MeasurementModule, ChecklistModule, CalculatorModule, DiagramInlineModule } from '../modules';
 
 const ReportContentPanel: React.FC = () => {
   const { state, actions } = useReporting();
@@ -46,11 +47,101 @@ const ReportContentPanel: React.FC = () => {
     actions.updateField(field, newValue);
   };
   
+  // Handle UI module data changes
+  const handleModuleChange = (moduleId: string, data: any) => {
+    actions.updateSection(`uiModule_${moduleId}`, JSON.stringify(data));
+  };
+  
+  // Get module data from state
+  const getModuleData = (moduleId: string) => {
+    const rawData = state.sections[`uiModule_${moduleId}`];
+    if (!rawData) return undefined;
+    try {
+      return JSON.parse(rawData as string);
+    } catch {
+      return undefined;
+    }
+  };
+  
+  // Render specialized UI module based on type
+  const renderUIModule = (module: any) => {
+    const moduleData = getModuleData(module.id);
+    
+    switch (module.type) {
+      case 'measurements':
+        return (
+          <MeasurementModule
+            key={module.id}
+            config={module.config}
+            value={moduleData}
+            onChange={(data) => handleModuleChange(module.id, data)}
+            required={module.required}
+          />
+        );
+      
+      case 'checklist':
+        return (
+          <ChecklistModule
+            key={module.id}
+            config={module.config}
+            value={moduleData}
+            onChange={(data) => handleModuleChange(module.id, data)}
+            required={module.required}
+          />
+        );
+      
+      case 'calculator':
+      case 'score':
+        return (
+          <CalculatorModule
+            key={module.id}
+            config={module.config}
+            value={moduleData}
+            onChange={(data) => handleModuleChange(module.id, data)}
+            required={module.required}
+          />
+        );
+      
+     
+      
+      default:
+        return null;
+    }
+  };
+  
   return (
     <Box>
       <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold' }}>
         Report Content
       </Typography>
+      
+      {/* Render UI Modules from Template (if any) */}
+      {state.selectedTemplate?.uiModules && state.selectedTemplate.uiModules.length > 0 ? (
+        <Box mb={3}>
+          <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+            Specialized Assessment Tools ({state.selectedTemplate.uiModules.length})
+          </Typography>
+          {state.selectedTemplate.uiModules
+            .sort((a, b) => (a.order || 0) - (b.order || 0))
+            .map((module) => {
+              console.log('🔧 Rendering module:', { 
+                id: module.id, 
+                type: module.type, 
+                title: module.title,
+                bodyPart: module.config?.bodyPart 
+              });
+              return (
+                <Box key={module.id} mb={2}>
+                  {renderUIModule(module)}
+                </Box>
+              );
+            })}
+          <Divider sx={{ my: 3 }} />
+        </Box>
+      ) : (
+        console.log('⚠️ No UI modules to render. Template:', state.selectedTemplate?.name, 'Modules:', state.selectedTemplate?.uiModules?.length),
+        null
+      )}
       
       {/* Clinical History */}
       <Paper elevation={1} sx={{ p: 2, mb: 2 }}>

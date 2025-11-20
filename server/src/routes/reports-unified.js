@@ -19,6 +19,7 @@ const ReportTemplate = require('../models/ReportTemplate');
 const templateSelector = require('../services/templateSelector');
 const exportService = require('../services/export-service');
 const auditService = require('../services/audit-service');
+const { validateReportForSigning, getModalityValidationPreview } = require('../utils/modalityValidationRules');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
@@ -168,60 +169,8 @@ function contentHash(report) {
   return crypto.createHash('sha256').update(payload).digest('hex');
 }
 
-// ✅ COMPLIANCE UPDATE: Server-side validation rules
-/**
- * Validate report content before signing
- * Returns { valid: boolean, errors: string[] }
- */
-function validateReportForSigning(report) {
-  const errors = [];
-
-  // Required: Impression
-  if (!report.impression || report.impression.trim() === '') {
-    errors.push('Impression is required before signing');
-  }
-
-  // Required: Findings
-  const hasFindings = report.findingsText && report.findingsText.trim() !== '';
-  const hasStructuredFindings = report.findings && report.findings.length > 0;
-  if (!hasFindings && !hasStructuredFindings) {
-    errors.push('Findings are required before signing');
-  }
-
-  // Required: Technique
-  if (!report.technique || report.technique.trim() === '') {
-    errors.push('Technique section is required before signing');
-  }
-
-  // Required: Clinical History (if available in template)
-  if (report.templateId && (!report.clinicalHistory || report.clinicalHistory.trim() === '')) {
-    errors.push('Clinical history/indication is required before signing');
-  }
-
-  // ✅ COMPLIANCE UPDATE: Contrast rule for CT
-  if (report.modality === 'CT' && report.technique) {
-    const techniqueText = report.technique.toLowerCase();
-    const findingsText = (report.findingsText || '').toLowerCase();
-    
-    if (techniqueText.includes('contrast') && !findingsText.includes('contrast')) {
-      errors.push('Contrast mentioned in technique but not documented in findings');
-    }
-  }
-
-  // Minimum content length check
-  if (report.findingsText && report.findingsText.trim().length < 10) {
-    errors.push('Findings section appears incomplete (too short)');
-  }
-
-  if (report.impression && report.impression.trim().length < 5) {
-    errors.push('Impression section appears incomplete (too short)');
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors
-  };
-}
+// Note: validateReportForSigning is now imported from modalityValidationRules.js
+// which provides comprehensive modality-specific validation
 
 // ============================================================================
 // REPORT QUERIES (Must come BEFORE /:reportId to prevent shadowing)
@@ -337,6 +286,279 @@ router.post('/templates/suggest', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error suggesting template:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/reports/templates/:templateId
+ * Get single template by ID
+ */
+router.get('/templates/:templateId', async (req, res) => {
+  try {
+    const { templateId } = req.params;
+
+    const template = await ReportTemplate.findOne({ templateId });
+
+    if (!template) {
+      return res.status(404).json({
+        success: false,
+        error: 'Template not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: template
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching template:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/reports/templates
+ * Create new template
+ */
+router.post('/templates', async (req, res) => {
+  try {
+    // Generate unique template ID
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const templateId = `TPL-CUSTOM-${timestamp}-${random}`;
+
+    const templateData = {
+      ...req.body,
+      templateId,
+      isDefault: false,
+      active: true,
+      createdBy: req.user?.userId || req.user?._id,
+      updatedBy: req.user?.userId || req.user?._id
+    };
+
+    const template = new ReportTemplate(templateData);
+    await template.save();
+
+    console.log('✅ Template created:', templateId);
+
+    res.status(201).json({
+      success: true,
+      data: template,
+      message: 'Template created successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error creating template:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * PUT /api/reports/templates/:templateId
+ * Update existing template
+ */
+router.put('/templates/:templateId', async (req, res) => {
+  try {
+    const { templateId } = req.params;
+
+    const template = await ReportTemplate.findOne({ templateId });
+
+    if (!template) {
+      return res.status(404).json({
+        success: false,
+        error: 'Template not found'
+      });
+    }
+
+    // Prevent editing default templates unless user is admin
+    if (template.isDefault && req.user?.role !== 'admin' && req.user?.role !== 'superadmin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Cannot modify default templates'
+      });
+    }
+
+    // Update fields
+    Object.assign(template, req.body);
+    template.updatedBy = req.user?.userId || req.user?._id;
+
+    await template.save();
+
+    console.log('✅ Template updated:', templateId);
+
+    res.json({
+      success: true,
+      data: template,
+      message: 'Template updated successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error updating template:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * DELETE /api/reports/templates/:templateId
+ * Delete template (soft delete via active flag)
+ */
+router.delete('/templates/:templateId', async (req, res) => {
+  try {
+    const { templateId } = req.params;
+
+    const template = await ReportTemplate.findOne({ templateId });
+
+    if (!template) {
+      return res.status(404).json({
+        success: false,
+        error: 'Template not found'
+      });
+    }
+
+    // Prevent deleting default templates
+    if (template.isDefault) {
+      return res.status(403).json({
+        success: false,
+        error: 'Cannot delete default templates'
+      });
+    }
+
+    // Soft delete by setting active to false
+    template.active = false;
+    template.updatedBy = req.user?.userId || req.user?._id;
+    await template.save();
+
+    console.log('✅ Template deleted (soft):', templateId);
+
+    res.json({
+      success: true,
+      message: 'Template deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting template:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/reports/templates/:templateId/clone
+ * Clone existing template
+ */
+router.post('/templates/:templateId/clone', async (req, res) => {
+  try {
+    const { templateId } = req.params;
+    const { name } = req.body;
+
+    const sourceTemplate = await ReportTemplate.findOne({ templateId });
+
+    if (!sourceTemplate) {
+      return res.status(404).json({
+        success: false,
+        error: 'Source template not found'
+      });
+    }
+
+    // Generate new template ID
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const newTemplateId = `TPL-CLONE-${timestamp}-${random}`;
+
+    // Clone template data
+    const clonedData = sourceTemplate.toObject();
+    delete clonedData._id;
+    delete clonedData.createdAt;
+    delete clonedData.updatedAt;
+    delete clonedData.usageStats;
+
+    const newTemplate = new ReportTemplate({
+      ...clonedData,
+      templateId: newTemplateId,
+      name: name || `${sourceTemplate.name} (Copy)`,
+      isDefault: false,
+      active: true,
+      priority: sourceTemplate.priority - 1,
+      createdBy: req.user?.userId || req.user?._id,
+      updatedBy: req.user?.userId || req.user?._id
+    });
+
+    await newTemplate.save();
+
+    console.log('✅ Template cloned:', templateId, '→', newTemplateId);
+
+    res.status(201).json({
+      success: true,
+      data: newTemplate,
+      message: 'Template cloned successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error cloning template:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/reports/templates/:templateId/stats
+ * Get template usage statistics
+ */
+router.get('/templates/:templateId/stats', async (req, res) => {
+  try {
+    const { templateId } = req.params;
+
+    const template = await ReportTemplate.findOne({ templateId });
+
+    if (!template) {
+      return res.status(404).json({
+        success: false,
+        error: 'Template not found'
+      });
+    }
+
+    // Get report count using this template
+    const reportCount = await StructuredReport.countDocuments({ templateId });
+
+    // Get recent reports
+    const recentReports = await StructuredReport.find({ templateId })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('reportStatus createdAt updatedAt');
+
+    res.json({
+      success: true,
+      data: {
+        templateId,
+        timesUsed: template.usageStats?.timesUsed || reportCount,
+        lastUsed: template.usageStats?.lastUsed,
+        averageCompletionTime: template.usageStats?.averageCompletionTime,
+        averageRating: template.averageRating,
+        reportCount,
+        recentReports
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching template stats:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -613,7 +835,7 @@ router.put('/:reportId', async (req, res) => {
     const allowedFields = [
       'findings', 'measurements', 'sections', 'templateId', 'templateName', 'templateVersion',
       'technique', 'findingsText', 'impression', 'keyImages', 'tags',
-      'clinicalHistory', 'recommendations', 'criticalComms'
+      'clinicalHistory', 'recommendations', 'criticalComms', 'moduleData', 'anatomicalMarkings'
     ];
 
     allowedFields.forEach(field => {
@@ -879,15 +1101,27 @@ router.post('/:reportId/sign', upload.single('signatureFile'), async (req, res) 
       }
     }
 
-    // ✅ COMPLIANCE UPDATE: Server-side validation before signing
-    const validation = validateReportForSigning(report);
+    // ✅ VALIDATION: Pre-sign validation with template rules
+    const reportValidator = require('../utils/reportValidator');
+    const ReportTemplate = require('../models/ReportTemplate');
+    
+    const template = await ReportTemplate.findOne({ templateId: report.templateId });
+    const validation = reportValidator.validateForSigning(report, template);
+    
     if (!validation.valid) {
+      console.log('❌ Validation failed:', validation.errors);
       return res.status(400).json({
         success: false,
         error: 'VALIDATION_FAILED',
-        message: 'Report validation failed',
-        validationErrors: validation.errors
+        message: 'Report cannot be signed. Please complete all required fields.',
+        errors: validation.errors,
+        warnings: validation.warnings
       });
+    }
+    
+    // Log warnings (if any) but allow signing
+    if (validation.warnings.length > 0) {
+      console.log('⚠️ Signing with warnings:', validation.warnings);
     }
 
     const previousStatus = report.reportStatus;
@@ -1758,11 +1992,104 @@ router.get('/export/share/:shareId', async (req, res) => {
 });
 
 // ============================================================================
+// VALIDATION ENDPOINTS
+// ============================================================================
+
+/**
+ * Validate report before signing
+ * POST /api/reports/:reportId/validate
+ */
+router.post('/:reportId/validate', async (req, res) => {
+  try {
+    const reportValidator = require('../utils/reportValidator');
+    const ReportTemplate = require('../models/ReportTemplate');
+    
+    const report = await StructuredReport.findOne({ reportId: req.params.reportId });
+    
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        error: 'Report not found'
+      });
+    }
+    
+    // Get template
+    const template = await ReportTemplate.findOne({ templateId: report.templateId });
+    
+    // Validate
+    const validation = reportValidator.validateReport(report, template);
+    
+    console.log(`✅ Validation for ${req.params.reportId}:`, {
+      valid: validation.valid,
+      errors: validation.errors.length,
+      warnings: validation.warnings.length
+    });
+    
+    res.json({
+      success: true,
+      ...validation
+    });
+    
+  } catch (error) {
+    console.error('❌ Validation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Pre-sign validation (strict mode)
+ * POST /api/reports/:reportId/validate-sign
+ */
+router.post('/:reportId/validate-sign', async (req, res) => {
+  try {
+    const reportValidator = require('../utils/reportValidator');
+    const ReportTemplate = require('../models/ReportTemplate');
+    
+    const report = await StructuredReport.findOne({ reportId: req.params.reportId });
+    
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        error: 'Report not found'
+      });
+    }
+    
+    // Get template
+    const template = await ReportTemplate.findOne({ templateId: report.templateId });
+    
+    // Strict validation for signing
+    const validation = reportValidator.validateForSigning(report, template);
+    
+    console.log(`✅ Pre-sign validation for ${req.params.reportId}:`, {
+      valid: validation.valid,
+      errors: validation.errors.length,
+      warnings: validation.warnings.length
+    });
+    
+    res.json({
+      success: true,
+      ...validation
+    });
+    
+  } catch (error) {
+    console.error('❌ Pre-sign validation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
 /**
  * Generate PDF from report with hospital info and signature
+ * ✅ PDF IMPROVEMENTS: BI-RADS box, critical findings, spine tables, smart page breaks
  */
 async function generateReportPDF(report) {
   try {
@@ -1780,6 +2107,17 @@ async function generateReportPDF(report) {
     if (report.hospitalId) {
       hospital = await Hospital.findOne({ hospitalId: report.hospitalId });
     }
+
+    // ===== HELPER: Smart page break =====
+    const checkNewPage = (spaceNeeded = 50) => {
+      const pageHeight = doc.page.height;
+      const bottomMargin = 80;
+      if (doc.y + spaceNeeded > pageHeight - bottomMargin) {
+        doc.addPage();
+        return true;
+      }
+      return false;
+    };
 
     // ===== HEADER WITH HOSPITAL INFO =====
     const pageWidth = doc.page.width - 100; // Account for margins
@@ -1819,7 +2157,40 @@ async function generateReportPDF(report) {
     doc.fontSize(20).font('Helvetica-Bold').text('RADIOLOGY REPORT', { align: 'center' });
     doc.moveDown();
 
+    // ✅ CRITICAL FINDINGS ALERT BOX (if present)
+    if (report.criticalFindings && report.criticalFindings.length > 0) {
+      checkNewPage(120);
+      const alertY = doc.y;
+      
+      // Red background box
+      doc.rect(50, alertY, pageWidth, 100).fillAndStroke('#FFEBEE', '#D32F2F');
+      
+      // Alert icon and title
+      doc.fillColor('#D32F2F').fontSize(14).font('Helvetica-Bold');
+      doc.text('⚠ CRITICAL FINDING - IMMEDIATE ATTENTION REQUIRED', 60, alertY + 10);
+      
+      // Critical findings list
+      doc.fillColor('#000000').fontSize(10).font('Helvetica');
+      let criticalY = alertY + 30;
+      report.criticalFindings.forEach((finding, idx) => {
+        doc.text(`${idx + 1}. ${finding}`, 60, criticalY);
+        criticalY += 15;
+      });
+      
+      // Communication timestamp
+      if (report.criticalComms && report.criticalComms.length > 0) {
+        const comm = report.criticalComms[0];
+        doc.fontSize(8).fillColor('#666666');
+        doc.text(`Communicated to: ${comm.recipient} via ${comm.method} on ${new Date(comm.communicatedAt).toLocaleString()}`, 60, criticalY + 5);
+      }
+      
+      doc.fillColor('#000000');
+      doc.y = alertY + 110;
+      doc.moveDown();
+    }
+
     // ===== PATIENT & STUDY INFO =====
+    checkNewPage(80);
     doc.fontSize(10).font('Helvetica');
     const infoY = doc.y;
     
@@ -1839,6 +2210,7 @@ async function generateReportPDF(report) {
 
     // ===== CLINICAL HISTORY =====
     if (report.clinicalHistory) {
+      checkNewPage(60);
       doc.fontSize(12).font('Helvetica-Bold').text('CLINICAL HISTORY', { underline: true });
       doc.fontSize(10).font('Helvetica').text(report.clinicalHistory, { align: 'justify' });
       doc.moveDown();
@@ -1846,6 +2218,7 @@ async function generateReportPDF(report) {
 
     // ===== TECHNIQUE =====
     if (report.technique) {
+      checkNewPage(60);
       doc.fontSize(12).font('Helvetica-Bold').text('TECHNIQUE', { underline: true });
       doc.fontSize(10).font('Helvetica').text(report.technique, { align: 'justify' });
       doc.moveDown();
@@ -1853,13 +2226,90 @@ async function generateReportPDF(report) {
 
     // ===== FINDINGS =====
     if (report.findingsText) {
+      checkNewPage(100); // Keep section header with content
       doc.fontSize(12).font('Helvetica-Bold').text('FINDINGS', { underline: true });
-      doc.fontSize(10).font('Helvetica').text(report.findingsText, { align: 'justify' });
-      doc.moveDown();
+      doc.moveDown(0.5);
+      
+      // ✅ SPINE LEVEL TABLES: Parse and format spine findings
+      const isSpineReport = report.templateId && (
+        report.templateId.includes('CSPINE') || 
+        report.templateId.includes('LSPINE') ||
+        report.templateId.includes('TSPINE')
+      );
+      
+      if (isSpineReport) {
+        // Parse level-by-level findings (e.g., "C2-C3:", "L4-L5:")
+        const levelPattern = /([CTLS]\d+-[CTLS]\d+|[CTLS]\d+-[CTLS]\d+):\s*([^\n]+)/gi;
+        const levels = [];
+        let match;
+        
+        while ((match = levelPattern.exec(report.findingsText)) !== null) {
+          levels.push({
+            level: match[1],
+            finding: match[2].trim()
+          });
+        }
+        
+        if (levels.length > 0) {
+          // Render as table
+          checkNewPage(levels.length * 25 + 40);
+          
+          const tableTop = doc.y;
+          const rowHeight = 25;
+          const col1Width = 80;
+          const col2Width = pageWidth - col1Width;
+          
+          // Table header
+          doc.rect(50, tableTop, col1Width, rowHeight).fillAndStroke('#E3F2FD', '#1976D2');
+          doc.rect(50 + col1Width, tableTop, col2Width, rowHeight).fillAndStroke('#E3F2FD', '#1976D2');
+          
+          doc.fillColor('#000000').fontSize(10).font('Helvetica-Bold');
+          doc.text('Level', 55, tableTop + 8);
+          doc.text('Findings', 55 + col1Width, tableTop + 8);
+          
+          // Table rows
+          doc.font('Helvetica');
+          levels.forEach((row, idx) => {
+            const y = tableTop + (idx + 1) * rowHeight;
+            
+            // Alternate row colors
+            if (idx % 2 === 0) {
+              doc.rect(50, y, col1Width, rowHeight).fillAndStroke('#F5F5F5', '#CCCCCC');
+              doc.rect(50 + col1Width, y, col2Width, rowHeight).fillAndStroke('#F5F5F5', '#CCCCCC');
+            } else {
+              doc.rect(50, y, col1Width, rowHeight).stroke('#CCCCCC');
+              doc.rect(50 + col1Width, y, col2Width, rowHeight).stroke('#CCCCCC');
+            }
+            
+            doc.fillColor('#000000').fontSize(9);
+            doc.text(row.level, 55, y + 8, { width: col1Width - 10 });
+            doc.text(row.finding, 55 + col1Width, y + 8, { width: col2Width - 10, lineGap: 2 });
+          });
+          
+          doc.y = tableTop + (levels.length + 1) * rowHeight + 10;
+          doc.moveDown();
+          
+          // Add remaining findings text (non-level findings)
+          const remainingText = report.findingsText.replace(levelPattern, '').trim();
+          if (remainingText) {
+            doc.fontSize(10).font('Helvetica').text(remainingText, { align: 'justify' });
+            doc.moveDown();
+          }
+        } else {
+          // No level findings found, render as normal text
+          doc.fontSize(10).font('Helvetica').text(report.findingsText, { align: 'justify' });
+          doc.moveDown();
+        }
+      } else {
+        // Non-spine report: render as normal text
+        doc.fontSize(10).font('Helvetica').text(report.findingsText, { align: 'justify' });
+        doc.moveDown();
+      }
     }
 
     // ===== MEASUREMENTS =====
     if (report.measurements && report.measurements.length > 0) {
+      checkNewPage(80);
       doc.fontSize(12).font('Helvetica-Bold').text('MEASUREMENTS', { underline: true });
       doc.fontSize(10).font('Helvetica');
       report.measurements.forEach(m => {
@@ -1870,13 +2320,95 @@ async function generateReportPDF(report) {
 
     // ===== IMPRESSION =====
     if (report.impression) {
+      checkNewPage(100); // Keep section header with content
       doc.fontSize(12).font('Helvetica-Bold').text('IMPRESSION', { underline: true });
+      doc.moveDown(0.5);
+      
+      // ✅ BI-RADS HIGHLIGHT BOX: Extract and highlight BI-RADS category for mammography
+      const isMammography = report.templateId && report.templateId.includes('MAMMO');
+      
+      if (isMammography) {
+        // Extract BI-RADS category from impression text
+        const biRadsPattern = /BI-?RADS\s+(?:Category\s+)?(\d|0)/i;
+        const match = report.impression.match(biRadsPattern);
+        
+        if (match) {
+          const category = match[1];
+          checkNewPage(80);
+          
+          // Color-coded box based on category
+          let boxColor, textColor, categoryText, recommendation;
+          switch (category) {
+            case '0':
+              boxColor = '#FFF9C4'; textColor = '#F57C00'; 
+              categoryText = 'BI-RADS 0 - Incomplete';
+              recommendation = 'Additional imaging needed';
+              break;
+            case '1':
+              boxColor = '#E8F5E9'; textColor = '#2E7D32'; 
+              categoryText = 'BI-RADS 1 - Negative';
+              recommendation = 'Routine screening in 1 year';
+              break;
+            case '2':
+              boxColor = '#E8F5E9'; textColor = '#2E7D32'; 
+              categoryText = 'BI-RADS 2 - Benign';
+              recommendation = 'Routine screening in 1 year';
+              break;
+            case '3':
+              boxColor = '#FFF9C4'; textColor = '#F57C00'; 
+              categoryText = 'BI-RADS 3 - Probably Benign';
+              recommendation = 'Short-term follow-up suggested';
+              break;
+            case '4':
+              boxColor = '#FFEBEE'; textColor = '#C62828'; 
+              categoryText = 'BI-RADS 4 - Suspicious';
+              recommendation = 'Biopsy should be considered';
+              break;
+            case '5':
+              boxColor = '#FFEBEE'; textColor = '#C62828'; 
+              categoryText = 'BI-RADS 5 - Highly Suggestive of Malignancy';
+              recommendation = 'Biopsy strongly recommended';
+              break;
+            case '6':
+              boxColor = '#FFEBEE'; textColor = '#C62828'; 
+              categoryText = 'BI-RADS 6 - Known Malignancy';
+              recommendation = 'Appropriate action should be taken';
+              break;
+            default:
+              boxColor = '#F5F5F5'; textColor = '#000000'; 
+              categoryText = `BI-RADS ${category}`;
+              recommendation = '';
+          }
+          
+          const boxY = doc.y;
+          
+          // Colored highlight box
+          doc.rect(50, boxY, pageWidth, 60).fillAndStroke(boxColor, textColor);
+          
+          // BI-RADS category text
+          doc.fillColor(textColor).fontSize(16).font('Helvetica-Bold');
+          doc.text(categoryText, 60, boxY + 12);
+          
+          // Recommendation
+          if (recommendation) {
+            doc.fontSize(11).font('Helvetica');
+            doc.text(recommendation, 60, boxY + 35);
+          }
+          
+          doc.fillColor('#000000');
+          doc.y = boxY + 70;
+          doc.moveDown();
+        }
+      }
+      
+      // Render impression text
       doc.fontSize(10).font('Helvetica').text(report.impression, { align: 'justify' });
       doc.moveDown();
     }
 
     // ===== RECOMMENDATIONS =====
     if (report.recommendations) {
+      checkNewPage(60);
       doc.fontSize(12).font('Helvetica-Bold').text('RECOMMENDATIONS', { underline: true });
       doc.fontSize(10).font('Helvetica').text(report.recommendations, { align: 'justify' });
       doc.moveDown();
@@ -1884,6 +2416,7 @@ async function generateReportPDF(report) {
 
     // ===== SIGNATURE SECTION =====
     if (report.signedAt) {
+      checkNewPage(120); // Keep signature box together on one page
       doc.moveDown(2);
       
       // Signature box
@@ -1934,9 +2467,47 @@ async function generateReportPDF(report) {
       }
     }
 
+    // ===== DRAFT WATERMARK =====
+    // Add watermark on every page if report is not final
+    if (report.reportStatus !== 'final') {
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        
+        // Save graphics state
+        doc.save();
+        
+        // Set transparency and rotation
+        doc.opacity(0.1);
+        doc.rotate(-45, { origin: [doc.page.width / 2, doc.page.height / 2] });
+        
+        // Draw watermark text
+        doc.fontSize(100)
+          .font('Helvetica-Bold')
+          .fillColor('#FF0000')
+          .text(
+            'DRAFT',
+            0,
+            doc.page.height / 2 - 50,
+            {
+              width: doc.page.width,
+              align: 'center'
+            }
+          );
+        
+        // Restore graphics state
+        doc.restore();
+      }
+      
+      // Return to last page
+      doc.switchToPage(range.start + range.count - 1);
+    }
+
     // ===== FOOTER =====
     doc.fontSize(8).font('Helvetica').text(
-      'This report is electronically signed and legally binding.',
+      report.reportStatus === 'final' 
+        ? 'This report is electronically signed and legally binding.'
+        : 'DRAFT REPORT - Not for clinical use. Pending radiologist signature.',
       50,
       doc.page.height - 50,
       { align: 'center' }
@@ -2081,5 +2652,214 @@ function generateFHIRReport(report) {
     }]
   };
 }
+
+// ============================================================================
+// AI ASSISTANT ENDPOINTS
+// ============================================================================
+
+const aiAssistant = require('../services/ai-assistant-service');
+
+/**
+ * POST /api/reports/:reportId/ai-analyze
+ * Analyze report with AI and generate suggestions
+ */
+router.post('/:reportId/ai-analyze', async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const { analysisType = 'full' } = req.body;
+
+    const report = await StructuredReport.findOne({ reportId });
+
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        error: 'Report not found'
+      });
+    }
+
+    // Access control check
+    if (!canAccessReport(req, report)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied'
+      });
+    }
+
+    // Check if AI service is available
+    if (!aiAssistant.isAvailable()) {
+      return res.status(503).json({
+        success: false,
+        error: 'AI service not available. Please configure GEMINI_API_KEY.',
+        message: 'AI features require Google Gemini API key to be configured'
+      });
+    }
+
+    const context = {
+      modality: report.modality,
+      bodyPart: report.bodyPart,
+      clinicalHistory: report.clinicalHistory
+    };
+
+    const results = {};
+
+    // Analyze findings if present
+    if (report.findingsText && analysisType === 'full') {
+      results.findingsAnalysis = await aiAssistant.analyzeFindingsText(
+        report.findingsText,
+        context
+      );
+    }
+
+    // Generate impression if findings exist but no impression
+    if (report.findingsText && (!report.impression || analysisType === 'impression')) {
+      results.impressionSuggestion = await aiAssistant.generateImpression(
+        report.findingsText,
+        context
+      );
+    }
+
+    // Detect critical findings
+    if (analysisType === 'full' || analysisType === 'critical') {
+      results.criticalFindings = await aiAssistant.detectCriticalFindings(report);
+    }
+
+    res.json({
+      success: true,
+      data: results,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ AI analysis error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/reports/:reportId/ai-impression
+ * Generate impression from findings using AI
+ */
+router.post('/:reportId/ai-impression', async (req, res) => {
+  try {
+    const { reportId } = req.params;
+
+    const report = await StructuredReport.findOne({ reportId });
+
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        error: 'Report not found'
+      });
+    }
+
+    if (!canAccessReport(req, report)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied'
+      });
+    }
+
+    if (!aiAssistant.isAvailable()) {
+      return res.status(503).json({
+        success: false,
+        error: 'AI service not available'
+      });
+    }
+
+    if (!report.findingsText) {
+      return res.status(400).json({
+        success: false,
+        error: 'No findings text available to generate impression'
+      });
+    }
+
+    const context = {
+      modality: report.modality,
+      bodyPart: report.bodyPart,
+      clinicalHistory: report.clinicalHistory
+    };
+
+    const result = await aiAssistant.generateImpression(report.findingsText, context);
+
+    res.json({
+      success: true,
+      data: result
+    });
+
+  } catch (error) {
+    console.error('❌ Impression generation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/reports/templates/:templateId/ai-suggest
+ * Get AI suggestions for template field values
+ */
+router.post('/templates/:templateId/ai-suggest', async (req, res) => {
+  try {
+    const { templateId } = req.params;
+    const { studyMetadata } = req.body;
+
+    const template = await ReportTemplate.findOne({ templateId });
+
+    if (!template) {
+      return res.status(404).json({
+        success: false,
+        error: 'Template not found'
+      });
+    }
+
+    if (!aiAssistant.isAvailable()) {
+      return res.status(503).json({
+        success: false,
+        error: 'AI service not available'
+      });
+    }
+
+    const result = await aiAssistant.suggestTemplateFields(template, studyMetadata || {});
+
+    res.json({
+      success: true,
+      data: result
+    });
+
+  } catch (error) {
+    console.error('❌ Template field suggestion error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/reports/ai/health
+ * Check AI service health
+ */
+router.get('/ai/health', (req, res) => {
+  const available = aiAssistant.isAvailable();
+  
+  res.json({
+    success: true,
+    available,
+    service: 'Google Gemini Pro',
+    features: {
+      findingsAnalysis: available,
+      impressionGeneration: available,
+      criticalFindingDetection: available,
+      templateFieldSuggestions: available
+    },
+    message: available 
+      ? 'AI service is operational' 
+      : 'AI service not configured. Set GEMINI_API_KEY environment variable.'
+  });
+});
 
 module.exports = router;

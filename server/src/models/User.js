@@ -2,7 +2,7 @@ const mongoose = require('mongoose')
 
 const UserSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, index: true },
-  email: { type: String, required: true, unique: true },
+  email: { type: String, required: true, unique: true, index: true },
   passwordHash: { type: String, required: true },
   firstName: { type: String, required: true },
   lastName: { type: String, required: true },
@@ -30,6 +30,12 @@ const UserSchema = new mongoose.Schema({
   signatureImagePath: { type: String }, // File system path to signature image
   signatureImageUrl: { type: String }, // Public URL to signature image
 }, { timestamps: true })
+
+// Performance indexes
+UserSchema.index({ hospitalId: 1, isActive: 1 });
+UserSchema.index({ hospitalId: 1, roles: 1 });
+UserSchema.index({ email: 1, isActive: 1 });
+UserSchema.index({ lastLogin: -1 });
 
 UserSchema.methods.toPublicJSON = function () {
   return {

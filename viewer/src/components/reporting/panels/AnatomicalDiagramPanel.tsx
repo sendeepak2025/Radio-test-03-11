@@ -3,7 +3,7 @@
  * Interactive body diagrams for marking findings
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -32,70 +32,242 @@ import {
   Undo as UndoIcon,
   Redo as RedoIcon,
   ZoomIn as ZoomInIcon,
-  ZoomOut as ZoomOutIcon
+  ZoomOut as ZoomOutIcon,
+  Info as InfoIcon
 } from '@mui/icons-material';
 import { useReporting, type AnatomicalMarking } from '../../../contexts/ReportingContext';
 
-// Body diagram configurations with Wikimedia Commons SVGs
+// Body diagram configurations - comprehensive mapping for all modalities
 const BODY_DIAGRAMS = {
   'CT': {
+    'Brain': ['axial', 'sagittal', 'coronal'],
     'Head/Brain': ['axial', 'sagittal', 'coronal'],
     'Chest': ['frontal', 'lateral', 'axial'],
-    'Abdomen': ['frontal', 'quadrants'],
-    'Spine': ['frontal', 'lateral'],
-    'Pelvis': ['frontal'],
-    'Full Body': ['neutral_frontal', 'female_frontal']
+    'Heart': ['anterior', 'axial'],
+    'Abdomen': ['frontal', 'axial'],
+    'Liver': ['anterior', 'axial'],
+    'Pelvis': ['axial', 'sagittal'],
+    'Spine': ['frontal', 'lateral', 'axial'],
+    'Aorta': ['anterior', 'lateral'],
+    'Extremity': ['anterior', 'lateral'],
+    'Knee': ['anterior', 'lateral'],
+    'Shoulder': ['anterior', 'lateral']
+  },
+  'MR': {
+    'Brain': ['axial', 'sagittal', 'coronal'],
+    'Head/Brain': ['axial', 'sagittal', 'coronal'],
+    'Spine': ['sagittal', 'axial', 'coronal'],
+    'Abdomen': ['axial', 'coronal'],
+    'Liver': ['axial', 'coronal'],
+    'Pelvis': ['axial', 'sagittal', 'coronal'],
+    'Prostate': ['axial', 'sagittal', 'coronal'],
+    'Knee': ['sagittal', 'axial', 'coronal'],
+    'Shoulder': ['coronal', 'sagittal', 'axial'],
+    'Extremity': ['axial', 'coronal']
   },
   'MRI': {
+    'Brain': ['axial', 'sagittal', 'coronal'],
     'Head/Brain': ['axial', 'sagittal', 'coronal'],
-    'Spine': ['frontal', 'lateral'],
-    'Extremities': ['hand', 'shoulder', 'knee']
+    'Spine': ['sagittal', 'axial', 'coronal'],
+    'Abdomen': ['axial', 'coronal'],
+    'Liver': ['axial', 'coronal'],
+    'Pelvis': ['axial', 'sagittal', 'coronal'],
+    'Prostate': ['axial', 'sagittal', 'coronal'],
+    'Knee': ['sagittal', 'axial', 'coronal'],
+    'Shoulder': ['coronal', 'sagittal', 'axial'],
+    'Extremity': ['axial', 'coronal']
   },
-  'XA': {
+  'MG': {
+    'Breast': ['bilateral', 'cc', 'mlo']
+  },
+  'MAMMO': {
+    'Breast': ['bilateral', 'cc', 'mlo']
+  },
+  'US': {
+    'Abdomen': ['transverse', 'longitudinal'],
+    'Liver': ['transverse', 'longitudinal'],
+    'Pelvis': ['transverse', 'sagittal'],
+    'Breast': ['radial', 'antiradial'],
+    'Thyroid': ['transverse', 'longitudinal'],
+    'Neck': ['transverse', 'longitudinal'],
+    'Carotid': ['longitudinal', 'transverse']
+  },
+  'ULTRASOUND': {
+    'Abdomen': ['transverse', 'longitudinal'],
+    'Liver': ['transverse', 'longitudinal'],
+    'Pelvis': ['transverse', 'sagittal'],
+    'Breast': ['radial', 'antiradial'],
+    'Thyroid': ['transverse', 'longitudinal'],
+    'Neck': ['transverse', 'longitudinal'],
+    'Carotid': ['longitudinal', 'transverse']
+  },
+  'CR': {
     'Chest': ['frontal', 'lateral'],
-    'Abdomen': ['frontal', 'quadrants'],
-    'Extremities': ['hand', 'shoulder', 'knee'],
-    'Spine': ['frontal', 'lateral']
+    'Abdomen': ['frontal'],
+    'Spine': ['frontal', 'lateral'],
+    'Extremity': ['frontal', 'lateral'],
+    'Hand': ['pa', 'lateral'],
+    'Knee': ['ap', 'lateral'],
+    'Shoulder': ['ap', 'lateral']
+  },
+  'DX': {
+    'Chest': ['frontal', 'lateral'],
+    'Abdomen': ['frontal'],
+    'Spine': ['frontal', 'lateral'],
+    'Extremity': ['frontal', 'lateral'],
+    'Hand': ['pa', 'lateral'],
+    'Knee': ['ap', 'lateral'],
+    'Shoulder': ['ap', 'lateral']
+  },
+  'XRAY': {
+    'Chest': ['frontal', 'lateral'],
+    'Abdomen': ['frontal'],
+    'Spine': ['frontal', 'lateral'],
+    'Extremity': ['frontal', 'lateral'],
+    'Hand': ['pa', 'lateral'],
+    'Knee': ['ap', 'lateral'],
+    'Shoulder': ['ap', 'lateral']
   },
   'X-Ray': {
     'Chest': ['frontal', 'lateral'],
-    'Abdomen': ['frontal', 'quadrants'],
-    'Extremities': ['hand', 'shoulder', 'knee'],
-    'Spine': ['frontal', 'lateral']
+    'Abdomen': ['frontal'],
+    'Spine': ['frontal', 'lateral'],
+    'Extremity': ['frontal', 'lateral'],
+    'Hand': ['pa', 'lateral'],
+    'Knee': ['ap', 'lateral'],
+    'Shoulder': ['ap', 'lateral']
+  },
+  'PT': {
+    'Whole Body': ['anterior', 'posterior']
+  },
+  'PET': {
+    'Whole Body': ['anterior', 'posterior']
+  },
+  'PET-CT': {
+    'Whole Body': ['anterior', 'posterior']
+  },
+  'CTA': {
+    'Heart': ['anterior', 'axial'],
+    'Chest': ['frontal', 'axial'],
+    'Aorta': ['anterior', 'lateral'],
+    'Brain': ['axial', 'coronal']
   }
 };
 
-// Diagram file mapping (matches downloaded files from Wikimedia)
+// Diagram file mapping (maps body part + view to actual image files)
 const DIAGRAM_FILE_MAP: Record<string, Record<string, string>> = {
+  'brain': {
+    'axial': 'brain-axial.png',
+    'sagittal': 'brain-sagittal.png',
+    'coronal': 'brain-coronal.png'
+  },
   'headbrain': {
-    'axial': 'headbrain-axial.svg',
-    'sagittal': 'headbrain-sagittal.svg',
-    'coronal': 'headbrain-coronal.svg'
+    'axial': 'brain-axial.png',
+    'sagittal': 'brain-sagittal.png',
+    'coronal': 'brain-coronal.png'
   },
   'chest': {
-    'frontal': 'chest-frontal.svg',
-    'lateral': 'chest-lateral.svg',
-    'axial': 'chest-axial.svg'
+    'frontal': 'chest-frontal.png',
+    'lateral': 'chest-lateral.png',
+    'axial': 'chest-axial.png',
+    'anterior': 'chest-frontal.png'
+  },
+  'heart': {
+    'anterior': 'heart-anterior.png',
+    'axial': 'heart-axial.png'
   },
   'abdomen': {
-    'frontal': 'abdomen-frontal.svg',
-    'quadrants': 'abdomen-quadrants.svg'
+    'frontal': 'abdomen-frontal.png',
+    'axial': 'abdomen-axial.png',
+    'anterior': 'abdomen-frontal.png',
+    'transverse': 'abdomen-axial.png',
+    'longitudinal': 'abdomen-sagittal.png'
+  },
+  'liver': {
+    'anterior': 'liver-anterior.png',
+    'axial': 'liver-axial.png',
+    'coronal': 'liver-coronal.png',
+    'transverse': 'liver-axial.png',
+    'longitudinal': 'liver-sagittal.png'
   },
   'spine': {
-    'frontal': 'spine-frontal.svg',
-    'lateral': 'spine-lateral.svg'
+    'frontal': 'spine-frontal.png',
+    'lateral': 'spine-lateral.png',
+    'sagittal': 'spine-sagittal.png',
+    'axial': 'spine-axial.png',
+    'coronal': 'spine-coronal.png'
   },
   'pelvis': {
-    'frontal': 'pelvis-frontal.svg'
+    'frontal': 'pelvis-frontal.png',
+    'axial': 'pelvis-axial.png',
+    'sagittal': 'pelvis-sagittal.png',
+    'coronal': 'pelvis-coronal.png',
+    'transverse': 'pelvis-axial.png'
+  },
+  'prostate': {
+    'axial': 'prostate-axial.png',
+    'sagittal': 'prostate-sagittal.png',
+    'coronal': 'prostate-coronal.png'
+  },
+  'breast': {
+    'bilateral': 'breast-bilateral.png',
+    'cc': 'breast-cc.png',
+    'mlo': 'breast-mlo.png',
+    'radial': 'breast-radial.png',
+    'antiradial': 'breast-antiradial.png',
+    'frontal': 'breast-bilateral.png'
+  },
+  'extremity': {
+    'anterior': 'extremity-generic.png',
+    'lateral': 'extremity-lateral.png',
+    'frontal': 'extremity-generic.png',
+    'axial': 'extremity-axial.png'
+  },
+  'knee': {
+    'anterior': 'knee-anterior.png',
+    'lateral': 'knee-lateral.png',
+    'ap': 'knee-anterior.png',
+    'sagittal': 'knee-sagittal.png',
+    'axial': 'knee-axial.png',
+    'coronal': 'knee-coronal.png'
+  },
+  'shoulder': {
+    'anterior': 'shoulder-anterior.png',
+    'lateral': 'shoulder-lateral.png',
+    'ap': 'shoulder-anterior.png',
+    'coronal': 'shoulder-coronal.png',
+    'sagittal': 'shoulder-sagittal.png',
+    'axial': 'shoulder-axial.png'
+  },
+  'hand': {
+    'pa': 'hand-pa.png',
+    'lateral': 'hand-lateral.png'
+  },
+  'aorta': {
+    'anterior': 'aorta-anterior.png',
+    'lateral': 'aorta-lateral.png'
+  },
+  'thyroid': {
+    'transverse': 'thyroid-transverse.png',
+    'longitudinal': 'thyroid-longitudinal.png'
+  },
+  'neck': {
+    'transverse': 'neck-transverse.png',
+    'longitudinal': 'neck-longitudinal.png'
+  },
+  'carotid': {
+    'longitudinal': 'carotid-longitudinal.png',
+    'transverse': 'carotid-transverse.png'
+  },
+  'wholebody': {
+    'anterior': 'wholebody-anterior.png',
+    'posterior': 'wholebody-posterior.png'
   },
   'fullbody': {
-    'neutral_frontal': 'fullbody-neutral_frontal.svg',
-    'female_frontal': 'fullbody-female_frontal.svg'
-  },
-  'extremities': {
-    'hand': 'extremities-hand.svg',
-    'shoulder': 'extremities-shoulder.svg',
-    'knee': 'extremities-knee.svg'
+    'anterior': 'wholebody-anterior.png',
+    'posterior': 'wholebody-posterior.png',
+    'neutral_frontal': 'wholebody-anterior.png',
+    'female_frontal': 'wholebody-anterior.png'
   }
 };
 
@@ -103,7 +275,44 @@ const AnatomicalDiagramPanel: React.FC = () => {
   const { state, actions } = useReporting();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  const [selectedBodyPart, setSelectedBodyPart] = useState<string>('Chest');
+  // Auto-detect body part from selected template's diagram module
+  const getTemplateBodyPart = () => {
+    if (state.selectedTemplate?.uiModules) {
+      const diagramModule = state.selectedTemplate.uiModules.find(m => m.type === 'diagram');
+      if (diagramModule?.config?.bodyPart) {
+        // Comprehensive body part mapping - template config → UI display name
+        const bodyPartMap: Record<string, string> = {
+          'breast': 'Breast',
+          'chest': 'Chest',
+          'spine': 'Spine',
+          'abdomen': 'Abdomen',
+          'pelvis': 'Pelvis',
+          'head': 'Head/Brain',
+          'brain': 'Brain',
+          'heart': 'Heart',
+          'liver': 'Liver',
+          'prostate': 'Prostate',
+          'knee': 'Knee',
+          'shoulder': 'Shoulder',
+          'extremity': 'Extremity',
+          'hand': 'Hand',
+          'aorta': 'Aorta',
+          'thyroid': 'Thyroid',
+          'neck': 'Neck',
+          'carotid': 'Carotid',
+          'wholebody': 'Whole Body',
+          'whole body': 'Whole Body'
+        };
+        return bodyPartMap[diagramModule.config.bodyPart.toLowerCase()] || 'Chest';
+      }
+    }
+    return 'Chest'; // Default fallback
+  };
+
+  const templateBodyPart = getTemplateBodyPart();
+  const isTemplateSpecific = state.selectedTemplate?.uiModules?.some(m => m.type === 'diagram');
+  
+  const [selectedBodyPart, setSelectedBodyPart] = useState<string>(templateBodyPart);
   const [selectedView, setSelectedView] = useState<string>('frontal');
   const [drawingTool, setDrawingTool] = useState<'point' | 'circle' | 'arrow' | 'freehand' | 'ruler' | 'angle'>('point');
   const [drawingColor, setDrawingColor] = useState<string>('#ff0000');
@@ -112,6 +321,14 @@ const AnatomicalDiagramPanel: React.FC = () => {
   const [measurements, setMeasurements] = useState<Array<{ id: string; type: string; value: number; points: any[]; label: string }>>([]);
   const [measurementPoints, setMeasurementPoints] = useState<Array<{ x: number; y: number }>>([]);
   const [diagramImage, setDiagramImage] = useState<HTMLImageElement | null>(null);
+  
+  // Update body part when template changes
+  useEffect(() => {
+    if (isTemplateSpecific) {
+      setSelectedBodyPart(templateBodyPart);
+      console.log('📊 AnatomicalDiagramPanel: Auto-set body part to', templateBodyPart, 'from template');
+    }
+  }, [state.selectedTemplate?.templateId, templateBodyPart, isTemplateSpecific]);
   
   // Get available views for current modality and body part
   const availableBodyParts = BODY_DIAGRAMS[state.patientInfo.modality as keyof typeof BODY_DIAGRAMS] || BODY_DIAGRAMS['CT'];
@@ -466,20 +683,33 @@ const AnatomicalDiagramPanel: React.FC = () => {
       
       {/* Body Part Selector */}
       <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-        <InputLabel>Body Part</InputLabel>
+        <InputLabel>Body Part {isTemplateSpecific && '(Template-Specific)'}</InputLabel>
         <Select
           value={selectedBodyPart}
-          label="Body Part"
+          label={`Body Part ${isTemplateSpecific ? '(Template-Specific)' : ''}`}
           onChange={(e) => {
             setSelectedBodyPart(e.target.value);
             setSelectedView(availableBodyParts[e.target.value as keyof typeof availableBodyParts]?.[0] || 'frontal');
           }}
+          disabled={isTemplateSpecific}
         >
           {Object.keys(availableBodyParts).map(part => (
-            <MenuItem key={part} value={part}>{part}</MenuItem>
+            <MenuItem key={part} value={part}>
+              {part}
+              {isTemplateSpecific && part === selectedBodyPart && ' ✓ (From Template)'}
+            </MenuItem>
           ))}
         </Select>
       </FormControl>
+      
+      {isTemplateSpecific && (
+        <Box sx={{ mb: 2, p: 1.5, bgcolor: 'info.light', borderRadius: 1 }}>
+          <Typography variant="caption" sx={{ color: 'info.dark', display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <InfoIcon fontSize="small" />
+            This template requires <strong style={{ margin: '0 4px' }}>{selectedBodyPart}</strong> diagram. Body part is locked.
+          </Typography>
+        </Box>
+      )}
       
       {/* View Selector */}
       <Box mb={2}>

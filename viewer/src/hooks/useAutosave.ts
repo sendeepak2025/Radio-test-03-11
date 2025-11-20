@@ -1,12 +1,13 @@
 /**
  * 💾 AUTOSAVE HOOK
- * Debounced autosave with version conflict handling, exponential backoff, and offline resilience
+ * Debounced autosave with version conflict handling, exponential backoff, offline resilience, and queue management
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { reportsApi } from '../services/ReportsApi';
 import type { StructuredReport, VersionConflict } from '../types/reporting';
 import { mapApiError, telemetryEmit, reportError } from '../utils/reportingUtils';
+import { offlineQueue } from '../lib/offlineQueue';
 
 interface UseAutosaveOptions {
   reportId?: string;
@@ -17,6 +18,7 @@ interface UseAutosaveOptions {
   onSaveSuccess?: (report: StructuredReport) => void;
   onSaveError?: (error: string) => void;
   onVersionConflict?: (conflict: VersionConflict) => void;
+  useOfflineQueue?: boolean; // Enable offline queue (default: true)
 }
 
 interface UseAutosaveReturn {
@@ -27,6 +29,7 @@ interface UseAutosaveReturn {
   hasUnsavedChanges: boolean;
   isOffline: boolean;
   retryCount: number;
+  queuedItemsCount: number;
 }
 
 // Exponential backoff configuration
@@ -54,7 +57,8 @@ export const useAutosave = ({
   interval = 3000,
   onSaveSuccess,
   onSaveError,
-  onVersionConflict
+  onVersionConflict,
+  useOfflineQueue: enableQueue = true
 }: UseAutosaveOptions): UseAutosaveReturn => {
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
@@ -62,6 +66,7 @@ export const useAutosave = ({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [retryCount, setRetryCount] = useState(0);
+  const [queuedItemsCount, setQueuedItemsCount] = useState(0);
 
   const timerRef = useRef<NodeJS.Timeout>();
   const dataRef = useRef(data);
@@ -79,6 +84,21 @@ export const useAutosave = ({
       setHasUnsavedChanges(true);
     }
   }, [data]);
+  
+  // Update queued items count
+  useEffect(() => {
+    if (!enableQueue || !reportId) return;
+    
+    const updateCount = async () => {
+      const items = await offlineQueue.getByReportId(reportId);
+      setQueuedItemsCount(items.length);
+    };
+    
+    updateCount();
+    const interval = setInterval(updateCount, 5000); // Update every 5s
+    
+    return () => clearInterval(interval);
+  }, [reportId, enableQueue]);
 
   // Online/offline event listeners
   useEffect(() => {
@@ -87,6 +107,11 @@ export const useAutosave = ({
       setIsOffline(false);
       setRetryCount(0);
       telemetryEmit('autosave.network.online', { reportId });
+      
+      // Process offline queue
+      if (enableQueue) {
+        offlineQueue.processQueue().catch(console.error);
+      }
       
       // Immediate save attempt when coming back online
       if (hasUnsavedChanges && !paused) {
@@ -115,7 +140,7 @@ export const useAutosave = ({
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [reportId, hasUnsavedChanges, paused]);
+  }, [reportId, hasUnsavedChanges, paused, enableQueue]);
 
   /**
    * Save function with exponential backoff
@@ -209,6 +234,25 @@ export const useAutosave = ({
           onSaveError(errorMsg);
         }
 
+        // Add to offline queue if enabled and reportId exists
+        if (enableQueue && reportId && !reportId.startsWith('temp-')) {
+          try {
+            await offlineQueue.add({
+              reportId,
+              action: reportId ? 'update' : 'create',
+              data: dataRef.current
+            });
+            console.log('💾 Added failed save to offline queue');
+            telemetryEmit('autosave.queued', { reportId });
+            
+            // Update queue count immediately
+            const items = await offlineQueue.getByReportId(reportId);
+            setQueuedItemsCount(items.length);
+          } catch (queueError) {
+            console.error('Failed to add to offline queue:', queueError);
+          }
+        }
+
         // Schedule retry with exponential backoff
         const backoffDelay = calculateBackoff(newRetryCount);
         console.log(`⏱️ Retrying autosave in ${backoffDelay}ms (attempt ${newRetryCount})`);
@@ -221,7 +265,7 @@ export const useAutosave = ({
       inFlightRef.current = false;
       setIsSaving(false);
     }
-  }, [reportId, enabled, isOffline, retryCount, onSaveSuccess, onSaveError, onVersionConflict]);
+  }, [reportId, enabled, isOffline, retryCount, enableQueue, onSaveSuccess, onSaveError, onVersionConflict]);
 
   /**
    * Debounced autosave effect
@@ -269,7 +313,8 @@ export const useAutosave = ({
     saveNow,
     hasUnsavedChanges,
     isOffline,
-    retryCount
+    retryCount,
+    queuedItemsCount
   };
 };
 

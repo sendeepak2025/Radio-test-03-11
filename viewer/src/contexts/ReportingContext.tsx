@@ -92,6 +92,7 @@ export interface ReportState {
   creationMode: 'manual' | 'ai-assisted';
   templateId?: string;
   templateName?: string;
+  selectedTemplate?: ReportTemplate;
   analysisId?: string;
   
   // UI state
@@ -119,6 +120,7 @@ export type ReportAction =
   | { type: 'SET_REPORT'; payload: Partial<ReportState> }
   | { type: 'UPDATE_SECTION'; payload: { key: string; value: string } }
   | { type: 'UPDATE_FIELD'; payload: { field: keyof ReportState; value: any } }
+  | { type: 'SET_SELECTED_TEMPLATE'; payload: ReportTemplate }
   | { type: 'ADD_FINDING'; payload: Finding }
   | { type: 'UPDATE_FINDING'; payload: { id: string; updates: Partial<Finding> } }
   | { type: 'DELETE_FINDING'; payload: string }
@@ -161,6 +163,14 @@ const reportReducer = (state: ReportState, action: ReportAction): ReportState =>
         ...state,
         [action.payload.field]: action.payload.value,
         hasUnsavedChanges: true
+      };
+      
+    case 'SET_SELECTED_TEMPLATE':
+      return {
+        ...state,
+        selectedTemplate: action.payload,
+        templateId: action.payload.templateId || action.payload._id,
+        templateName: action.payload.name
       };
       
     case 'ADD_FINDING':
@@ -236,6 +246,45 @@ const reportReducer = (state: ReportState, action: ReportAction): ReportState =>
 };
 
 // ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Extract module data from sections object
+ * Filters out uiModule_* keys and parses their JSON values
+ */
+const extractModuleData = (sections: Record<string, string>): Record<string, any> => {
+  const moduleData: Record<string, any> = {};
+  
+  Object.entries(sections).forEach(([key, value]) => {
+    if (key.startsWith('uiModule_')) {
+      const moduleId = key.replace('uiModule_', '');
+      try {
+        moduleData[moduleId] = JSON.parse(value as string);
+      } catch {
+        moduleData[moduleId] = value;
+      }
+    }
+  });
+  
+  return moduleData;
+};
+
+/**
+ * Convert moduleData to sections format
+ * Adds uiModule_* keys with stringified JSON values
+ */
+const moduleDataToSections = (moduleData: Record<string, any>): Record<string, string> => {
+  const sections: Record<string, string> = {};
+  
+  Object.entries(moduleData || {}).forEach(([moduleId, data]) => {
+    sections[`uiModule_${moduleId}`] = JSON.stringify(data);
+  });
+  
+  return sections;
+};
+
+// ============================================================================
 // CONTEXT
 // ============================================================================
 
@@ -253,6 +302,7 @@ interface ReportContextValue {
     addKeyImage: (image: CapturedImage) => void;
     updateSection: (key: string, value: string) => void;
     updateField: (field: keyof ReportState, value: any) => void;
+    setSelectedTemplate: (template: ReportTemplate) => void;
     setActivePanel: (panel: ReportState['activePanel']) => void;
   };
 }
@@ -267,6 +317,12 @@ export const ReportingProvider: React.FC<{
   children: React.ReactNode;
   initialData: Partial<ReportState>;
 }> = ({ children, initialData }) => {
+  // Merge sections with moduleData converted to sections format
+  const mergedSections = {
+    ...(initialData.sections || {}),
+    ...moduleDataToSections((initialData as any).moduleData || {})
+  };
+  
   const [state, dispatch] = useReducer(reportReducer, {
     studyInstanceUID: initialData.studyInstanceUID || '',
     patientInfo: initialData.patientInfo || {
@@ -274,7 +330,7 @@ export const ReportingProvider: React.FC<{
       patientName: 'Unknown',
       modality: 'CT'
     },
-    sections: initialData.sections || {},
+    sections: mergedSections,
     findings: initialData.findings || [],
     anatomicalMarkings: initialData.anatomicalMarkings || [],
     keyImages: initialData.keyImages || [],
@@ -352,6 +408,7 @@ export const ReportingProvider: React.FC<{
             findingsText: state.findingsText,
             impression: state.impression,
             recommendations: state.recommendations,
+            moduleData: extractModuleData(state.sections), // Extract module data from sections
             version: state.version
           })
         });
@@ -462,6 +519,10 @@ export const ReportingProvider: React.FC<{
     
     updateField: useCallback((field: keyof ReportState, value: any) => {
       dispatch({ type: 'UPDATE_FIELD', payload: { field, value } });
+    }, []),
+    
+    setSelectedTemplate: useCallback((template: ReportTemplate) => {
+      dispatch({ type: 'SET_SELECTED_TEMPLATE', payload: template });
     }, []),
     
     setActivePanel: useCallback((panel: ReportState['activePanel']) => {

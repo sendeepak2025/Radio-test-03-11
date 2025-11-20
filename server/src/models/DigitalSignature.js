@@ -54,7 +54,7 @@ const DigitalSignatureSchema = new mongoose.Schema({
   },
   
   // Signature Metadata
-  timestamp: { type: Date, default: Date.now, index: true },
+  timestamp: { type: Date, default: Date.now },
   meaning: {
     type: String,
     enum: ['author', 'reviewer', 'approver'],

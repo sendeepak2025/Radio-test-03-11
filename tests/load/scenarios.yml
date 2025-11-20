@@ -1,0 +1,292 @@
+/**
+ * Artillery Load Testing Scenarios
+ * Performance and load testing for radiology reporting system
+ */
+
+config:
+  target: 'http://localhost:5000'
+  phases:
+    # Warm-up phase
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm-up"
+    
+    # Ramp-up phase
+    - duration: 120
+      arrivalRate: 10
+      rampTo: 50
+      name: "Ramp-up to 50 users"
+    
+    # Sustained load
+    - duration: 300
+      arrivalRate: 50
+      name: "Sustained load - 50 users"
+    
+    # Spike test
+    - duration: 60
+      arrivalRate: 100
+      name: "Spike - 100 concurrent users"
+    
+    # Cool-down
+    - duration: 60
+      arrivalRate: 10
+      name: "Cool-down"
+  
+  payload:
+    path: "./test-users.csv"
+    fields:
+      - email
+      - password
+  
+  plugins:
+    metrics-by-endpoint:
+      stripQueryString: true
+  
+  defaults:
+    headers:
+      Content-Type: "application/json"
+  
+  ensure:
+    maxErrorRate: 1
+    p95: 200
+    p99: 500
+
+scenarios:
+  # Scenario 1: User Authentication
+  - name: "Authentication Flow"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+          expect:
+            - statusCode: 200
+            - contentType: json
+      
+      - get:
+          url: "/api/users/me"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+
+  # Scenario 2: Report Creation
+  - name: "Create Report"
+    weight: 30
+    flow:
+      # Login
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      # Get templates
+      - get:
+          url: "/api/templates"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$[0]._id"
+              as: "templateId"
+      
+      # Get worklist
+      - get:
+          url: "/api/worklist"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$[0]._id"
+              as: "worklistItemId"
+      
+      # Create report
+      - post:
+          url: "/api/reports"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            worklistItemId: "{{ worklistItemId }}"
+            templateId: "{{ templateId }}"
+            status: "draft"
+            content:
+              findings: "Test findings for load testing"
+              impression: "Normal study"
+          capture:
+            - json: "$._id"
+              as: "reportId"
+          expect:
+            - statusCode: 201
+      
+      # Update report
+      - put:
+          url: "/api/reports/{{ reportId }}"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            content:
+              findings: "Updated findings with additional details"
+              impression: "Updated impression"
+          expect:
+            - statusCode: 200
+      
+      # Get report
+      - get:
+          url: "/api/reports/{{ reportId }}"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+
+  # Scenario 3: Search Reports
+  - name: "Search Reports"
+    weight: 25
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      # Full-text search
+      - get:
+          url: "/api/search/reports?query=chest&limit=20"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+      
+      # Filter search
+      - get:
+          url: "/api/search/reports?modality=CT&status=signed&limit=20"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+
+  # Scenario 4: Dashboard & Analytics
+  - name: "Dashboard Access"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      # Get worklist
+      - get:
+          url: "/api/worklist?status=pending&limit=50"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+      
+      # Get my reports
+      - get:
+          url: "/api/reports?status=draft&limit=20"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+      
+      # Get analytics
+      - get:
+          url: "/api/analytics/productivity?period=week"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+
+  # Scenario 5: Real-time Collaboration
+  - name: "Collaboration Features"
+    weight: 10
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      # Get reports for peer review
+      - get:
+          url: "/api/reports?status=pending_review&limit=10"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$[0]._id"
+              as: "reportId"
+      
+      # Request peer review
+      - post:
+          url: "/api/collaboration/peer-review"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            reportId: "{{ reportId }}"
+            reviewerId: "507f1f77bcf86cd799439011"
+            priority: "normal"
+            note: "Please review this complex case"
+          expect:
+            - statusCode: 201
+      
+      # Get active collaborations
+      - get:
+          url: "/api/collaboration/active"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+
+  # Scenario 6: Template Management
+  - name: "Template Access"
+    weight: 5
+    flow:
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ email }}"
+            password: "{{ password }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      # Get all templates
+      - get:
+          url: "/api/templates"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+      
+      # Get specific modality templates
+      - get:
+          url: "/api/templates?modality=CT"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200
+      
+      # Search templates
+      - get:
+          url: "/api/search/templates?query=chest"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          expect:
+            - statusCode: 200

@@ -74,7 +74,8 @@ const ReportTemplateSchema = new mongoose.Schema({
     order: Number,
     required: Boolean,
     defaultContent: String,
-    placeholder: String
+    placeholder: String,
+    validationRules: mongoose.Schema.Types.Mixed
   }],
 
   // Template fields
@@ -83,6 +84,21 @@ const ReportTemplateSchema = new mongoose.Schema({
     of: mongoose.Schema.Types.Mixed,
     default: {}
   },
+
+  // Dynamic UI Modules Configuration
+  // Defines specialized widgets needed for this template (e.g. measurement tools, interactive diagrams)
+  uiModules: [{
+    id: { type: String, required: true }, // e.g., 'measurements', 'birads_calc', 'spine_checklist'
+    type: { 
+      type: String, 
+      required: true,
+      enum: ['measurements', 'checklist', 'diagram', 'calculator', 'score', 'findings_toggle'] 
+    },
+    title: String,
+    config: { type: mongoose.Schema.Types.Mixed }, // Flexible config: { units: 'mm', items: ['L1', 'L2'] }
+    order: { type: Number, default: 0 },
+    required: { type: Boolean, default: false }
+  }],
 
   // Pre-defined options for dropdowns
   fieldOptions: {
@@ -147,6 +163,12 @@ const ReportTemplateSchema = new mongoose.Schema({
     customizations: mongoose.Schema.Types.Mixed
   },
 
+  // Custom template fields
+  isCustom: {
+    type: Boolean,
+    default: false
+  },
+
   // Version control
   version: {
     type: String,
@@ -178,6 +200,8 @@ ReportTemplateSchema.index({ 'matchingCriteria.bodyParts': 1 });
 ReportTemplateSchema.index({ 'matchingCriteria.keywords': 1 });
 ReportTemplateSchema.index({ active: 1, priority: -1 });
 ReportTemplateSchema.index({ category: 1, active: 1 });
+ReportTemplateSchema.index({ isCustom: 1, createdBy: 1 }); // For custom templates
+ReportTemplateSchema.index({ createdBy: 1, createdAt: -1 }); // For user's templates
 
 // Virtual for average rating
 ReportTemplateSchema.virtual('averageRating').get(function() {

@@ -118,6 +118,22 @@ class SelectionSyncService {
       const studyInstanceUID = state.viewer.currentStudy?.studyInstanceUID || 'unknown'
       const frameIndex = state.viewer.viewports[state.viewer.activeViewportIndex]?.imageIndex || 0
 
+      // ✅ FIX: Get full item data from Redux store
+      let itemData = null
+      if (action === 'select') {
+        if (itemType === 'measurement') {
+          itemData = state.viewer.measurements.find(m => m.id === itemId)
+        } else if (itemType === 'annotation') {
+          itemData = state.viewer.annotations.find(a => a.id === itemId)
+        }
+        
+        if (!itemData) {
+          console.warn(`Item ${itemId} not found in store, skipping sync`)
+          this.pendingOperations.delete(operationId)
+          return
+        }
+      }
+
       // Make API call
       const response = await fetch('/api/viewer/selection', {
         method: 'POST',
@@ -131,6 +147,7 @@ class SelectionSyncService {
           timestamp: operation.timestamp,
           studyInstanceUID,
           frameIndex,
+          itemData, // ✅ FIX: Include full item data
         }),
       })
 

@@ -113,6 +113,13 @@ const HospitalSchema = new mongoose.Schema({
   }
 });
 
+// Performance indexes
+HospitalSchema.index({ hospitalId: 1 }, { unique: true });
+HospitalSchema.index({ status: 1 });
+HospitalSchema.index({ apiKey: 1 }, { sparse: true });
+HospitalSchema.index({ 'subscription.plan': 1, 'subscription.endDate': 1 });
+HospitalSchema.index({ createdAt: -1 });
+
 // Update timestamp on save
 HospitalSchema.pre('save', function(next) {
   this.updatedAt = new Date();

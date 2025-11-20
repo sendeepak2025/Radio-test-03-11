@@ -53,6 +53,72 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
   const [suggestedTemplate, setSuggestedTemplate] = useState<ReportTemplate | null>(null);
 
   // ============================================================================
+  // HELPER FUNCTIONS
+  // ============================================================================
+
+  /**
+   * Get primary modality from template (handles both old and new schema)
+   */
+  const getPrimaryModality = (template: ReportTemplate): string | undefined => {
+    // New schema: matchingCriteria.modalities array
+    if (template.matchingCriteria?.modalities?.length > 0) {
+      return template.matchingCriteria.modalities[0];
+    }
+    // Legacy schema: single modality field
+    return template.modality;
+  };
+
+  /**
+   * Check if template matches modality (handles array or single value)
+   */
+  const templateMatchesModality = (template: ReportTemplate, modality: string): boolean => {
+    if (template.matchingCriteria?.modalities) {
+      return template.matchingCriteria.modalities.includes(modality);
+    }
+    return template.modality === modality;
+  };
+
+  /**
+   * Get template ID (handles both old and new schema)
+   */
+  const getTemplateId = (template: ReportTemplate): string => {
+    return template.templateId || template.id || template._id || 'unknown';
+  };
+
+  /**
+   * Initialize sections from template structure
+   */
+  const initializeSectionsFromTemplate = (template: ReportTemplate): Record<string, string> => {
+    const sections: Record<string, string> = {};
+    
+    console.log('🔧 Initializing sections from template:', template.name);
+    console.log('   Template sections:', template.sections);
+    
+    if (!template.sections || !Array.isArray(template.sections)) {
+      console.warn('⚠️ Template has no sections array');
+      return sections;
+    }
+    
+    // Sort sections by order
+    const sortedSections = [...template.sections].sort((a, b) => 
+      (a.order || 0) - (b.order || 0)
+    );
+    
+    console.log('   Sorted sections:', sortedSections.length);
+    
+    // Initialize each section with placeholder or default content
+    sortedSections.forEach(section => {
+      const sectionId = section.id;
+      const content = section.defaultContent || section.placeholder || '';
+      sections[sectionId] = content;
+      console.log(`   - ${sectionId}: ${content.substring(0, 50)}...`);
+    });
+    
+    console.log('✅ Initialized sections:', Object.keys(sections));
+    return sections;
+  };
+
+  // ============================================================================
   // LOAD TEMPLATES
   // ============================================================================
 
@@ -84,93 +150,13 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
           return;
         }
       } catch (apiErr) {
-        console.warn('⚠️ API failed, using mock templates:', apiErr);
+        console.warn('⚠️ API failed:', apiErr);
+        setError('Failed to load templates from API');
+        setTemplates([]);
       }
 
-      // Fallback to mock templates for testing
-      console.log('📋 Using mock templates for testing');
-      const mockTemplates: ReportTemplate[] = [
-        {
-          id: 'chest-ct-template',
-          name: 'Chest CT',
-          description: 'Standard chest CT report template',
-          modality: 'CT',
-          category: 'Chest',
-          sections: [
-            { id: 'technique', name: 'Technique', required: true },
-            { id: 'findings', name: 'Findings', required: true },
-            { id: 'impression', name: 'Impression', required: true }
-          ],
-          version: '1.0',
-          isActive: true
-        },
-        {
-          id: 'head-ct-template',
-          name: 'Head CT',
-          description: 'Standard head/brain CT report template',
-          modality: 'CT',
-          category: 'Head/Brain',
-          sections: [
-            { id: 'technique', name: 'Technique', required: true },
-            { id: 'findings', name: 'Findings', required: true },
-            { id: 'impression', name: 'Impression', required: true }
-          ],
-          version: '1.0',
-          isActive: true
-        },
-        {
-          id: 'abdomen-ct-template',
-          name: 'Abdomen/Pelvis CT',
-          description: 'Standard abdomen and pelvis CT report template',
-          modality: 'CT',
-          category: 'Abdomen/Pelvis',
-          sections: [
-            { id: 'technique', name: 'Technique', required: true },
-            { id: 'findings', name: 'Findings', required: true },
-            { id: 'impression', name: 'Impression', required: true }
-          ],
-          version: '1.0',
-          isActive: true
-        },
-        {
-          id: 'chest-xray-template',
-          name: 'Chest X-Ray',
-          description: 'Standard chest radiograph report template',
-          modality: 'XA',
-          category: 'Chest',
-          sections: [
-            { id: 'technique', name: 'Technique', required: true },
-            { id: 'findings', name: 'Findings', required: true },
-            { id: 'impression', name: 'Impression', required: true }
-          ],
-          version: '1.0',
-          isActive: true
-        },
-        {
-          id: 'mri-brain-template',
-          name: 'MRI Brain',
-          description: 'Standard brain MRI report template',
-          modality: 'MRI',
-          category: 'Head/Brain',
-          sections: [
-            { id: 'technique', name: 'Technique', required: true },
-            { id: 'findings', name: 'Findings', required: true },
-            { id: 'impression', name: 'Impression', required: true }
-          ],
-          version: '1.0',
-          isActive: true
-        }
-      ];
-      
-      setTemplates(mockTemplates);
-      setError(null); // Clear any error since we have mock templates
-      
-      // Auto-suggest template if we have modality
-      if (patientInfo?.modality) {
-        suggestBestTemplate();
-      }
-      
-      telemetryEmit('reporting.templates.loaded', { count: mockTemplates.length, source: 'mock' });
+      // No fallback templates - real backend required
+      console.log('📋 No templates loaded. Please ensure backend is running.');
       
     } catch (err: any) {
       console.error('❌ Error loading templates:', err);
@@ -211,12 +197,12 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
     let score = 0;
     
     // +5 exact modality match
-    if (context.modality && tpl.modality === context.modality) {
+    if (context.modality && templateMatchesModality(tpl, context.modality)) {
       score += 5;
     }
     
     // -3 if modality mismatches
-    if (context.modality && tpl.modality !== context.modality) {
+    if (context.modality && !templateMatchesModality(tpl, context.modality)) {
       score -= 3;
     }
     
@@ -302,25 +288,28 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
   // ✅ TEMPLATE FIX: Handle template selection with definitive state
   const handleTemplateClick = async (template: ReportTemplate) => {
     try {
-      setCreating(template.id);
+      const templateId = getTemplateId(template);
+      setCreating(templateId);
       setError(null);
 
-      console.log('📝 Creating draft with template:', template.id);
+      console.log('📝 Creating draft with template:', templateId);
+      console.log('   Template Name:', template.name);
       console.log('   Study UID:', studyUID);
       console.log('   Patient Info:', patientInfo);
 
-      // ✅ TEMPLATE FIX: Capture template version at selection
-      const templateVersion = (template as any).version || template.templateVersion || '1.0';
+      // ✅ TEMPLATE FIX: Initialize sections from template structure
+      const initialSections = initializeSectionsFromTemplate(template);
+      console.log('   Initialized sections:', Object.keys(initialSections));
+      console.log('   Section details:', initialSections);
       
-      const response = await reportsApi.upsert({
+      const reportData = {
         studyInstanceUID: studyUID,
         patientID: patientInfo?.patientID || 'Unknown',
         patientName: patientInfo?.patientName,
         modality: patientInfo?.modality,
-        templateId: template.id,
+        templateId: templateId,
         templateName: template.name,
-        templateVersion, // ✅ TEMPLATE FIX: Store template version
-        sections: {},
+        sections: initialSections, // ✅ TEMPLATE FIX: Pre-filled sections
         findings: [],
         measurements: [],
         annotations: [],
@@ -328,7 +317,11 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
         reportStatus: 'draft',
         version: 1,
         creationMode: 'manual'
-      });
+      };
+      
+      console.log('📤 Sending report data:', reportData);
+      
+      const response = await reportsApi.upsert(reportData);
 
       const createdReport = response.report || response.data;
       
@@ -341,17 +334,19 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
 
       telemetryEmit('reporting.draft.created', {
         reportId: createdReport.reportId,
-        templateId: template.id
+        templateId: templateId
       });
 
-      // ✅ TEMPLATE FIX: Emit definitive selection event with full template data
-      onTemplateSelect(template.id, createdReport.reportId);
+      // Navigate with templateId in URL
+      onTemplateSelect(templateId, createdReport.reportId);
 
     } catch (err: any) {
       console.error('❌ Error creating draft:', err);
       console.error('   URL: POST /api/reports');
       console.error('   Status:', err.response?.status);
+      console.error('   Response:', err.response?.data);
       console.error('   Message:', err.message);
+      console.error('   Stack:', err.stack);
       
       const errorMsg = err.message || 'Failed to create draft report';
       setError(`${errorMsg} — Check console for details`);
@@ -367,7 +362,7 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
 
   const filteredTemplates = templates.filter(template => {
     // Modality filter
-    if (modalityFilter !== 'all' && template.modality !== modalityFilter) {
+    if (modalityFilter !== 'all' && !templateMatchesModality(template, modalityFilter)) {
       return false;
     }
 
@@ -385,7 +380,11 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
   });
 
   // Get unique modalities for filter
-  const modalities = ['all', ...Array.from(new Set(templates.map(t => t.modality)))];
+  const modalities = ['all', ...Array.from(new Set(
+    templates.flatMap(t => 
+      t.matchingCriteria?.modalities || (t.modality ? [t.modality] : [])
+    )
+  ))].filter(Boolean);
 
   // ============================================================================
   // RENDER
@@ -524,14 +523,14 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
       ) : (
         <Grid container spacing={2}>
           {filteredTemplates.map(template => (
-            <Grid item xs={12} sm={6} md={4} key={template.id}>
+            <Grid item xs={12} sm={6} md={4} key={getTemplateId(template)}>
               <Card
                 sx={{
-                  cursor: creating === template.id ? 'wait' : 'pointer',
-                  opacity: creating === template.id ? 0.6 : 1,
+                  cursor: creating === getTemplateId(template) ? 'wait' : 'pointer',
+                  opacity: creating === getTemplateId(template) ? 0.6 : 1,
                   '&:hover': {
                     boxShadow: 6,
-                    transform: creating === template.id ? 'none' : 'translateY(-2px)'
+                    transform: creating === getTemplateId(template) ? 'none' : 'translateY(-2px)'
                   },
                   transition: 'all 0.2s'
                 }}
@@ -542,7 +541,9 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
                     <Typography variant="h6" component="div">
                       {template.name}
                     </Typography>
-                    <Chip label={template.modality} size="small" color="primary" />
+                    {getPrimaryModality(template) && (
+                      <Chip label={getPrimaryModality(template)} size="small" color="primary" />
+                    )}
                   </Box>
 
                   {template.category && (
@@ -563,7 +564,7 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
                     </Typography>
                   )}
 
-                  {creating === template.id && (
+                  {creating === getTemplateId(template) && (
                     <Box display="flex" alignItems="center" gap={1} mt={2}>
                       <CircularProgress size={16} />
                       <Typography variant="caption">Creating draft...</Typography>

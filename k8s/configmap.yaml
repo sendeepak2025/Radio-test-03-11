@@ -1,0 +1,21 @@
+# Kubernetes ConfigMap - Application Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: radiology-config
+  namespace: radiology
+  labels:
+    app: radiology-reporting
+data:
+  # Backend configuration
+  NODE_ENV: "production"
+  PORT: "5000"
+  MONGO_DATABASE: "radiology"
+  REDIS_PORT: "6379"
+  
+  # Frontend configuration
+  VITE_API_URL: "http://backend-service:5000"
+  
+  # Application URLs
+  FRONTEND_URL: "https://radiology.yourdomain.com"
+  BACKEND_URL: "https://api.radiology.yourdomain.com"

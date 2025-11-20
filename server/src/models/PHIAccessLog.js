@@ -9,8 +9,7 @@ const phiAccessLogSchema = new mongoose.Schema({
   timestamp: {
     type: Date,
     required: true,
-    default: Date.now,
-    index: true
+    default: Date.now
   },
   eventType: {
     type: String,

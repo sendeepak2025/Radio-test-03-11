@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const InstanceSchema = new mongoose.Schema({
   // DICOM Identifiers
-  studyInstanceUID: { type: String, index: true, required: true },
+  studyInstanceUID: { type: String, required: true },
   seriesInstanceUID: { type: String, index: true, required: true },
   sopInstanceUID: { type: String, unique: true, index: true, required: true },
   instanceNumber: { type: Number, default: 0 },

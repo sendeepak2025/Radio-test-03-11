@@ -1,0 +1,8 @@
+# Namespace for Radiology Application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: radiology
+  labels:
+    name: radiology
+    environment: production

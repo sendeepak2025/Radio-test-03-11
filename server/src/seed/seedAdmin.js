@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs')
+const crypto = require('crypto')
 const User = require('../models/User')
 const Hospital = require('../models/Hospital')
 
@@ -41,25 +42,17 @@ async function seedAdmin() {
           zipCode: '12345',
           country: 'USA'
         },
-        contactInfo: {
-          phone: '+1-555-0100',
-          email: 'contact@generalhospital.com',
-          website: 'https://generalhospital.com'
-        },
+        contactEmail: 'contact@generalhospital.com',
+        contactPhone: '+1-555-0100',
         status: 'active',
         subscription: {
           plan: 'enterprise',
           startDate: new Date(),
           maxUsers: 100,
-          maxStorage: 1000000000000, // 1TB
+          maxStorage: 1000,
           currentStorage: 0
         },
-        features: {
-          aiAnalysis: true,
-          advancedReporting: true,
-          multiSiteAccess: false,
-          customBranding: true
-        }
+        apiKey: crypto.randomBytes(32).toString('hex')
       })
       console.log(`✅ Hospital created: ${hospital.name} (${hospital.hospitalId})`)
     } else {

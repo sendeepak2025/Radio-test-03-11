@@ -19,6 +19,12 @@ import {
   Divider,
   Snackbar,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Button,
 } from '@mui/material'
 import {
   Search as SearchIcon,
@@ -281,6 +287,8 @@ export const AnnotationManagerPanel: React.FC<AnnotationManagerPanelProps> = ({
   const [toastOpen, setToastOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState('')
   const [toastSeverity, setToastSeverity] = useState<'success' | 'error'>('success')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [annotationToDelete, setAnnotationToDelete] = useState<string | null>(null)
 
   // Ref for file input
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -371,11 +379,22 @@ export const AnnotationManagerPanel: React.FC<AnnotationManagerPanelProps> = ({
   // Handle delete
   const handleDelete = (annotationId: string, event: React.MouseEvent) => {
     event.stopPropagation()
-    
-    // TODO: Show confirmation dialog
-    if (window.confirm('Are you sure you want to delete this annotation?')) {
-      dispatch(removeAnnotation(annotationId))
+    setAnnotationToDelete(annotationId)
+    setDeleteDialogOpen(true)
+  }
+
+  const confirmDelete = () => {
+    if (annotationToDelete) {
+      dispatch(removeAnnotation(annotationToDelete))
+      showToast('Annotation deleted', 'success')
     }
+    setDeleteDialogOpen(false)
+    setAnnotationToDelete(null)
+  }
+
+  const cancelDelete = () => {
+    setDeleteDialogOpen(false)
+    setAnnotationToDelete(null)
   }
 
   // Handle start editing name
@@ -654,6 +673,29 @@ export const AnnotationManagerPanel: React.FC<AnnotationManagerPanelProps> = ({
           {toastMessage}
         </Alert>
       </Snackbar>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={cancelDelete}
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-description"
+      >
+        <DialogTitle id="delete-dialog-title">
+          Delete Annotation
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="delete-dialog-description">
+            Are you sure you want to delete this annotation? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={cancelDelete}>Cancel</Button>
+          <Button onClick={confirmDelete} color="error" variant="contained">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   )
 }

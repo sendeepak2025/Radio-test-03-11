@@ -167,21 +167,111 @@ export interface StructuredReport {
 }
 
 export interface ReportTemplate {
-  id: string;
+  // MongoDB fields
+  _id?: string;
+  templateId: string;
+  id?: string; // For backward compatibility
+  
+  // Basic info
   name: string;
-  category: string;
-  modality: string;
   description?: string;
+  category: string;
+  
+  // Matching criteria
+  matchingCriteria: {
+    modalities: string[];
+    bodyParts: string[];
+    keywords: string[];
+    procedureTypes: string[];
+  };
+  
+  // Matching weights
+  matchingWeights?: {
+    modalityWeight: number;
+    bodyPartWeight: number;
+    keywordWeight: number;
+    procedureTypeWeight: number;
+  };
+  
+  // Template structure
   sections: Array<{
     id: string;
-    label: string;
-    type: 'text' | 'textarea' | 'select' | 'multiselect';
+    title: string;
+    order: number;
     required?: boolean;
+    defaultContent?: string;
+    placeholder?: string;
+    // Legacy fields for backward compatibility
+    label?: string;
+    name?: string;
+    type?: 'text' | 'textarea' | 'select' | 'multiselect';
     defaultValue?: string;
     options?: string[];
-    placeholder?: string;
   }>;
+  
+  // UI Modules - Specialized widgets for different report types
+  uiModules?: Array<{
+    id: string;
+    type: 'measurements' | 'checklist' | 'diagram' | 'calculator' | 'score' | 'findings_toggle';
+    title?: string;
+    config?: any;
+    order?: number;
+    required?: boolean;
+  }>;
+  
+  // Template fields
+  fields?: Record<string, any>;
+  fieldOptions?: Record<string, string[]>;
+  
+  // AI integration
+  aiIntegration?: {
+    enabled: boolean;
+    autoFillFields: string[];
+    suggestedFindings: string[];
+  };
+  
+  // Metadata
+  priority?: number;
   active?: boolean;
+  isDefault?: boolean;
+  
+  // Usage stats
+  usageStats?: {
+    timesUsed: number;
+    lastUsed?: Date;
+    averageCompletionTime?: number;
+    userRatings?: Array<{
+      userId: string;
+      rating: number;
+      comment?: string;
+      date: Date;
+    }>;
+  };
+  
+  // Customization
+  customizable?: boolean;
+  hospitalSpecific?: {
+    hospitalId: string;
+    customizations: any;
+  };
+  
+  // Version control
+  version?: string;
+  changelog?: Array<{
+    version: string;
+    changes: string;
+    date: Date;
+    author: string;
+  }>;
+  
+  // Audit
+  createdBy?: string;
+  updatedBy?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  
+  // Backward compatibility - deprecated fields
+  modality?: string; // Use matchingCriteria.modalities instead
 }
 
 export interface TemplateMatchResult {

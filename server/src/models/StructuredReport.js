@@ -7,7 +7,7 @@ const mongoose = require('mongoose');
  */
 const StructuredReportSchema = new mongoose.Schema({
   // Study and Patient References
-  studyInstanceUID: { type: String, required: true, index: true },
+  studyInstanceUID: { type: String, required: true },
   patientID: { type: String, required: true, index: true },
   patientName: String,
   patientBirthDate: String,

@@ -46,6 +46,7 @@ import { logout } from '../../store/slices/authSlice'
 import { Calendar1Icon } from 'lucide-react'
 import { NotificationBell } from '../notifications/NotificationBell'
 import { useAuth } from '../../hooks/useAuth'
+import MobileNavigation from './MobileNavigation'
 
 const drawerWidth = 280
 
@@ -424,13 +425,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
+          p: { xs: 2, sm: 3 },
+          pb: { xs: 10, md: 3 },
           width: { sm: `calc(100% - ${drawerWidth}px)` },
           mt: 8,
         }}
       >
         {children}
       </Box>
+      
+      {/* Mobile Bottom Navigation */}
+      <MobileNavigation />
     </Box>
   )
 }

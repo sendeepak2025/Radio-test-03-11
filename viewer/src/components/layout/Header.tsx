@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   AppBar,
   Toolbar,
@@ -20,19 +21,23 @@ import {
   Settings,
   Logout,
   Person,
+  Feedback,
 } from '@mui/icons-material'
 import { useAuth } from '../../hooks/useAuth'
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
 import { toggleSidebar, selectUnreadNotifications } from '../../store/slices/uiSlice'
+import FeedbackDialog from '../feedback/FeedbackDialog'
 
 export const Header: React.FC = () => {
   const theme = useTheme()
   const dispatch = useAppDispatch()
+  const navigate = useNavigate()
   const { user, logout } = useAuth()
   const unreadNotifications = useAppSelector(selectUnreadNotifications)
   
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [notificationsAnchorEl, setNotificationsAnchorEl] = useState<null | HTMLElement>(null)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget)
@@ -57,6 +62,16 @@ export const Header: React.FC = () => {
 
   const handleToggleSidebar = () => {
     dispatch(toggleSidebar())
+  }
+
+  const handleNavigateToProfile = () => {
+    handleMenuClose()
+    navigate('/app/profile')
+  }
+
+  const handleNavigateToSettings = () => {
+    handleMenuClose()
+    navigate('/app/settings')
   }
 
   return (
@@ -95,6 +110,17 @@ export const Header: React.FC = () => {
 
         {/* Right side actions */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Feedback button */}
+          <Tooltip title="Send Feedback">
+            <IconButton
+              color="inherit"
+              onClick={() => setFeedbackOpen(true)}
+              sx={{ color: theme.palette.text.primary }}
+            >
+              <Feedback />
+            </IconButton>
+          </Tooltip>
+
           {/* Notifications */}
           <Tooltip title="Notifications">
             <IconButton
@@ -161,12 +187,12 @@ export const Header: React.FC = () => {
           
           <Divider />
           
-          <MenuItem onClick={handleMenuClose}>
+          <MenuItem onClick={handleNavigateToProfile}>
             <Person fontSize="small" sx={{ mr: 1 }} />
             Profile
           </MenuItem>
           
-          <MenuItem onClick={handleMenuClose}>
+          <MenuItem onClick={handleNavigateToSettings}>
             <Settings fontSize="small" sx={{ mr: 1 }} />
             Settings
           </MenuItem>
@@ -233,6 +259,9 @@ export const Header: React.FC = () => {
           )}
         </Menu>
       </Toolbar>
+
+      {/* Feedback Dialog */}
+      <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </AppBar>
   )
 }

@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const ReportSchema = new mongoose.Schema({
   // Study Reference
-  studyInstanceUID: { type: String, required: true, index: true },
+  studyInstanceUID: { type: String, required: true },
   patientID: { type: String, required: true, index: true },
   patientName: String,
   patientBirthDate: String,
@@ -88,6 +88,25 @@ const ReportSchema = new mongoose.Schema({
     clinicalCode: String,
     isKeyImage: Boolean,
     frameIndex: Number,
+    timestamp: { type: Date, default: Date.now }
+  }],
+  
+  // UI Module Data (for template-specific modules like diagrams, calculators, checklists)
+  moduleData: mongoose.Schema.Types.Mixed, // Stores data from template UI modules
+  
+  // Anatomical Markings (from diagram modules)
+  anatomicalMarkings: [{
+    moduleId: String, // ID of the diagram module (e.g., 'breast_diagram', 'spine_diagram')
+    bodyPart: String, // 'breast', 'spine', 'chest', etc.
+    view: String, // 'frontal', 'lateral', 'bilateral', etc.
+    markings: [{
+      id: String,
+      type: { type: String, enum: ['point', 'circle', 'arrow', 'freehand', 'ruler', 'angle'] },
+      points: [{ x: Number, y: Number }],
+      color: String,
+      label: String,
+      timestamp: Date
+    }],
     timestamp: { type: Date, default: Date.now }
   }],
   

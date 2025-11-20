@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const WorklistItemSchema = new mongoose.Schema({
   // Study Reference
-  studyInstanceUID: { type: String, required: true, index: true },
+  studyInstanceUID: { type: String, required: true },
   patientID: { type: String, required: true, index: true },
   
   // Workflow Status

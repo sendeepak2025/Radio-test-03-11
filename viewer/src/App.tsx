@@ -36,6 +36,8 @@ import AuditLogPage from './pages/audit/AuditLogPage'
 import AnonymizationPage from './pages/admin/AnonymizationPage'
 import IPWhitelistPage from './pages/admin/IPWhitelistPage'
 import DataRetentionPage from './pages/admin/DataRetentionPage'
+import TemplatesPage from './pages/admin/TemplatesPage'
+import FeedbackManagementPage from './pages/admin/FeedbackManagementPage'
 
 // Simple pages without complex dependencies
 const LoginPage = React.lazy(() => import('./pages/auth/LoginPage'))
@@ -469,11 +471,33 @@ if (refreshToken) {
             />
 
             <Route
+              path="/app/admin/templates"
+              element={
+                <SimpleProtectedRoute>
+                  <MainLayout>
+                    <TemplatesPage />
+                  </MainLayout>
+                </SimpleProtectedRoute>
+              }
+            />
+
+            <Route
               path="/app/admin/data-retention"
               element={
                 <SimpleProtectedRoute>
                   <MainLayout>
                     <DataRetentionPage />
+                  </MainLayout>
+                </SimpleProtectedRoute>
+              }
+            />
+
+            <Route
+              path="/app/admin/feedback"
+              element={
+                <SimpleProtectedRoute>
+                  <MainLayout>
+                    <FeedbackManagementPage />
                   </MainLayout>
                 </SimpleProtectedRoute>
               }
