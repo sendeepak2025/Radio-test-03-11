@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf'
+import { ScreenshotService } from './screenshotService'
 
 export interface ExportOptions {
   format: 'pdf' | 'docx' | 'dicom-sr' | 'hl7' | 'txt'
@@ -276,7 +277,27 @@ class ReportExportService {
             // Add image
             const imgWidth = 160
             const imgHeight = 120
-            doc.addImage(image.dataUrl, 'PNG', margin, yPosition, imgWidth, imgHeight)
+            
+            // Get full URL from filename or data URL
+            const fullImageUrl = ScreenshotService.getImageUrl(image.dataUrl);
+            
+            // If it's a server URL, fetch and convert to data URL for PDF embedding
+            let imageData = fullImageUrl;
+            if (fullImageUrl.startsWith('http://') || fullImageUrl.startsWith('https://')) {
+              try {
+                const response = await fetch(fullImageUrl);
+                const blob = await response.blob();
+                imageData = await new Promise<string>((resolve) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => resolve(reader.result as string);
+                  reader.readAsDataURL(blob);
+                });
+              } catch (fetchError) {
+                console.warn('Failed to fetch server image, using URL directly:', fetchError);
+              }
+            }
+            
+            doc.addImage(imageData, 'PNG', margin, yPosition, imgWidth
             
             // Add caption below image
             doc.setFontSize(9)

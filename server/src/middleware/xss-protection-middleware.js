@@ -137,7 +137,7 @@ function xssProtectionMiddleware(options = {}) {
       'notes',
       'comments'
     ],
-    excludePaths = ['/health', '/metrics']
+    excludePaths = ['/health', '/metrics',"/uploads"]
   } = options;
 
   return (req, res, next) => {
@@ -185,7 +185,7 @@ function setSecurityHeaders(req, res, next) {
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Allow inline scripts for React
       "style-src 'self' 'unsafe-inline'", // Allow inline styles
-      "img-src 'self' data: blob: https:",
+      "img-src 'self' data: blob: http://localhost:* http://127.0.0.1:* https:;",
       "font-src 'self' data:",
       "connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*",
       "frame-ancestors 'none'",

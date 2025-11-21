@@ -15,7 +15,8 @@ export interface ScreenshotOptions {
 
 export interface CapturedImage {
   id: string;
-  dataUrl: string;
+  dataUrl: string; // Can be base64 or server URL
+  serverUrl?: string; // URL from server after upload
   caption: string;
   timestamp: Date;
   metadata: {
@@ -32,6 +33,55 @@ export interface CapturedImage {
 
 export class ScreenshotService {
   private capturedImages: CapturedImage[] = [];
+  private static readonly SERVER_BASE_URL = '/uploads/snapshots/';
+
+  /**
+   * Get full URL from filename or return data URL as-is
+   */
+  // public static getImageUrl(dataUrl: string): string {
+  //   // If it's a base64 data URL, return as-is
+  //   if (dataUrl.startsWith('data:')) {
+  //     return dataUrl;
+  //   }
+  //   // If it's already a full URL, return as-is
+  //   if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+  //     return dataUrl;
+  //   }
+  //   // If it starts with /, it's already a path
+  //   if (dataUrl.startsWith('/')) {
+  //     return dataUrl;
+  //   }
+  //   // Otherwise, it's a filename - construct relative URL (will be proxied)
+  //   return `${ScreenshotService.SERVER_BASE_URL}${dataUrl}`;
+  // }
+
+
+
+  public static getImageUrl(dataUrl: string): string {
+  // 1. Base64 data URL → return as-is
+  if (dataUrl.startsWith('data:')) {
+    return dataUrl;
+  }
+
+  // 2. Full URLs → return as-is
+  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+    return dataUrl;
+  }
+
+  // 3. If path already begins with "/uploads/"
+  if (dataUrl.startsWith('/uploads/')) {
+    return `http://localhost:8001${dataUrl}`;
+  }
+
+  // 4. If starts with "/", return full absolute
+  if (dataUrl.startsWith('/')) {
+    return `http://localhost:8001${dataUrl}`;
+  }
+
+  // 5. DEFAULT: Only filename (your case)
+  // FIX: ensure NO double slash
+  return `http://localhost:8001/uploads/snapshots/${dataUrl}`;
+}
 
   /**
    * Capture canvas as image
@@ -110,23 +160,106 @@ export class ScreenshotService {
   }
 
   /**
+   * Convert data URL to blob
+   */
+  private dataURLtoBlob(dataUrl: string): Blob {
+    const arr = dataUrl.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  }
+
+  /**
+   * Upload image to server and return filename only
+   */
+  private async uploadImageToServer(dataUrl: string, filename: string): Promise<string | null> {
+    try {
+      // Convert data URL to blob without using fetch (CSP compliant)
+      const blob = this.dataURLtoBlob(dataUrl);
+      
+      // Create form data
+      const formData = new FormData();
+      formData.append('file', blob, filename);
+      
+      // Upload to server (using relative URL for proxy)
+      const uploadResponse = await fetch('/upload/', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!uploadResponse.ok) {
+        throw new Error(`Upload failed: ${uploadResponse.statusText}`);
+      }
+      
+      const result = await uploadResponse.json();
+      console.log('✅ Image uploaded to server:', result.filename);
+      // Return only the filename, not the full URL
+      return result.filename;
+    } catch (error) {
+      console.error('❌ Failed to upload image to server:', error);
+      return null;
+    }
+  }
+
+  /**
    * Save captured image with metadata
    */
-  saveCapturedImage(
+  async saveCapturedImage(
     dataUrl: string,
     caption: string,
     metadata: CapturedImage['metadata']
-  ): CapturedImage {
+  ): Promise<CapturedImage> {
+    // Compress image if it's too large (reduce quality for storage)
+    let finalDataUrl = dataUrl;
+    const sizeInKB = Math.round(dataUrl.length / 1024);
+    
+    if (sizeInKB > 200) {
+      console.log(`⚠️ Image is large (${sizeInKB}KB), compressing...`);
+      try {
+        // Re-compress with lower quality
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise((resolve) => { img.onload = resolve; });
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          finalDataUrl = canvas.toDataURL('image/jpeg', 0.7); // Use JPEG with 70% quality
+          const newSizeInKB = Math.round(finalDataUrl.length / 1024);
+          console.log(`✅ Compressed: ${sizeInKB}KB → ${newSizeInKB}KB`);
+        }
+      } catch (err) {
+        console.warn('Failed to compress image, using original:', err);
+      }
+    }
+    
+    // Generate unique filename
+    const timestamp = Date.now();
+    const randomId = Math.random().toString(36).substr(2, 9);
+    const filename = `snapshot-${timestamp}-${randomId}.png`;
+    
+    // Upload to server and get filename
+    const serverFilename = await this.uploadImageToServer(finalDataUrl, filename);
+    
     const image: CapturedImage = {
-      id: `img-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      dataUrl,
+      id: `img-${timestamp}-${randomId}`,
+      dataUrl: serverFilename || finalDataUrl, // Store filename if upload succeeded, otherwise fallback to base64
+      serverUrl: serverFilename || undefined,
       caption,
       timestamp: new Date(),
       metadata
     };
 
     this.capturedImages.push(image);
-    console.log('💾 Image saved:', image.id, caption);
+    console.log('💾 Image saved:', image.id, caption, serverFilename ? `(Server: ${serverFilename})` : `(${Math.round(finalDataUrl.length / 1024)}KB)`);
 
     return image;
   }

@@ -4332,7 +4332,7 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
   }, [measurements, annotations, currentStudyId, metadata, currentReportId])
 
   // Capture snapshot of current frame with annotations for report
-  const handleCaptureSnapshot = useCallback(() => {
+  const handleCaptureSnapshot = useCallback(async () => {
     const canvas = canvasRef.current
     if (!canvas) {
       alert('⚠️ Canvas not available')
@@ -4350,7 +4350,7 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
       })
 
       // Save with metadata for report embedding
-      const capturedImage = screenshotService.saveCapturedImage(
+      const capturedImage = await screenshotService.saveCapturedImage(
         dataUrl,
         `Frame ${currentFrameIndex + 1}${metadata?.study_info?.description ? ` - ${metadata.study_info.description}` : ''}`,
         {
@@ -5395,7 +5395,7 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
             <Tooltip title="Capture Screenshot for Report">
               <Button
                 startIcon={<CameraIcon />}
-                onClick={() => {
+                onClick={async () => {
                   const canvas = canvasRef.current;
                   if (!canvas) return;
                   
@@ -5407,7 +5407,7 @@ export const MedicalImageViewer: React.FC<MedicalImageViewerProps> = ({
                       format: 'png'
                     });
                     
-                    screenshotService.saveCapturedImage(
+                    await screenshotService.saveCapturedImage(
                       dataUrl,
                       `Frame ${currentFrameIndex + 1}`,
                       {

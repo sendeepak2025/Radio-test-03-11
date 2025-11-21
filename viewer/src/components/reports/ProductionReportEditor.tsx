@@ -104,7 +104,7 @@ import SignatureCanvas from './SignatureCanvas';
 import TemplateConfirmationDialog from './TemplateConfirmationDialog';
 import { REPORT_TEMPLATES, type ReportTemplate } from '../../data/reportTemplates';
 import { matchTemplate, type TemplateMatchResult } from '../../utils/templateMatcher';
-import { screenshotService, type CapturedImage } from '../../services/screenshotService';
+import { screenshotService, ScreenshotService, type CapturedImage } from '../../services/screenshotService';
 
 // Medical macros/snippets for quick insertion
 const MEDICAL_MACROS = {
@@ -453,7 +453,7 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
   }, []);
 
   // Image reordering
-  const handleMoveImage = (fromIndex: number, toIndex: number) => {
+  const handleMoveImage = async (fromIndex: number, toIndex: number) => {
     const newImages = [...keyImages];
     const [movedImage] = newImages.splice(fromIndex, 1);
     newImages.splice(toIndex, 0, movedImage);
@@ -461,9 +461,9 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
 
     // Update in service
     screenshotService.clearAllImages();
-    newImages.forEach(img => {
-      screenshotService.saveCapturedImage(img.dataUrl, img.caption, img.metadata);
-    });
+    for (const img of newImages) {
+      await screenshotService.saveCapturedImage(img.dataUrl, img.caption, img.metadata);
+    }
 
     showNotification('Image order updated', 'success');
   };
@@ -2577,7 +2577,7 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
                   <Card variant="outlined">
                     <Box
                       component="img"
-                      src={image.dataUrl}
+                      src={ScreenshotService.getImageUrl(image.dataUrl)}
                       alt={image.caption}
                       sx={{
                         width: '100%',
@@ -3402,7 +3402,7 @@ const ProductionReportEditor: React.FC<ProductionReportEditorProps> = ({
                     </Typography>
                     <Box
                       component="img"
-                      src={image.dataUrl}
+                      src={ScreenshotService.getImageUrl(image.dataUrl)}
                       alt={image.caption}
                       sx={{
                         width: '100%',

@@ -36,6 +36,7 @@ import {
   Info as InfoIcon
 } from '@mui/icons-material';
 import { useReporting, type AnatomicalMarking } from '../../../contexts/ReportingContext';
+import { screenshotService } from '../../../services/screenshotService';
 
 // Body diagram configurations - comprehensive mapping for all modalities
 const BODY_DIAGRAMS = {
@@ -875,17 +876,32 @@ const AnatomicalDiagramPanel: React.FC = () => {
           variant="contained" 
           size="small"
           color="primary"
-          onClick={() => {
+          onClick={async () => {
             if (canvasRef.current) {
               const dataUrl = canvasRef.current.toDataURL('image/png');
-              actions.addKeyImage({
-                id: `img-${Date.now()}`,
+              const description = `${selectedBodyPart} - ${selectedView} view with ${state.anatomicalMarkings.length} marking(s)`;
+              
+              // Upload to server and get filename
+              const capturedImage = await screenshotService.saveCapturedImage(
                 dataUrl,
-                timestamp: new Date(),
-                description: `${selectedBodyPart} - ${selectedView} view with ${state.anatomicalMarkings.length} marking(s)`
+                description,
+                {
+                  studyUID: 'anatomical-diagram',
+                  hasAIOverlay: false,
+                  hasAnnotations: state.anatomicalMarkings.length > 0
+                }
+              );
+              
+              // Add to key images with server filename
+              actions.addKeyImage({
+                id: capturedImage.id,
+                dataUrl: capturedImage.dataUrl, // This will be the filename
+                timestamp: capturedImage.timestamp,
+                description: description
               });
+              
               // Show success message
-              alert('Canvas snapshot saved to key images!');
+              alert('Canvas snapshot uploaded and saved to key images!');
             }
           }}
         >

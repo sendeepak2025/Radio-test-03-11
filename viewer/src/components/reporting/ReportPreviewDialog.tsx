@@ -27,6 +27,7 @@ import {
   Close as CloseIcon,
   CheckCircle
 } from '@mui/icons-material';
+import { ScreenshotService } from '../../services/screenshotService';
 
 interface ReportPreviewDialogProps {
   open: boolean;
@@ -441,38 +442,80 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
               <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
                 Key Images
               </Typography>
-              <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 2 }}>
-                {reportData.keyImages.map((image, index) => (
-                  <Paper key={image.id || index} elevation={2} sx={{ p: 1 }}>
-                    <img 
-                      src={image.dataUrl} 
-                      alt={image.description || `Key image ${index + 1}`}
-                      style={{ 
-                        width: '100%', 
-                        height: 'auto',
-                        border: '1px solid #ddd'
-                      }}
-                      onError={(e) => {
-                        console.error('Failed to load key image:', {
-                          index,
-                          dataUrlLength: image.dataUrl?.length,
-                          dataUrlStart: image.dataUrl?.substring(0, 50),
-                          image
-                        });
-                        e.currentTarget.style.display = 'none';
-                      }}
-                    />
-                    {image.description && (
-                      <Typography variant="caption" display="block" sx={{ mt: 1 }}>
-                        {image.description}
-                      </Typography>
-                    )}
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      Image {index + 1} of {reportData.keyImages.length}
-                    </Typography>
-                  </Paper>
-                ))}
-              </Box>
+            <Box sx={{ 
+  display: 'grid', 
+  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', 
+  gap: 2 
+}}>
+  {reportData.keyImages.map((image, index) => {
+    // Check if dataUrl is valid (supports both data URLs and server filenames)
+    const isValidDataUrl = image.dataUrl && (
+      image.dataUrl.startsWith('data:image/') || 
+      image.dataUrl.startsWith('http://') ||
+      image.dataUrl.startsWith('https://') ||
+      image.dataUrl.endsWith('.png') ||
+      image.dataUrl.endsWith('.jpg') ||
+      image.dataUrl.endsWith('.jpeg')
+    );
+
+    if (!isValidDataUrl) {
+      console.error('Invalid key image dataUrl:', {
+        index,
+        dataUrl: image.dataUrl?.substring(0, 100),
+        fullLength: image.dataUrl?.length
+      });
+    }
+
+    return (
+      <Paper key={image.id || index} elevation={2} sx={{ p: 1 }}>
+        {isValidDataUrl ? (
+          <img 
+            src={ScreenshotService.getImageUrl(image.dataUrl)}
+            alt={image.description || `Key image ${index + 1}`}
+            style={{ 
+              width: '100%', 
+              height: 'auto',
+              border: '1px solid #ddd'
+            }}
+            onError={(e) => {
+              console.error('Failed to load key image:', {
+                index,
+                dataUrlLength: image.dataUrl?.length,
+                dataUrlStart: image.dataUrl?.substring(0, 50)
+              });
+              e.currentTarget.style.display = 'none';
+            }}
+          />
+        ) : (
+          <Box sx={{ 
+            width: '100%', 
+            height: 150, 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            bgcolor: 'grey.200',
+            border: '1px solid #ddd'
+          }}>
+            <Typography variant="caption" color="error">
+              Image data corrupted
+            </Typography>
+          </Box>
+        )}
+
+        {image.description && (
+          <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+            {image.description}
+          </Typography>
+        )}
+
+        <Typography variant="caption" color="text.secondary" display="block">
+          Image {index + 1} of {reportData.keyImages.length}
+        </Typography>
+      </Paper>
+    );
+  })}
+</Box>
+
             </Box>
           )}
           

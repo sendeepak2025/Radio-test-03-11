@@ -74,6 +74,11 @@ configureSameSiteCookies(app);
 // Input validation (NoSQL injection prevention)
 app.use(inputValidationMiddleware);
 
+// Serve uploaded files BEFORE security middleware (public static files)
+const uploadsPath = require('path').join(__dirname, '../uploads');
+app.use('/uploads', express.static(uploadsPath));
+console.log('📁 Serving uploads from:', uploadsPath);
+
 // XSS protection
 app.use(xssProtectionMiddleware({
   htmlFields: ['findings', 'impression', 'clinicalHistory', 'technique', 'comparison', 'content', 'description', 'notes', 'comments'],
@@ -97,15 +102,12 @@ app.use(doubleSubmitCookieCSRF({
     '/api/patients', // Exclude patients API from CSRF (uses JWT auth)
     '/api/export',  // Exclude export API from CSRF (uses JWT auth)
     '/api/medical-ai', // Exclude AI API from CSRF (uses JWT auth)
-    '/api/ai'       // Exclude AI API from CSRF (uses JWT auth)
+    '/api/ai',       // Exclude AI API from CSRF (uses JWT auth)
+    '/upload'   ,    // Exclude snapshot upload from CSRF (public endpoint)
+    '/uploads'       // Exclude snapshot upload from CSRF (public endpoint)
   ],
   excludeMethods: ['GET', 'HEAD', 'OPTIONS']
 }));
-
-// Serve uploaded files (signatures, etc.)
-const uploadsPath = require('path').join(__dirname, '../uploads');
-app.use('/uploads', express.static(uploadsPath));
-console.log('📁 Serving uploads from:', uploadsPath);
 
 // Audit middleware - must be after security middleware
 app.use(auditMiddleware({

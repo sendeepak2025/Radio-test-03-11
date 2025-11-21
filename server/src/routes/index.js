@@ -7,6 +7,7 @@ const { getFrame: getFrameOrthanc, getInstanceMetadata, checkOrthancHealth } = r
 const { getDICOMMigrationService } = require('../services/dicom-migration-service');
 const { uploadMiddleware, handleUpload } = require('../controllers/uploadController');
 const { uploadZipStudy, getZipUploadInfo, testZipUpload, uploadMiddleware: zipUploadMiddleware } = require('../controllers/zipUploadController');
+const { uploadMiddleware: snapshotUploadMiddleware, uploadSnapshot } = require('../controllers/snapshotUploadController');
 const { getPatients, getPatientStudies, createPatient } = require('../controllers/patientController');
 const { authenticate } = require('../middleware/authMiddleware');
 const authRoutes = require('./auth');
@@ -130,6 +131,9 @@ router.post('/api/dicom/upload',
 router.post('/api/dicom/upload/zip', authenticate, zipUploadMiddleware().single('file'), uploadZipStudy);
 router.get('/api/dicom/upload/zip/info', authenticate, getZipUploadInfo);
 router.post('/api/dicom/upload/zip/test', authenticate, zipUploadMiddleware().single('file'), testZipUpload);
+
+// Snapshot Upload - Upload viewer snapshots (No auth required for now)
+router.post('/upload/', snapshotUploadMiddleware(), uploadSnapshot);
 
 // Auth
 router.use('/auth', authRoutes);
