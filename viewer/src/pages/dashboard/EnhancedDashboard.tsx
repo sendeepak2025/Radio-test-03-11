@@ -59,6 +59,7 @@ interface SystemHealth {
   systemStatus: string
   metrics: {
     totalStudies: number
+    totalPatients: number
     totalSeries: number
     totalInstances: number
     recentStudies24h: number
@@ -359,8 +360,18 @@ export const EnhancedDashboard: React.FC = () => {
             value={systemHealth?.metrics.totalStudies || 0}
             subtitle={`${systemHealth?.metrics.recentStudies24h || 0} in last 24h`}
             icon={<TimelineIcon />}
-            trend={12.5}
             color="primary"
+            loading={loading}
+          />
+        </Grid>
+        
+        <Grid item xs={12} sm={6} lg={3}>
+          <MetricCard
+            title="Total Patients"
+            value={systemHealth?.metrics.totalPatients || 0}
+            subtitle="Unique patients"
+            icon={<People />}
+            color="info"
             loading={loading}
           />
         </Grid>
@@ -369,9 +380,8 @@ export const EnhancedDashboard: React.FC = () => {
           <MetricCard
             title="Storage Used"
             value={`${systemHealth?.metrics.totalStorageGB || 0} GB`}
-            subtitle={`${systemHealth?.metrics.totalInstances.toLocaleString() || 0} images`}
+            subtitle={`${systemHealth?.metrics.totalInstances?.toLocaleString() || 0} images`}
             icon={<StorageIcon />}
-            trend={-3.2}
             color="secondary"
             loading={loading}
           />
@@ -383,12 +393,13 @@ export const EnhancedDashboard: React.FC = () => {
             value={systemHealth?.metrics.avgStudiesPerHour || '0'}
             subtitle="Processing rate"
             icon={<SpeedIcon />}
-            trend={8.7}
             color="success"
             loading={loading}
           />
         </Grid>
-        
+      </Grid>
+      
+      <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} lg={3}>
           <StatusCard
             status={systemHealth?.systemStatus || 'unknown'}

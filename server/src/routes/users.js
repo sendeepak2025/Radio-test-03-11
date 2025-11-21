@@ -7,6 +7,7 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/authMiddleware');
 const User = require('../models/User');
+const Patient = require('../models/Patient');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
@@ -57,51 +58,55 @@ function getCurrentUserId(req) {
 
 router.get("/", async (req, res) => {
   try {
-    const query = {};
+    let query = {};
 
     const isSuperAdmin = req.user?.roles?.includes("superadmin");
+    const isAdminUser = req.user?.roles?.includes("admin");
 
-    if (!isSuperAdmin) {
-      // Login user ko DB se fetch karo
-      const hospitalUser = await User.findById(req.user._id).lean();
-
-      if (!hospitalUser) {
-        return res.status(404).json({ success: false, message: "Hospital user not found" });
-      }
-
-      // Admin hai to _id use karega, baaki hospitalId ya fallback _id
-      const isAdminUser = req.user.roles?.includes("admin");
-
-      const finalHospitalId = isAdminUser
-        ? hospitalUser._id.toString()
-        : (hospitalUser.hospitalId || hospitalUser._id.toString());
-
-      query.hospitalId = finalHospitalId;
-
-      console.log(`🏥 User Roles: ${req.user.roles}`);
-      console.log(`🔒 Filtering patients by hospitalId: ${finalHospitalId}`);
-    } else {
-      console.log("👑 SuperAdmin detected, returning all patients");
+    // SUPER ADMIN → all users
+    if (isSuperAdmin) {
+      console.log("👑 SuperAdmin: returning all users");
     }
 
-    // Patients fetch
-    const patients = await Patient.find(query).sort({ createdAt: -1 });
+    // ADMIN → filter by hospitalId
+    else if (isAdminUser) {
+      console.log("🏥 Admin user detected");
+
+      const adminUser = await User.findById(req.user.sub).lean();
+      if (!adminUser) {
+        return res.status(404).json({ success: false, message: "Admin user not found" });
+      }
+
+      query.hospitalId = adminUser._id.toString()
+    }
+
+    // STAFF / RADIOLOGIST → return only users created by them
+    else {
+      console.log("👤 Staff/Radiologist → return only created users");
+
+      query.createdBy = req.user.sub;
+    }
+
+    // Fetch users
+    const users = await User.find(query)
+      .select("firstName lastName email roles createdBy hospitalId hospitalName createdAt");
 
     return res.status(200).json({
       success: true,
-      count: patients.length,
-      data: patients
+      count: users.length,
+      data: users
     });
 
   } catch (error) {
-    console.error("❌ Error fetching patients:", error);
+    console.error("❌ Error fetching users:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch patients",
+      message: "Failed to fetch users",
       error: error.message
     });
   }
 });
+
 
 /**
  * POST /api/users

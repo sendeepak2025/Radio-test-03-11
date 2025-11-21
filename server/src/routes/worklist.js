@@ -3,7 +3,7 @@ const router = express.Router();
 const { authenticate } = require('../middleware/authMiddleware');
 const worklistService = require('../services/worklist-service');
 const AuthenticationService = require('../services/authentication-service');
-
+const User = require("../models/User")
 const authService = new AuthenticationService();
 
 // All routes require authentication
@@ -15,7 +15,7 @@ router.use(  authService.authenticationMiddleware(),
  * Get worklist items with filters
  * // ✅ WORKLIST EMPTY FIX: Safe defaults & tenant-correct queries
  */
-router.get('/', async (req, res) => {
+router.get('/', authenticate, async (req, res) => {
   try {
     const {
       status,
@@ -27,29 +27,43 @@ router.get('/', async (req, res) => {
       limit,
       skip
     } = req.query;
-    
-    // ✅ WORKLIST EMPTY FIX: Enforce hospitalId from JWT; bypass only for superadmin
-    const userRole = req.user.role || req.user.roles?.[0];
-    const isSuperAdmin = userRole === 'superadmin' || userRole === 'system:admin';
-    const hospitalId = req.user.hospitalId || req.user._id;
-    
-    if (!hospitalId && !isSuperAdmin) {
-      return res.status(403).json({
+
+    // STEP 1: Logged-in user
+    const loggedUser = await User.findById(req.user.sub).lean();
+
+    if (!loggedUser) {
+      return res.status(404).json({
         success: false,
-        error: 'MISSING_TENANT',
-        message: 'Hospital ID is required. Please contact your administrator.'
+        message: "User not found"
       });
     }
-    
-    // ✅ WORKLIST EMPTY FIX: Default date range = last 90 days unless from/to provided
+
+    const isSuperAdmin = loggedUser.roles?.includes("superadmin");
+    const isAdmin = loggedUser.roles?.includes("admin");
+
+    // STEP 2: Hospital filter logic (same as system-health)
+    let hospitalIdFilter = undefined;
+
+    if (isSuperAdmin) {
+      hospitalIdFilter = undefined; // superadmin => no hospital filter
+    }
+    else if (isAdmin) {
+      hospitalIdFilter = loggedUser._id.toString(); // admin => hospitalId = admin._id
+    }
+    else {
+      hospitalIdFilter = loggedUser.hospitalId; // staff => hospitalId = user's hospitalId
+    }
+
+    console.log("📌 WORKLIST FILTER (hospitalId):", hospitalIdFilter);
+
+    // STEP 3: Date filter (default 90 days)
     const now = new Date();
     const defaultStartDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-    
+
     const filters = {
-      hospitalId: isSuperAdmin ? undefined : hospitalId,
-      // ✅ WORKLIST EMPTY FIX: If status missing → treat as ALL (no filter by status)
-      status: status && status !== 'all' && status !== 'ALL' ? status : undefined,
-      priority: priority && priority !== 'all' && priority !== 'ALL' ? priority : undefined,
+      hospitalId: hospitalIdFilter,
+      status: status && status !== 'all' ? status : undefined,
+      priority: priority && priority !== 'all' ? priority : undefined,
       assignedTo,
       hasCriticalFindings: hasCriticalFindings === 'true',
       startDate: startDate || defaultStartDate.toISOString(),
@@ -57,23 +71,28 @@ router.get('/', async (req, res) => {
       limit: parseInt(limit) || 100,
       skip: parseInt(skip) || 0
     };
-    
+
+    console.log("📌 FINAL WORKLIST FILTERS:", filters);
+
+    // STEP 4: Fetch worklist items
     const items = await worklistService.getWorklist(filters);
-    
-    res.json({
+
+    return res.json({
       success: true,
       count: items.length,
       items
     });
+
   } catch (error) {
-    console.error('Error fetching worklist:', error);
-    res.status(500).json({
+    console.error("❌ Error fetching worklist:", error);
+    return res.status(500).json({
       success: false,
-      error: 'Failed to fetch worklist',
+      error: "Failed to fetch worklist",
       message: error.message
     });
   }
 });
+
 
 /**
  * GET /api/worklist/debug
@@ -144,18 +163,48 @@ router.get('/debug', async (req, res) => {
  * GET /api/worklist/stats
  * Get worklist statistics
  */
-router.get('/stats', async (req, res) => {
+router.get('/stats', authenticate, async (req, res) => {
   try {
-    const hospitalId = req.user.hospitalId || req.user._id;
-    const stats = await worklistService.getStatistics(hospitalId);
-    
-    res.json({
+    // STEP 1: Logged-in user fetch
+    const loggedUser = await User.findById(req.user.sub).lean();
+
+    if (!loggedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    const isSuperAdmin = loggedUser.roles?.includes("superadmin");
+    const isAdmin = loggedUser.roles?.includes("admin");
+
+    // STEP 2: Build hospitalId filter (same across all APIs)
+    let hospitalIdFilter = undefined;
+
+    if (isSuperAdmin) {
+      hospitalIdFilter = undefined; // superadmin → no filter
+    } 
+    else if (isAdmin) {
+      hospitalIdFilter = loggedUser._id.toString(); // admin → hospitalId = admin._id
+    } 
+    else {
+      hospitalIdFilter = loggedUser.hospitalId; // staff → hospitalId = user's hospitalId
+    }
+
+    console.log("📊 STATS HOSPITAL FILTER:", hospitalIdFilter);
+
+    // STEP 3: Fetch statistics
+    const stats = await worklistService.getStatistics(hospitalIdFilter);
+
+    return res.json({
       success: true,
-      statistics: stats
+      statistics: stats,
+      appliedHospitalId: hospitalIdFilter
     });
+
   } catch (error) {
-    console.error('Error fetching worklist stats:', error);
-    res.status(500).json({
+    console.error("❌ Error fetching worklist stats:", error);
+    return res.status(500).json({
       success: false,
       error: 'Failed to fetch statistics',
       message: error.message

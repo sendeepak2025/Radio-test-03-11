@@ -146,7 +146,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         { text: 'Worklist', icon: <AssignmentIcon />, path: '/app/worklist' },
         { text: 'Patients', icon: <PeopleIcon />, path: '/app/patients' },
         { text: 'Follow Ups', icon: <Calendar1Icon />, path: '/app/followups' },
-        { text: 'Studies', icon: <FolderIcon />, path: '/app/orthanc' },
+        // { text: 'Studies', icon: <FolderIcon />, path: '/app/orthanc' },
         // { text: 'AI Analysis', icon: <AIIcon />, path: '/app/ai-analysis' },
         { text: 'Prior Auth', icon: <MedicalIcon />, path: '/app/prior-auth' },
         { text: 'Billing', icon: <BillingIcon />, path: '/app/billing' },
@@ -344,7 +344,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             {location.pathname === '/app/patients' && 'Patients'}
             {location.pathname === '/app/followups' && 'Follow Ups'}
             {location.pathname === '/app/system-monitoring' && 'System Monitoring'}
-            {location.pathname === '/app/orthanc' && 'Studies'}
+            {/* {location.pathname === '/app/orthanc' && 'Studies'} */}
             {location.pathname === '/app/billing' && 'Billing & Superbills'}
             {location.pathname.startsWith('/app/users') && 'User Management'}
             {location.pathname === '/app/settings' && 'Settings'}

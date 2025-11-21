@@ -3,6 +3,9 @@ const router = express.Router();
 const Study = require('../models/Study');
 const Series = require('../models/Series');
 const Instance = require('../models/Instance');
+const Patient = require('../models/Patient');
+const User = require('../models/User');
+const { authenticate } = require('../middleware/authMiddleware');
 
 /**
  * System Monitoring Routes
@@ -11,11 +14,14 @@ const Instance = require('../models/Instance');
 
 /**
  * GET /api/monitoring/machines
- * Get statistics for all connected machines (modalities)
+ * Get statistics for all connected machines (modalities) filtered by hospital
  */
-router.get('/machines', async (req, res) => {
+router.get('/machines', authenticate, async (req, res) => {
   try {
     const { timeRange = '24h' } = req.query;
+    
+    // Get hospital ID from authenticated user
+    const hospitalId = req.user?.hospitalId || req.user?._id;
     
     // Calculate time range
     const now = new Date();
@@ -28,12 +34,18 @@ router.get('/machines', async (req, res) => {
       default: startTime.setHours(now.getHours() - 24);
     }
 
+    // Build match filter with hospital
+    const matchFilter = {
+      createdAt: { $gte: startTime }
+    };
+    if (hospitalId) {
+      matchFilter.hospitalId = hospitalId;
+    }
+
     // Get studies grouped by modality
     const machineStats = await Study.aggregate([
       {
-        $match: {
-          createdAt: { $gte: startTime }
-        }
+        $match: matchFilter
       },
       {
         $group: {
@@ -109,36 +121,75 @@ router.get('/machines', async (req, res) => {
 
 /**
  * GET /api/monitoring/system-health
- * Get overall system health metrics
+ * Get overall system health metrics (filtered by hospital)
  */
-router.get('/system-health', async (req, res) => {
+router.get('/system-health', authenticate, async (req, res) => {
   try {
     const now = new Date();
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    // Get counts
-    const [totalStudies, totalSeries, totalInstances, recentStudies] = await Promise.all([
-      Study.countDocuments(),
-      Series.countDocuments(),
-      Instance.countDocuments(),
-      Study.countDocuments({ createdAt: { $gte: last24h } })
+    console.log("🔐 USER REQ:", req.user);
+
+    // STEP 1: Fetch logged user
+    const loggedUser = await User.findById(req.user.sub).lean();
+
+    if (!loggedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    const isSuperAdmin = loggedUser.roles?.includes("superadmin");
+    const isAdmin = loggedUser.roles?.includes("admin");
+
+    // STEP 2: Build hospital filter
+    let hospitalFilter = {};
+
+    if (isSuperAdmin) {
+      // SuperAdmin → All data
+      hospitalFilter = {};
+    } 
+    else if (isAdmin) {
+      // Admin → hospitalId = admin _id
+      hospitalFilter = { hospitalId: loggedUser._id.toString() };
+    } 
+    else {
+      // Staff → filter using their hospitalId
+      hospitalFilter = { hospitalId: loggedUser.hospitalId };
+    }
+
+    console.log("📌 FINAL FILTER APPLIED:", hospitalFilter);
+
+    // STEP 3: Fetch data
+    const [
+      totalStudies,
+      totalSeries,
+      totalInstances,
+      recentStudies,
+      totalPatients
+    ] = await Promise.all([
+      Study.countDocuments(hospitalFilter),
+      Series.countDocuments(hospitalFilter),
+      Instance.countDocuments(hospitalFilter),
+      Study.countDocuments({
+        ...hospitalFilter,
+        createdAt: { $gte: last24h }
+      }),
+      Patient.countDocuments(hospitalFilter)
     ]);
 
-    // Get storage info (approximate)
+    // Storage usage
     const storageStats = await Instance.aggregate([
-      {
-        $group: {
-          _id: null,
-          totalSize: { $sum: '$fileSize' }
-        }
-      }
+      { $match: hospitalFilter },
+      { $group: { _id: null, totalSize: { $sum: '$fileSize' } } }
     ]);
 
     const totalStorageBytes = storageStats[0]?.totalSize || 0;
-    const totalStorageGB = (totalStorageBytes / (1024 * 1024 * 1024)).toFixed(2);
+    const totalStorageGB = (totalStorageBytes / (1024 ** 3)).toFixed(2);
 
-    // Get recent activity
-    const recentActivity = await Study.find()
+    // Recent activity (filtered by hospital)
+    const recentActivity = await Study.find(hospitalFilter)
       .sort({ createdAt: -1 })
       .limit(10)
       .select('studyInstanceUID patientName modality createdAt')
@@ -152,10 +203,12 @@ router.get('/system-health', async (req, res) => {
 
     res.json({
       success: true,
+      filterApplied: hospitalFilter,
       data: {
         systemStatus,
         metrics: {
           totalStudies,
+          totalPatients,
           totalSeries,
           totalInstances,
           recentStudies24h: recentStudies,
@@ -166,8 +219,9 @@ router.get('/system-health', async (req, res) => {
         timestamp: now
       }
     });
+
   } catch (error) {
-    console.error('Error fetching system health:', error);
+    console.error("❌ Error fetching system health:", error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch system health',
@@ -175,6 +229,7 @@ router.get('/system-health', async (req, res) => {
     });
   }
 });
+
 
 /**
  * GET /api/monitoring/activity-timeline
