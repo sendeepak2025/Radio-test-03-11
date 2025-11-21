@@ -274,30 +274,57 @@ class ReportExportService {
           checkNewPage(80)
 
           try {
+            console.log('🖼️ Processing image for PDF:', {
+              id: image.id,
+              dataUrl: image.dataUrl?.substring(0, 100),
+              caption: image.caption
+            });
+            
             // Add image
             const imgWidth = 160
             const imgHeight = 120
             
             // Get full URL from filename or data URL
-            const fullImageUrl = ScreenshotService.getImageUrl(image.dataUrl);
+            let fullImageUrl = ScreenshotService.getImageUrl(image.dataUrl);
+            console.log('📍 Full image URL:', fullImageUrl);
             
-            // If it's a server URL, fetch and convert to data URL for PDF embedding
+            // Convert relative URLs to absolute URLs for fetching
+            if (fullImageUrl.startsWith('/')) {
+              fullImageUrl = `${window.location.origin}${fullImageUrl}`;
+            }
+            
+            // If it's a data URL, use it directly
             let imageData = fullImageUrl;
-            if (fullImageUrl.startsWith('http://') || fullImageUrl.startsWith('https://')) {
+            if (fullImageUrl.startsWith('data:')) {
+              imageData = fullImageUrl;
+            } else {
+              // It's a server URL, fetch and convert to data URL for PDF embedding
               try {
+                console.log('📥 Fetching image for PDF:', fullImageUrl);
                 const response = await fetch(fullImageUrl);
+                if (!response.ok) {
+                  throw new Error(`Failed to fetch image: ${response.statusText}`);
+                }
                 const blob = await response.blob();
-                imageData = await new Promise<string>((resolve) => {
+                imageData = await new Promise<string>((resolve, reject) => {
                   const reader = new FileReader();
                   reader.onloadend = () => resolve(reader.result as string);
+                  reader.onerror = reject;
                   reader.readAsDataURL(blob);
                 });
+                console.log('✅ Image converted to data URL for PDF');
               } catch (fetchError) {
-                console.warn('Failed to fetch server image, using URL directly:', fetchError);
+                console.error('❌ Failed to fetch server image:', fetchError);
+                throw fetchError; // Re-throw to trigger the outer catch
               }
             }
             
-            doc.addImage(imageData, 'PNG', margin, yPosition, imgWidth
+            // Determine image format from data URL
+            const imageFormat = imageData.includes('image/jpeg') || imageData.includes('image/jpg') ? 'JPEG' : 'PNG';
+            console.log('📄 Adding image to PDF:', { format: imageFormat, width: imgWidth, height: imgHeight });
+            
+            doc.addImage(imageData, imageFormat, margin, yPosition, imgWidth, imgHeight)
+            console.log('✅ Image added to PDF successfully');
             
             // Add caption below image
             doc.setFontSize(9)
@@ -307,7 +334,11 @@ class ReportExportService {
             
             yPosition += imgHeight + 15
           } catch (error) {
-            console.error('Error adding image to PDF:', error)
+            console.error('❌ Error adding image to PDF:', error, {
+              imageId: image.id,
+              caption: image.caption,
+              dataUrlPreview: image.dataUrl?.substring(0, 100)
+            })
             doc.setFontSize(9)
             doc.setTextColor(255, 0, 0)
             doc.text(`[Image could not be embedded: ${image.caption}]`, margin, yPosition)

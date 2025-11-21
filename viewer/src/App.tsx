@@ -59,18 +59,18 @@ import TestPage from './landing/pages/TestPage'
 const SimpleProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth()
 
-  console.log('SimpleProtectedRoute:', { isAuthenticated, isLoading, user })
+  // // console.log('SimpleProtectedRoute:', { isAuthenticated, isLoading, user })
 
   if (isLoading) {
     return <LoadingScreen message="Checking authentication..." />
   }
 
   if (!isAuthenticated) {
-    console.log('Not authenticated, redirecting to login')
+    // // console.log('Not authenticated, redirecting to login')
     return <Navigate to="/login" replace />
   }
 
-  console.log('Authenticated, showing protected content')
+  // // console.log('Authenticated, showing protected content')
   return <>{children}</>
 }
 
@@ -78,14 +78,14 @@ const SimpleProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childre
 const SuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading, user } = useAuth()
 
-  console.log('SuperAdminRoute:', { isAuthenticated, isLoading, user, roles: user?.roles })
+  // // console.log('SuperAdminRoute:', { isAuthenticated, isLoading, user, roles: user?.roles })
 
   if (isLoading) {
     return <LoadingScreen message="Checking authentication..." />
   }
 
   if (!isAuthenticated) {
-    console.log('Not authenticated, redirecting to login')
+    // console.log('Not authenticated, redirecting to login')
     return <Navigate to="/login" replace />
   }
 
@@ -93,11 +93,11 @@ const SuperAdminRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const isSuperAdmin = user?.roles?.includes('system:admin') || user?.roles?.includes('super_admin')
 
   if (!isSuperAdmin) {
-    console.log('Not a super admin, redirecting to dashboard')
+    // console.log('Not a super admin, redirecting to dashboard')
     return <Navigate to="/dashboard" replace />
   }
 
-  console.log('Super admin authenticated, showing protected content')
+  // console.log('Super admin authenticated, showing protected content')
   return <>{children}</>
 }
 
@@ -132,7 +132,7 @@ function getCookie(name) {
   if (parts.length === 2) return parts.pop().split(';').shift();
 }
 
-  console.log("📦 All cookies:", document.cookie);
+  // console.log("📦 All cookies:", document.cookie);
 
 
 // Get refresh_token from cookies
@@ -141,7 +141,7 @@ const refreshToken = getCookie('refresh_token');
 // If token exists, save it to localStorage with name "accessToken"
 if (refreshToken) {
   localStorage.setItem('accessToken', refreshToken);
-  console.log('✅ Refresh token saved as accessToken in localStorage');
+  // console.log('✅ Refresh token saved as accessToken in localStorage');
 } else {
   console.warn('⚠️ refresh_token not found in cookies');
 }
@@ -157,13 +157,13 @@ if (refreshToken) {
   } = useSessionManagement(
     // onTimeout callback
     () => {
-      console.log('Session timed out')
+      // console.log('Session timed out')
       logout()
       navigate('/login?reason=timeout')
     },
     // onWarning callback
     (minutesLeft) => {
-      console.log(`Session expiring in ${minutesLeft} minutes`)
+      // console.log(`Session expiring in ${minutesLeft} minutes`)
     },
     // config
     {
@@ -175,11 +175,11 @@ if (refreshToken) {
     }
   )
 
-  console.log('App render:', { isAuthenticated, isLoading, user, error, sessionStatus })
+  // console.log('App render:', { isAuthenticated, isLoading, user, error, sessionStatus })
 
   // Show loading screen while checking authentication
   if (isLoading) {
-    console.log('App showing loading screen')
+    // console.log('App showing loading screen')
     return <LoadingScreen message="Initializing application..." />
   }
 
@@ -192,7 +192,7 @@ if (refreshToken) {
   const handleExtendSession = async () => {
     try {
       await extendSession()
-      console.log('Session extended successfully')
+      // console.log('Session extended successfully')
     } catch (error) {
       console.error('Failed to extend session:', error)
       logout()

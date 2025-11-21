@@ -345,16 +345,16 @@ export const ReportingProvider: React.FC<{
       mergedSections.comparison = mergedSections.comparison;
     }
     
-    console.log('✅ ReportingContext initialized from sections:', {
-      templateId: initialData.templateId,
-      clinicalHistory: clinicalHistory ? `"${clinicalHistory.substring(0, 30)}..."` : '(empty)',
-      technique: technique ? `"${technique.substring(0, 30)}..."` : '(empty)',
-      findingsText: findingsText ? `"${findingsText.substring(0, 30)}..."` : '(empty)',
-      impression: impression ? `"${impression.substring(0, 30)}..."` : '(empty)',
-      recommendations: recommendations ? `"${recommendations.substring(0, 30)}..."` : '(empty)',
-      totalSectionKeys: Object.keys(mergedSections).length,
-      sectionKeys: Object.keys(mergedSections).filter(k => !k.startsWith('uiModule_'))
-    });
+    // console.log('✅ ReportingContext initialized from sections:', {
+      // templateId: initialData.templateId,
+      // clinicalHistory: clinicalHistory ? `"${clinicalHistory.substring(0, 30)}..."` : '(empty)',
+      // technique: technique ? `"${technique.substring(0, 30)}..."` : '(empty)',
+      // findingsText: findingsText ? `"${findingsText.substring(0, 30)}..."` : '(empty)',
+      // impression: impression ? `"${impression.substring(0, 30)}..."` : '(empty)',
+      // recommendations: recommendations ? `"${recommendations.substring(0, 30)}..."` : '(empty)',
+      // totalSectionKeys: Object.keys(mergedSections).length,
+      // sectionKeys: Object.keys(mergedSections).filter(k => !k.startsWith('uiModule_'))
+    // });
   }
   
   const [state, dispatch] = useReducer(reportReducer, {

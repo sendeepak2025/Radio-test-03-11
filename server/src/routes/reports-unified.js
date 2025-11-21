@@ -2860,71 +2860,102 @@ async function generateReportPDF(report) {
     }
 
     // ===== KEY IMAGES =====
-    if (report.keyImages && report.keyImages.length > 0) {
-      checkNewPage(100);
-      doc.fontSize(12).font('Helvetica-Bold').text('KEY IMAGES', { underline: true });
-      doc.moveDown();
-      
-      for (let i = 0; i < report.keyImages.length; i++) {
-        const img = report.keyImages[i];
-        
-        if (!img.dataUrl) continue; // Skip if no image data
-        
-        try {
-          // Check if we need a new page (image + caption ~200px)
-          checkNewPage(220);
-          
-          const imgY = doc.y;
-          
-          // Extract base64 data
-          let imgBuffer;
-          if (img.dataUrl.startsWith('data:image')) {
-            const base64Data = img.dataUrl.split(',')[1];
-            imgBuffer = Buffer.from(base64Data, 'base64');
-          } else {
-            // Handle file path
-            const path = require('path');
-            const fs = require('fs');
-            const fullPath = path.join(__dirname, '../../', img.dataUrl);
-            if (fs.existsSync(fullPath)) {
-              imgBuffer = fs.readFileSync(fullPath);
-            } else {
-              console.warn(`Key image file not found: ${fullPath}`);
-              continue;
-            }
-          }
-          
-          // Render image (max width: 400px to fit on page)
-          doc.image(imgBuffer, 50, imgY, { 
-            fit: [400, 300], 
-            align: 'center' 
-          });
-          
-          // Add caption
-          doc.moveDown(12); // Move below image
-          doc.fontSize(9).font('Helvetica').fillColor('#666666');
-          doc.text(
-            `Image ${i + 1} of ${report.keyImages.length}${img.caption ? `: ${img.caption}` : ''}`,
-            50,
-            doc.y,
-            { align: 'center' }
-          );
-          
-          doc.fillColor('#000000'); // Reset color
-          doc.moveDown(2);
-          
-        } catch (err) {
-          console.warn(`Failed to render key image ${i + 1}:`, err.message);
-          // Add placeholder text
-          doc.fontSize(9).font('Helvetica-Oblique').fillColor('#999999');
-          doc.text(`[Image ${i + 1} could not be loaded]`, { align: 'center' });
-          doc.fillColor('#000000');
-          doc.moveDown();
-        }
+ // ===== KEY IMAGES =====
+if (report.keyImages && report.keyImages.length > 0) {
+  checkNewPage(100);
+  doc.fontSize(12).font('Helvetica-Bold').text('KEY IMAGES', { underline: true });
+  doc.moveDown();
+
+  const path = require('path');
+  const fs = require('fs');
+  const axios = require('axios');
+
+  for (let i = 0; i < report.keyImages.length; i++) {
+    const img = report.keyImages[i];
+
+    if (!img.dataUrl) continue;
+
+    try {
+      checkNewPage(220);
+
+      const imgY = doc.y;
+      let imgBuffer;
+
+      // CASE 1: Base64 data URL
+      if (img.dataUrl.startsWith("data:image")) {
+        const base64Data = img.dataUrl.split(",")[1];
+        imgBuffer = Buffer.from(base64Data, "base64");
       }
-      
+
+      // CASE 2: Full URL (fetch from server)
+      else if (img.dataUrl.startsWith("http://") || img.dataUrl.startsWith("https://")) {
+        console.log("🌐 Fetching image from URL:", img.dataUrl);
+
+        const response = await axios.get(img.dataUrl, { responseType: "arraybuffer" });
+        imgBuffer = Buffer.from(response.data);
+      }
+
+      // CASE 3: Server path: /uploads/snapshots/filename.png
+      else if (img.dataUrl.startsWith("/uploads/")) {
+        const serverRoot = path.join(__dirname, "../../"); 
+        const fullPath = path.join(serverRoot, img.dataUrl);
+
+        console.log("🗂 Resolving server path:", fullPath);
+
+        if (!fs.existsSync(fullPath)) {
+          console.warn("❌ Image path does not exist:", fullPath);
+          continue;
+        }
+
+        imgBuffer = fs.readFileSync(fullPath);
+      }
+
+      // CASE 4: Only filename (common case)
+      else {
+        const finalPath = path.join(__dirname, "../../uploads/snapshots/", img.dataUrl);
+
+        console.log("📁 Resolving filename to:", finalPath);
+
+        if (!fs.existsSync(finalPath)) {
+          console.warn("❌ File not found:", finalPath);
+          continue;
+        }
+
+        imgBuffer = fs.readFileSync(finalPath);
+      }
+
+      // Render image
+      doc.image(imgBuffer, 50, imgY, {
+        fit: [400, 300],
+        align: "center",
+      });
+
+      // Caption
+      doc.moveDown(12);
+      doc.fontSize(9).font("Helvetica").fillColor("#666666");
+      doc.text(
+        `Image ${i + 1} of ${report.keyImages.length}${img.caption ? `: ${img.caption}` : ""}`,
+        50,
+        doc.y,
+        { align: "center" }
+      );
+
+      doc.fillColor("#000000");
+      doc.moveDown(2);
+    } catch (err) {
+      console.warn(`❌ Failed to render key image ${i + 1}:`, err.message);
+
+      // Fallback text
+      doc.fontSize(9).font("Helvetica-Oblique").fillColor("#999999");
+      doc.text(`[Image ${i + 1} could not be loaded]`, { align: "center" });
+      doc.fillColor("#000000");
       doc.moveDown();
     }
+  }
+
+  doc.moveDown();
+}
+
 
     // ===== SIGNATURE SECTION =====
     if (report.signedAt) {

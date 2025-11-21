@@ -38,50 +38,22 @@ export class ScreenshotService {
   /**
    * Get full URL from filename or return data URL as-is
    */
-  // public static getImageUrl(dataUrl: string): string {
-  //   // If it's a base64 data URL, return as-is
-  //   if (dataUrl.startsWith('data:')) {
-  //     return dataUrl;
-  //   }
-  //   // If it's already a full URL, return as-is
-  //   if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
-  //     return dataUrl;
-  //   }
-  //   // If it starts with /, it's already a path
-  //   if (dataUrl.startsWith('/')) {
-  //     return dataUrl;
-  //   }
-  //   // Otherwise, it's a filename - construct relative URL (will be proxied)
-  //   return `${ScreenshotService.SERVER_BASE_URL}${dataUrl}`;
-  // }
-
-
-
   public static getImageUrl(dataUrl: string): string {
-  // 1. Base64 data URL → return as-is
-  if (dataUrl.startsWith('data:')) {
-    return dataUrl;
+    // If it's a base64 data URL, return as-is
+    if (dataUrl.startsWith('data:')) {
+      return dataUrl;
+    }
+    // If it's already a full URL, return as-is
+    if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+      return dataUrl;
+    }
+    // If it starts with /, it's already a path
+    if (dataUrl.startsWith('/')) {
+      return dataUrl;
+    }
+    // Otherwise, it's a filename - construct relative URL (will be proxied)
+    return `${ScreenshotService.SERVER_BASE_URL}${dataUrl}`;
   }
-
-  // 2. Full URLs → return as-is
-  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
-    return dataUrl;
-  }
-
-  // 3. If path already begins with "/uploads/"
-  if (dataUrl.startsWith('/uploads/')) {
-    return `http://localhost:8001${dataUrl}`;
-  }
-
-  // 4. If starts with "/", return full absolute
-  if (dataUrl.startsWith('/')) {
-    return `http://localhost:8001${dataUrl}`;
-  }
-
-  // 5. DEFAULT: Only filename (your case)
-  // FIX: ensure NO double slash
-  return `http://localhost:8001/uploads/snapshots/${dataUrl}`;
-}
 
   /**
    * Capture canvas as image
