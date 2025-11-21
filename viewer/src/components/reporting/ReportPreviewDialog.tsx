@@ -452,6 +452,15 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
                         height: 'auto',
                         border: '1px solid #ddd'
                       }}
+                      onError={(e) => {
+                        console.error('Failed to load key image:', {
+                          index,
+                          dataUrlLength: image.dataUrl?.length,
+                          dataUrlStart: image.dataUrl?.substring(0, 50),
+                          image
+                        });
+                        e.currentTarget.style.display = 'none';
+                      }}
                     />
                     {image.description && (
                       <Typography variant="caption" display="block" sx={{ mt: 1 }}>

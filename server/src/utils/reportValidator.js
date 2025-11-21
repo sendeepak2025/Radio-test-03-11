@@ -21,6 +21,21 @@ class ReportValidator {
       return { errors, warnings, valid: false };
     }
     
+    // ✅ FIX: Check if template.sections exists and is an array
+    if (!template.sections || !Array.isArray(template.sections)) {
+      // If no sections defined, skip section validation but don't error
+      console.warn('Template has no sections array, skipping section validation');
+      return {
+        valid: true,
+        errors: [],
+        warnings: [{
+          field: 'template',
+          message: 'Template has no sections defined',
+          severity: 'warning'
+        }]
+      };
+    }
+    
     // Validate each section
     template.sections.forEach(section => {
       // Get section content from either sections object or top-level field

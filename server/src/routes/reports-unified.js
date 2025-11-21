@@ -1432,10 +1432,12 @@ router.post('/:reportId/sign', upload.single('signatureFile'), async (req, res) 
 
     // ✅ FIX: Store signature image file (uploaded to server)
     if (req.file) {
-      // Uploaded file - store relative path
-      report.radiologistSignatureUrl = `/uploads/signatures/${req.file.filename}`;
+      // Uploaded file - store full backend URL so frontend can access it
+      const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 5000}`;
+      report.radiologistSignatureUrl = `${backendUrl}/uploads/signatures/${req.file.filename}`;
       report.radiologistSignaturePublicId = req.file.filename;
       console.log('✅ Signature file saved:', req.file.filename);
+      console.log('✅ Signature URL:', report.radiologistSignatureUrl);
     }
 
     // Store text signaturere
@@ -1874,6 +1876,17 @@ router.post('/:reportId/export/pdf', async (req, res) => {
         error: 'Report not found'
       });
     }
+    
+    // ✅ DEBUG: Log report data to see what's available
+    console.log('📋 Report data for PDF:');
+    console.log('  - patientName:', report.patientName);
+    console.log('  - patientID:', report.patientID);
+    console.log('  - radiologistName:', report.radiologistName);
+    console.log('  - signature.displayName:', report.signature?.displayName);
+    console.log('  - findingsText:', report.findingsText ? `${report.findingsText.substring(0, 50)}...` : 'EMPTY');
+    console.log('  - sections.findings:', report.sections?.findings ? `${report.sections.findings.substring(0, 50)}...` : 'EMPTY');
+    console.log('  - clinicalHistory:', report.clinicalHistory ? `${report.clinicalHistory.substring(0, 50)}...` : 'EMPTY');
+    console.log('  - sections.clinicalHistory:', report.sections?.clinicalHistory ? 'EXISTS' : 'EMPTY');
 
     const pdfBuffer = await generateReportPDF(report);
 
@@ -2376,6 +2389,60 @@ async function generateReportPDF(report) {
     if (report.hospitalId) {
       hospital = await Hospital.findOne({ hospitalId: report.hospitalId });
     }
+    
+    // ✅ FIX: Extract proper field values with fallbacks
+    const patientName = report.patientName && report.patientName !== 'Anonymized^^' 
+      ? report.patientName.replace(/\^+/g, ' ').trim()  // Clean DICOM name format
+      : 'Anonymous Patient';
+    
+    const patientID = report.patientID && report.patientID !== '0' 
+      ? report.patientID 
+      : 'N/A';
+    
+    // ✅ FIX: Get radiologist name from signature object or report field
+    const radiologistName = report.signature?.displayName 
+      || report.radiologistName 
+      || 'Radiologist';
+    
+    // ✅ FIX: Get findings from findingsText or sections
+    const findingsText = report.findingsText 
+      || report.sections?.findings 
+      || report.sections?.Findings 
+      || '';
+    
+    // ✅ FIX: Get clinical history from proper field
+    const clinicalHistory = report.clinicalHistory 
+      || report.sections?.clinicalHistory 
+      || report.sections?.['clinical_history']
+      || '';
+    
+    // ✅ FIX: Get technique from proper field  
+    const technique = report.technique 
+      || report.sections?.technique 
+      || report.sections?.Technique 
+      || '';
+    
+    // ✅ FIX: Get impression from proper field
+    const impression = report.impression 
+      || report.sections?.impression 
+      || report.sections?.Impression 
+      || '';
+    
+    // ✅ FIX: Get recommendations from proper field
+    const recommendations = report.recommendations 
+      || report.sections?.recommendations 
+      || report.sections?.Recommendations 
+      || '';
+    
+    // ✅ DEBUG: Log extracted values
+    console.log('📝 Extracted PDF values:');
+    console.log('  - patientName:', patientName);
+    console.log('  - patientID:', patientID);
+    console.log('  - radiologistName:', radiologistName);
+    console.log('  - findingsText length:', findingsText.length, 'chars');
+    console.log('  - clinicalHistory length:', clinicalHistory.length, 'chars');
+    console.log('  - technique length:', technique.length, 'chars');
+    console.log('  - impression length:', impression.length, 'chars');
 
     // ===== HELPER: Smart page break =====
     const checkNewPage = (spaceNeeded = 50) => {
@@ -2465,36 +2532,36 @@ async function generateReportPDF(report) {
     
     // Left column
     doc.text(`Report ID: ${report.reportId}`, 50, infoY);
-    doc.text(`Patient: ${report.patientName}`, 50, infoY + 15);
-    doc.text(`Patient ID: ${report.patientID}`, 50, infoY + 30);
+    doc.text(`Patient: ${patientName}`, 50, infoY + 15);
+    doc.text(`Patient ID: ${patientID}`, 50, infoY + 30);
     doc.text(`Modality: ${report.modality}`, 50, infoY + 45);
     
     // Right column
     doc.text(`Date: ${new Date(report.reportDate).toLocaleDateString()}`, 320, infoY);
     doc.text(`Study UID: ${report.studyInstanceUID.substring(0, 30)}...`, 320, infoY + 15);
     doc.text(`Status: ${report.reportStatus.toUpperCase()}`, 320, infoY + 30);
-    doc.text(`Radiologist: ${report.radiologistName}`, 320, infoY + 45);
+    doc.text(`Radiologist: ${radiologistName}`, 320, infoY + 45);
     
     doc.moveDown(4);
 
     // ===== CLINICAL HISTORY =====
-    if (report.clinicalHistory) {
+    if (clinicalHistory) {
       checkNewPage(60);
       doc.fontSize(12).font('Helvetica-Bold').text('CLINICAL HISTORY', { underline: true });
-      doc.fontSize(10).font('Helvetica').text(report.clinicalHistory, { align: 'justify' });
+      doc.fontSize(10).font('Helvetica').text(clinicalHistory, { align: 'justify' });
       doc.moveDown();
     }
 
     // ===== TECHNIQUE =====
-    if (report.technique) {
+    if (technique) {
       checkNewPage(60);
       doc.fontSize(12).font('Helvetica-Bold').text('TECHNIQUE', { underline: true });
-      doc.fontSize(10).font('Helvetica').text(report.technique, { align: 'justify' });
+      doc.fontSize(10).font('Helvetica').text(technique, { align: 'justify' });
       doc.moveDown();
     }
 
     // ===== FINDINGS =====
-    if (report.findingsText) {
+    if (findingsText) {
       checkNewPage(100); // Keep section header with content
       doc.fontSize(12).font('Helvetica-Bold').text('FINDINGS', { underline: true });
       doc.moveDown(0.5);
@@ -2512,7 +2579,7 @@ async function generateReportPDF(report) {
         const levels = [];
         let match;
         
-        while ((match = levelPattern.exec(report.findingsText)) !== null) {
+        while ((match = levelPattern.exec(findingsText)) !== null) {
           levels.push({
             level: match[1],
             finding: match[2].trim()
@@ -2559,19 +2626,19 @@ async function generateReportPDF(report) {
           doc.moveDown();
           
           // Add remaining findings text (non-level findings)
-          const remainingText = report.findingsText.replace(levelPattern, '').trim();
+          const remainingText = findingsText.replace(levelPattern, '').trim();
           if (remainingText) {
             doc.fontSize(10).font('Helvetica').text(remainingText, { align: 'justify' });
             doc.moveDown();
           }
         } else {
           // No level findings found, render as normal text
-          doc.fontSize(10).font('Helvetica').text(report.findingsText, { align: 'justify' });
+          doc.fontSize(10).font('Helvetica').text(findingsText, { align: 'justify' });
           doc.moveDown();
         }
       } else {
         // Non-spine report: render as normal text
-        doc.fontSize(10).font('Helvetica').text(report.findingsText, { align: 'justify' });
+        doc.fontSize(10).font('Helvetica').text(findingsText, { align: 'justify' });
         doc.moveDown();
       }
     }
@@ -2588,7 +2655,7 @@ async function generateReportPDF(report) {
     }
 
     // ===== IMPRESSION =====
-    if (report.impression) {
+    if (impression) {
       checkNewPage(100); // Keep section header with content
       doc.fontSize(12).font('Helvetica-Bold').text('IMPRESSION', { underline: true });
       doc.moveDown(0.5);
@@ -2599,7 +2666,7 @@ async function generateReportPDF(report) {
       if (isMammography) {
         // Extract BI-RADS category from impression text
         const biRadsPattern = /BI-?RADS\s+(?:Category\s+)?(\d|0)/i;
-        const match = report.impression.match(biRadsPattern);
+        const match = impression.match(biRadsPattern);
         
         if (match) {
           const category = match[1];
@@ -2671,15 +2738,191 @@ async function generateReportPDF(report) {
       }
       
       // Render impression text
-      doc.fontSize(10).font('Helvetica').text(report.impression, { align: 'justify' });
+      doc.fontSize(10).font('Helvetica').text(impression, { align: 'justify' });
       doc.moveDown();
     }
 
     // ===== RECOMMENDATIONS =====
-    if (report.recommendations) {
+    if (recommendations) {
       checkNewPage(60);
       doc.fontSize(12).font('Helvetica-Bold').text('RECOMMENDATIONS', { underline: true });
-      doc.fontSize(10).font('Helvetica').text(report.recommendations, { align: 'justify' });
+      doc.fontSize(10).font('Helvetica').text(recommendations, { align: 'justify' });
+      doc.moveDown();
+    }
+
+    // ===== ASSESSMENT TOOLS RESULTS =====
+    // Extract custom sections (excluding standard sections)
+    const standardSections = ['findings', 'clinicalHistory', 'clinical_history', 'clinical_indication', 
+                              'technique', 'impression', 'recommendations', 'Findings', 'Technique', 
+                              'Impression', 'Recommendations'];
+    
+    if (report.sections && typeof report.sections === 'object') {
+      const customSections = Object.entries(report.sections)
+        .filter(([key]) => !standardSections.includes(key))
+        .filter(([_, value]) => value && (typeof value === 'string' ? value.trim().length > 0 : true));
+      
+      if (customSections.length > 0) {
+        checkNewPage(80);
+        doc.fontSize(12).font('Helvetica-Bold').text('ASSESSMENT TOOLS RESULTS', { underline: true });
+        doc.moveDown(0.5);
+        
+        customSections.forEach(([key, value]) => {
+          // Format section title (convert snake_case to Title Case)
+          const title = key.replace(/_/g, ' ')
+            .split(' ')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+          
+          doc.fontSize(11).font('Helvetica-Bold').text(`${title}:`, { continued: false });
+          doc.moveDown(0.3);
+          
+          // ✅ FIX: Smart formatting based on data type
+          let formattedValue = '';
+          
+          // First, try to parse if it's a JSON string
+          let parsedValue = value;
+          if (typeof value === 'string') {
+            try {
+              // Try to parse JSON string
+              parsedValue = JSON.parse(value);
+            } catch (e) {
+              // Not JSON, use as-is
+              parsedValue = value;
+            }
+          }
+          
+          if (typeof parsedValue === 'string') {
+            // Plain string
+            formattedValue = parsedValue;
+          } else if (Array.isArray(parsedValue)) {
+            // Format array as bulleted list
+            formattedValue = parsedValue.map((item) => {
+              if (typeof item === 'object' && item !== null) {
+                // Format object items with readable key-value pairs
+                const entries = Object.entries(item)
+                  .filter(([k, v]) => v !== null && v !== undefined && v !== '')
+                  .map(([k, v]) => {
+                    // Format key as readable label
+                    const label = k.replace(/([A-Z])/g, ' $1').trim();
+                    const capitalizedLabel = label.charAt(0).toUpperCase() + label.slice(1);
+                    
+                    // Format value
+                    if (typeof v === 'boolean') {
+                      return `${capitalizedLabel}: ${v ? 'Yes' : 'No'}`;
+                    }
+                    return `${capitalizedLabel}: ${v}`;
+                  })
+                  .join(', ');
+                return `  • ${entries}`;
+              }
+              return `  • ${item}`;
+            }).join('\n');
+          } else if (typeof parsedValue === 'object' && parsedValue !== null) {
+            // Format object as key-value pairs
+            formattedValue = Object.entries(parsedValue)
+              .filter(([k, v]) => v !== null && v !== undefined && v !== '')
+              .map(([k, v]) => {
+                // Format key as readable label
+                const label = k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim();
+                const capitalizedLabel = label.charAt(0).toUpperCase() + label.slice(1);
+                
+                // Handle nested objects/arrays
+                if (typeof v === 'object' && v !== null) {
+                  if (Array.isArray(v)) {
+                    return `${capitalizedLabel}: ${v.join(', ')}`;
+                  }
+                  // Nested object - format inline
+                  const nestedEntries = Object.entries(v)
+                    .filter(([nk, nv]) => nv !== null && nv !== undefined && nv !== '')
+                    .map(([nk, nv]) => `${nk}: ${nv}`)
+                    .join(', ');
+                  return `${capitalizedLabel}: ${nestedEntries}`;
+                }
+                
+                // Format boolean values
+                if (typeof v === 'boolean') {
+                  return `${capitalizedLabel}: ${v ? 'Yes' : 'No'}`;
+                }
+                
+                return `${capitalizedLabel}: ${v}`;
+              })
+              .join('\n');
+          } else {
+            formattedValue = String(parsedValue);
+          }
+          
+          doc.fontSize(10).font('Helvetica').text(formattedValue, { align: 'left', lineGap: 2 });
+          doc.moveDown(0.5);
+        });
+        
+        doc.moveDown();
+      }
+    }
+
+    // ===== KEY IMAGES =====
+    if (report.keyImages && report.keyImages.length > 0) {
+      checkNewPage(100);
+      doc.fontSize(12).font('Helvetica-Bold').text('KEY IMAGES', { underline: true });
+      doc.moveDown();
+      
+      for (let i = 0; i < report.keyImages.length; i++) {
+        const img = report.keyImages[i];
+        
+        if (!img.dataUrl) continue; // Skip if no image data
+        
+        try {
+          // Check if we need a new page (image + caption ~200px)
+          checkNewPage(220);
+          
+          const imgY = doc.y;
+          
+          // Extract base64 data
+          let imgBuffer;
+          if (img.dataUrl.startsWith('data:image')) {
+            const base64Data = img.dataUrl.split(',')[1];
+            imgBuffer = Buffer.from(base64Data, 'base64');
+          } else {
+            // Handle file path
+            const path = require('path');
+            const fs = require('fs');
+            const fullPath = path.join(__dirname, '../../', img.dataUrl);
+            if (fs.existsSync(fullPath)) {
+              imgBuffer = fs.readFileSync(fullPath);
+            } else {
+              console.warn(`Key image file not found: ${fullPath}`);
+              continue;
+            }
+          }
+          
+          // Render image (max width: 400px to fit on page)
+          doc.image(imgBuffer, 50, imgY, { 
+            fit: [400, 300], 
+            align: 'center' 
+          });
+          
+          // Add caption
+          doc.moveDown(12); // Move below image
+          doc.fontSize(9).font('Helvetica').fillColor('#666666');
+          doc.text(
+            `Image ${i + 1} of ${report.keyImages.length}${img.caption ? `: ${img.caption}` : ''}`,
+            50,
+            doc.y,
+            { align: 'center' }
+          );
+          
+          doc.fillColor('#000000'); // Reset color
+          doc.moveDown(2);
+          
+        } catch (err) {
+          console.warn(`Failed to render key image ${i + 1}:`, err.message);
+          // Add placeholder text
+          doc.fontSize(9).font('Helvetica-Oblique').fillColor('#999999');
+          doc.text(`[Image ${i + 1} could not be loaded]`, { align: 'center' });
+          doc.fillColor('#000000');
+          doc.moveDown();
+        }
+      }
+      
       doc.moveDown();
     }
 
@@ -2694,7 +2937,7 @@ async function generateReportPDF(report) {
       
       doc.moveDown(0.5);
       
-      // Signature image (if available)
+      // ✅ FIX: Signature image (if available)
       if (report.radiologistSignatureUrl) {
         try {
           // Check if it's a base64 image
@@ -2704,23 +2947,36 @@ async function generateReportPDF(report) {
             doc.image(imgBuffer, 60, sigBoxY + 10, { width: 150, height: 40 });
           } else {
             // File path
-            doc.image(report.radiologistSignatureUrl, 60, sigBoxY + 10, { width: 150, height: 40 });
+            const path = require('path');
+            const fs = require('fs');
+            const fullPath = path.join(__dirname, '../../', report.radiologistSignatureUrl);
+            if (fs.existsSync(fullPath)) {
+              doc.image(fullPath, 60, sigBoxY + 10, { width: 150, height: 40 });
+            }
           }
         } catch (err) {
           console.warn('Failed to load signature image:', err.message);
           // Fallback to text signature
-          if (report.radiologistSignature) {
-            doc.fontSize(14).font('Helvetica-Oblique').text(report.radiologistSignature, 60, sigBoxY + 20);
+          if (report.signature?.displayName || radiologistName) {
+            doc.fontSize(14).font('Helvetica-Oblique').text(
+              report.signature?.displayName || radiologistName, 
+              60, 
+              sigBoxY + 20
+            );
           }
         }
-      } else if (report.radiologistSignature) {
-        // Text signature
-        doc.fontSize(14).font('Helvetica-Oblique').text(report.radiologistSignature, 60, sigBoxY + 20);
+      } else if (report.signature?.displayName || radiologistName) {
+        // Text signature - use proper name
+        doc.fontSize(14).font('Helvetica-Oblique').text(
+          report.signature?.displayName || radiologistName, 
+          60, 
+          sigBoxY + 20
+        );
       }
       
       // Signature details
       doc.fontSize(9).font('Helvetica');
-      doc.text(`Signed by: ${report.radiologistName}`, 60, sigBoxY + 60);
+      doc.text(`Signed by: ${radiologistName}`, 60, sigBoxY + 60);
       if (report.signature?.licenseNumber) {
         doc.text(`License: ${report.signature.licenseNumber}`, 60, sigBoxY + 73);
       }
@@ -2797,32 +3053,32 @@ MEDICAL REPORT
 ==============
 
 Report ID: ${report.reportId}
-Patient: ${report.patientName} (${report.patientID})
+Patient: ${patientName} (${patientID})
 Study: ${report.studyInstanceUID}
 Modality: ${report.modality}
 Date: ${new Date(report.reportDate).toLocaleDateString()}
-Radiologist: ${report.radiologistName}
+Radiologist: ${radiologistName}
 Status: ${report.reportStatus.toUpperCase()}
 
 CLINICAL HISTORY
 ----------------
-${report.clinicalHistory || 'N/A'}
+${clinicalHistory || 'N/A'}
 
 TECHNIQUE
 ---------
-${report.technique || 'N/A'}
+${technique || 'N/A'}
 
 FINDINGS
 --------
-${report.findingsText || 'N/A'}
+${findingsText || 'N/A'}
 
 IMPRESSION
 ----------
-${report.impression || 'N/A'}
+${impression || 'N/A'}
 
-${report.recommendations ? `RECOMMENDATIONS\n---------------\n${report.recommendations}\n` : ''}
+${recommendations ? `RECOMMENDATIONS\n---------------\n${recommendations}\n` : ''}
 
-${report.signedAt ? `\nSigned by: ${report.radiologistName}\n${report.signature?.licenseNumber ? `License: ${report.signature.licenseNumber}\n` : ''}Date: ${new Date(report.signedAt).toLocaleString()}\nStatus: Electronically Signed` : ''}
+${report.signedAt ? `\nSigned by: ${radiologistName}\n${report.signature?.licenseNumber ? `License: ${report.signature.licenseNumber}\n` : ''}Date: ${new Date(report.signedAt).toLocaleString()}\nStatus: Electronically Signed` : ''}
     `;
     return Buffer.from(text);
   }

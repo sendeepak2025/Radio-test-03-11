@@ -40,10 +40,10 @@ interface TemplateGeneratorDialogProps {
 const modalities = ['CT', 'MRI', 'X-Ray', 'Ultrasound', 'Mammography'];
 
 const bodyPartsByModality: Record<string, string[]> = {
-  'CT': ['Chest', 'Abdomen', 'Head', 'Spine', 'Pelvis', 'Extremities'],
-  'MRI': ['Brain', 'Spine', 'Knee', 'Shoulder', 'Abdomen', 'Pelvis'],
+  'CT': ['Chest', 'Abdomen', 'Head', 'Spine', 'Pelvis', 'Breast', 'Extremities'],
+  'MRI': ['Brain', 'Spine', 'Knee', 'Shoulder', 'Abdomen', 'Pelvis', 'Breast'],
   'X-Ray': ['Chest', 'Abdomen', 'Extremities', 'Spine'],
-  'Ultrasound': ['Abdomen', 'Pelvis', 'Vascular', 'Obstetric'],
+  'Ultrasound': ['Abdomen', 'Pelvis', 'Breast', 'Vascular', 'Obstetric'],
   'Mammography': ['Breast']
 };
 

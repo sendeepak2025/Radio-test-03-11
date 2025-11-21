@@ -302,6 +302,17 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
       console.log('   Initialized sections:', Object.keys(initialSections));
       console.log('   Section details:', initialSections);
       
+      // ✅ FIX: Include captured screenshots from DICOM viewer
+      let viewerScreenshots = [];
+      try {
+        const { screenshotService } = await import('@/services/screenshotService');
+        viewerScreenshots = screenshotService.exportForReport() || [];
+        console.log('📸 Including viewer screenshots in new report:', viewerScreenshots.length);
+      } catch (error) {
+        console.warn('⚠️ Could not load screenshots from viewer:', error);
+        // Continue with empty array - don't fail report creation
+      }
+      
       const reportData = {
         studyInstanceUID: studyUID,
         patientID: patientInfo?.patientID || 'Unknown',
@@ -313,7 +324,7 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
         findings: [],
         measurements: [],
         annotations: [],
-        keyImages: [],
+        keyImages: viewerScreenshots,  // ✅ FIX: Include viewer screenshots
         reportStatus: 'draft',
         version: 1,
         creationMode: 'manual'

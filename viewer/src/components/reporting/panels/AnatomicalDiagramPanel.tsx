@@ -48,6 +48,7 @@ const BODY_DIAGRAMS = {
     'Liver': ['anterior', 'axial'],
     'Pelvis': ['axial', 'sagittal'],
     'Spine': ['frontal', 'lateral', 'axial'],
+    'Breast': ['axial', 'coronal'],
     'Aorta': ['anterior', 'lateral'],
     'Extremity': ['anterior', 'lateral'],
     'Knee': ['anterior', 'lateral'],
@@ -60,6 +61,7 @@ const BODY_DIAGRAMS = {
     'Abdomen': ['axial', 'coronal'],
     'Liver': ['axial', 'coronal'],
     'Pelvis': ['axial', 'sagittal', 'coronal'],
+    'Breast': ['axial', 'sagittal', 'coronal'],
     'Prostate': ['axial', 'sagittal', 'coronal'],
     'Knee': ['sagittal', 'axial', 'coronal'],
     'Shoulder': ['coronal', 'sagittal', 'axial'],
@@ -72,6 +74,7 @@ const BODY_DIAGRAMS = {
     'Abdomen': ['axial', 'coronal'],
     'Liver': ['axial', 'coronal'],
     'Pelvis': ['axial', 'sagittal', 'coronal'],
+    'Breast': ['axial', 'sagittal', 'coronal'],
     'Prostate': ['axial', 'sagittal', 'coronal'],
     'Knee': ['sagittal', 'axial', 'coronal'],
     'Shoulder': ['coronal', 'sagittal', 'axial'],
@@ -149,6 +152,7 @@ const BODY_DIAGRAMS = {
   'CTA': {
     'Heart': ['anterior', 'axial'],
     'Chest': ['frontal', 'axial'],
+    'Breast': ['axial', 'coronal'],
     'Aorta': ['anterior', 'lateral'],
     'Brain': ['axial', 'coronal']
   }
@@ -215,7 +219,10 @@ const DIAGRAM_FILE_MAP: Record<string, Record<string, string>> = {
     'mlo': 'breast-mlo.png',
     'radial': 'breast-radial.png',
     'antiradial': 'breast-antiradial.png',
-    'frontal': 'breast-bilateral.png'
+    'frontal': 'breast-bilateral.png',
+    'axial': 'breast-bilateral.png',
+    'sagittal': 'breast-mlo.png',
+    'coronal': 'breast-cc.png'
   },
   'extremity': {
     'anterior': 'extremity-generic.png',
