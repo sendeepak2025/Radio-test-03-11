@@ -44,6 +44,7 @@ const fhirRoutes = require('./fhir');
 const templatesRoutes = require('./templates');
 const annotationsRoutes = require('./annotations');
 const templateBuilderRoutes = require('./template-builder');
+const hospitalSettingsRoutes = require('./hospital-settings');
 
 const router = express.Router();
 
@@ -206,6 +207,7 @@ router.use('/api/monitoring', systemMonitoringRoutes);
 
 // User Management API - CRUD operations for users
 router.use('/api/users', usersRoutes);
+router.use('/api/hospital-settings', hospitalSettingsRoutes);
 
 // Super Admin API - Dashboard, analytics, and contact requests
 router.use('/api/superadmin', superAdminRoutes);

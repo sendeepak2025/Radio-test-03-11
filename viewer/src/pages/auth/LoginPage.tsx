@@ -1,100 +1,72 @@
-import React, { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import {
-  Box,
-  Paper,
-  TextField,
-  Button,
-  Typography,
-  Alert,
-  CircularProgress,
-  Link,
-  Divider,
-  useTheme,
-  Checkbox,
-  FormControlLabel,
-} from '@mui/material'
-import { Helmet } from 'react-helmet-async'
-import { useAuth } from '../../hooks/useAuth'
-import { useAppSelector } from '../../store/hooks'
-import type { LoginCredentials } from '../../types/auth'
-import { getRoleBasedRedirect } from '../../utils/roleBasedRedirect'
-import { NotificationPermissionPrompt } from '../../components/notifications/NotificationPermissionPrompt'
-import { shouldShowPermissionPrompt } from '../../utils/notificationPermission'
+import React, { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { Helmet } from "react-helmet-async";
+import { useAuth } from "../../hooks/useAuth";
+import type { LoginCredentials } from "../../types/auth";
+import { getRoleBasedRedirect } from "../../utils/roleBasedRedirect";
+import { NotificationPermissionPrompt } from "../../components/notifications/NotificationPermissionPrompt";
+import { shouldShowPermissionPrompt } from "../../utils/notificationPermission";
 
 const LoginPage: React.FC = () => {
-  const theme = useTheme()
-  const navigate = useNavigate()
-  const location = useLocation()
-  const { login, isLoading, error, clearAuthError } = useAuth()
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { login, isLoading, error, clearAuthError } = useAuth();
 
   const [credentials, setCredentials] = useState<LoginCredentials>({
-    username: '',
-    password: '',
+    username: "",
+    password: "",
     rememberMe: false,
-  })
-  const [showPermissionPrompt, setShowPermissionPrompt] = useState(false)
+  });
 
-  const from = (location.state as any)?.from?.pathname || '/dashboard'
+  const [showPermissionPrompt, setShowPermissionPrompt] = useState(false);
 
-  const handleInputChange = (field: keyof LoginCredentials) => (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    setCredentials(prev => ({
+  const from = (location.state as any)?.from?.pathname || "/dashboard";
+
+  const handleInputChange =
+    (field: keyof LoginCredentials) =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      setCredentials((prev) => ({
+        ...prev,
+        [field]: event.target.value,
+      }));
+      if (error) clearAuthError();
+    };
+
+  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCredentials((prev) => ({
       ...prev,
-      [field]: event.target.value,
-    }))
-
-    // Clear error when user starts typing
-    if (error) {
-      clearAuthError()
-    }
-  }
-
-  const handleCheckboxChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setCredentials(prev => ({
-      ...prev,
-      rememberMe: event.target.checked,
-    }))
-  }
+      rememberMe: e.target.checked,
+    }));
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault()
-console.log("Login")
-    if (!credentials.username || !credentials.password) {
-      return
-    }
+    event.preventDefault();
+
+    if (!credentials.username || !credentials.password) return;
 
     try {
-      const result = await login(credentials)
-console.log(result,"COOKIES AUTH")
-      if (result.type === 'auth/login/fulfilled') {
-        // Get role from the result payload
-        const payload = result.payload as any
-        const role = payload?.role || null
-        const userRoles = payload?.user?.roles || []
+      const result = await login(credentials);
 
-        // Check if we should request notification permission
+      if (result.type === "auth/login/fulfilled") {
+        const payload = result.payload as any;
+        const role = payload?.role || null;
+        const userRoles = payload?.user?.roles || [];
+
         if (shouldShowPermissionPrompt()) {
-          setShowPermissionPrompt(true)
-          // Delay navigation to show permission prompt
+          setShowPermissionPrompt(true);
           setTimeout(() => {
-            const redirectPath = getRoleBasedRedirect(role, userRoles)
-            console.log('Login successful, redirecting to:', redirectPath)
-            navigate(redirectPath, { replace: true })
-          }, 1000)
+            const redirectPath = getRoleBasedRedirect(role, userRoles);
+            navigate(redirectPath, { replace: true });
+          }, 1000);
         } else {
-          // Determine redirect based on role
-          const redirectPath = getRoleBasedRedirect(role, userRoles)
-          console.log('Login successful, redirecting to:', redirectPath)
-          navigate(redirectPath, { replace: true })
+          const redirectPath = getRoleBasedRedirect(role, userRoles);
+          navigate(redirectPath, { replace: true });
         }
       }
     } catch (err) {
-      // Error is handled by Redux
-      console.error('Login failed:', err)
+      console.log("Login failed:", err);
     }
-  }
+  };
 
   return (
     <>
@@ -102,154 +74,192 @@ console.log(result,"COOKIES AUTH")
         <title>Login - Medical Imaging Viewer</title>
       </Helmet>
 
-      {/* Notification Permission Prompt */}
       <NotificationPermissionPrompt
         autoShow={showPermissionPrompt}
-        onGranted={() => console.log('Notification permission granted')}
-        onDenied={() => console.log('Notification permission denied')}
+        onGranted={() => console.log("Notification permission granted")}
+        onDenied={() => console.log("Notification permission denied")}
         onDismiss={() => setShowPermissionPrompt(false)}
       />
 
-      <Box
-        sx={{
-          minHeight: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: theme.palette.background.default,
-          backgroundImage: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          p: 3,
-        }}
+      {/* FULL PAGE LAYOUT (NO OVERFLOW BUG ANYWHERE) */}
+      <div
+        className="
+        min-h-screen 
+        w-full 
+        bg-gray-50 
+        flex flex-col 
+        lg:flex-row 
+        overflow-y-auto
+      "
       >
-        <Paper
-          elevation={8}
-          sx={{
-            p: 4,
-            width: '100%',
-            maxWidth: 400,
-            borderRadius: 2,
-          }}
+        {/* LEFT BRAND PANEL */}
+        <div
+          className="
+          hidden lg:flex 
+          flex-col justify-between 
+          w-1/2 
+          bg-gradient-to-br from-indigo-600 to-purple-700 
+          text-white p-14
+        "
         >
-          {/* Header */}
-          <Box sx={{ textAlign: 'center', mb: 4 }}>
-            <Typography
-              variant="h4"
-              component="h1"
-              gutterBottom
-              sx={{
-                fontWeight: 600,
-                color: theme.palette.primary.main,
-              }}
-            >
-              ScanFlowAI
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Sign in to access your medical imaging workspace
-            </Typography>
-          </Box>
+          <div>
+            <h1 className="text-5xl font-extrabold tracking-tight">ScanFlowAI</h1>
+            <p className="text-indigo-100 text-lg mt-4 leading-relaxed">
+              AI-powered medical imaging, simplified and revolutionized.
+            </p>
+          </div>
 
-          {/* Error Alert */}
-          {error && (
-            <Alert severity="error" sx={{ mb: 3 }}>
-              {error}
-            </Alert>
-          )}
+          <p className="text-indigo-200 text-sm">
+            © 2025 ScanFlowAI — All rights reserved.
+          </p>
+        </div>
 
-          {/* Login Form */}
-          <Box component="form" onSubmit={handleSubmit} noValidate>
-            <TextField
-              fullWidth
-              label="Username or Email"
-              type="text"
-              value={credentials.username}
-              onChange={handleInputChange('username')}
-              margin="normal"
-              required
-              autoComplete="username"
-              autoFocus
-              disabled={isLoading}
-              error={!credentials.username && error !== null}
-            />
+        {/* RIGHT SIDE LOGIN PANEL */}
+        <div
+          className="
+          w-full lg:w-1/2 
+          flex 
+          items-start lg:items-center   /* MOBILE = TOP, DESKTOP = CENTER */
+          justify-center 
+          p-6
+        "
+        >
+          {/* LOGIN CARD */}
+          <div
+            className="
+            bg-white 
+            rounded-2xl 
+            shadow-xl 
+            p-8 
+            w-full max-w-md
+            
+            max-h-[95vh] 
+            overflow-y-auto
+            scrollbar-thin scrollbar-thumb-gray-300
 
-            <TextField
-              fullWidth
-              label="Password"
-              type="password"
-              value={credentials.password}
-              onChange={handleInputChange('password')}
-              margin="normal"
-              required
-              autoComplete="current-password"
-              disabled={isLoading}
-              error={!credentials.password && error !== null}
-            />
+            animate-[fadeIn_0.4s_ease]
+          "
+          >
+            {/* HEADER */}
+            <h2 className="text-3xl font-bold text-gray-900 text-center">
+              Welcome Back
+            </h2>
+            <p className="text-gray-600 text-center text-sm mt-1">
+              Sign in to your ScanFlowAI workspace
+            </p>
 
-            <Button
-              type="submit"
-              fullWidth
-              variant="contained"
-              size="large"
-              disabled={isLoading || !credentials.username || !credentials.password}
-              sx={{ mt: 3, mb: 2, py: 1.5 }}
-            >
-              {isLoading ? (
-                <CircularProgress size={24} color="inherit" />
-              ) : (
-                'Sign In'
-              )}
-            </Button>
+            {/* ERROR */}
+            {error && (
+              <div className="mt-4 p-3 bg-red-100 border border-red-300 text-red-700 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
 
-            <Box sx={{ textAlign: 'center' }}>
-              <Link
-                component="button"
-                variant="body2"
-                onClick={(e) => {
-                  e.preventDefault()
-                  // Handle forgot password
-                }}
-                disabled={isLoading}
+            {/* LOGIN FORM */}
+            <form onSubmit={handleSubmit} className="mt-7 space-y-5">
+              {/* Username */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Username or Email
+                </label>
+                <input
+                  type="text"
+                  value={credentials.username}
+                  onChange={handleInputChange("username")}
+                  required
+                  className="
+                    w-full px-4 py-3 rounded-lg bg-gray-100 
+                    border border-gray-300 text-sm 
+                    focus:ring-2 focus:ring-indigo-500
+                    focus:bg-white transition
+                  "
+                  placeholder="Enter your username"
+                />
+              </div>
+
+              {/* Password */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={credentials.password}
+                  onChange={handleInputChange("password")}
+                  required
+                  className="
+                    w-full px-4 py-3 rounded-lg bg-gray-100 
+                    border border-gray-300 text-sm 
+                    focus:ring-2 focus:ring-indigo-500
+                    focus:bg-white transition
+                  "
+                  placeholder="Enter your password"
+                />
+              </div>
+
+              {/* REMEMBER ME */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={credentials.rememberMe}
+                  onChange={handleCheckboxChange}
+                  className="h-4 w-4"
+                />
+                <span className="text-sm text-gray-700">Remember me</span>
+              </div>
+
+              {/* SUBMIT BUTTON */}
+              <button
+                type="submit"
+                disabled={
+                  isLoading ||
+                  !credentials.username ||
+                  !credentials.password
+                }
+                className={`
+                w-full py-3 rounded-lg text-white font-semibold text-sm shadow-md 
+                transition active:scale-[0.97]
+                ${
+                  isLoading
+                    ? "bg-indigo-400 cursor-not-allowed"
+                    : "bg-indigo-600 hover:bg-indigo-700"
+                }
+              `}
               >
-                Forgot your password?
-              </Link>
-          </Box>
-          <FormControlLabel
-            control={<Checkbox checked={credentials.rememberMe} onChange={handleCheckboxChange} />}
-            label="Remember me"
-            sx={{ mt: 1 }}
-          />
+                {isLoading ? "Processing..." : "Sign In"}
+              </button>
 
-          {/* Register redirect */}
-          <Box sx={{ mt: 2, textAlign: 'center' }}>
-            <Button
-              variant="text"
-              onClick={() => navigate('/app/register')}
-              disabled={isLoading}
-            >
-              New here? Create an account
-            </Button>
-          </Box>
-        </Box>
+              {/* Forgot Password */}
+              <div className="text-center mt-1">
+                <button className="text-sm text-indigo-600 hover:underline">
+                  Forgot your password?
+                </button>
+              </div>
 
-          {/* Test Credentials (Development Only) */}
-          {/* {import.meta.env.DEV && (
-            <>
-              <Divider sx={{ my: 3 }} />
-              <TestCredentials />
-            </>
-          )} */}
+              {/* Register Link */}
+              <p className="text-center text-sm text-gray-700 mt-2">
+                New here?{" "}
+                <button
+                  type="button"
+                  onClick={() => navigate("/app/register")}
+                  className="text-indigo-600 font-semibold hover:underline"
+                >
+                  Create an account
+                </button>
+              </p>
+            </form>
 
-          <Divider sx={{ my: 3 }} />
-
-          {/* Footer */}
-          <Box sx={{ textAlign: 'center' }}>
-            <Typography variant="caption" color="text.secondary">
-              Medical Imaging Platform v1.0.0
-            </Typography>
-          </Box>
-        </Paper>
-      </Box>
+            {/* FOOTER */}
+            <div className="mt-8 text-center">
+              <p className="text-xs text-gray-500">
+                Medical Imaging Platform — v1.0.0
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     </>
-  )
-}
+  );
+};
 
-export default LoginPage
+export default LoginPage;

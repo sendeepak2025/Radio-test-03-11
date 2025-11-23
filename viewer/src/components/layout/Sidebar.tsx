@@ -102,6 +102,13 @@ const navigationItems: NavigationItem[] = [
 
 const adminItems: NavigationItem[] = [
   {
+    id: 'hospital-settings',
+    label: 'Hospital Settings',
+    icon: <Settings />,
+    path: '/app/admin/hospital-settings',
+    permission: 'admin:manage',
+  },
+  {
     id: 'anonymization',
     label: 'Anonymization',
     icon: <AdminPanelSettings />,

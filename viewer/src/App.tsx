@@ -38,6 +38,7 @@ import IPWhitelistPage from './pages/admin/IPWhitelistPage'
 import DataRetentionPage from './pages/admin/DataRetentionPage'
 import TemplatesPage from './pages/admin/TemplatesPage'
 import FeedbackManagementPage from './pages/admin/FeedbackManagementPage'
+import HospitalSettingsPage from './pages/admin/HospitalSettingsPage'
 
 // Simple pages without complex dependencies
 const LoginPage = React.lazy(() => import('./pages/auth/LoginPage'))
@@ -250,6 +251,16 @@ if (refreshToken) {
             </Route>
 
             {/* App Routes - Authentication */}
+            <Route
+              path="/app/admin/hospital-settings"
+              element={
+                <SimpleProtectedRoute>
+                  <MainLayout>
+                    <HospitalSettingsPage />
+                  </MainLayout>
+                </SimpleProtectedRoute>
+              }
+            />
             <Route
               path="/app/login"
               element={

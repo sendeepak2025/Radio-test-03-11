@@ -74,6 +74,11 @@ const HospitalSchema = new mongoose.Schema({
       default: false
     }
   },
+  settingsId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'HospitalSettings',
+    index: true
+  },
   apiKey: {
     type: String,
     required: true,

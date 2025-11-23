@@ -92,6 +92,9 @@ export const uploadFile = async (
 
   // Get auth token
   const token = getAuthToken()
+  
+  // Get CSRF token for POST request
+  const csrfToken = getCSRFToken()
 
   const response = await fetch(url, {
     method: 'POST',
@@ -99,6 +102,7 @@ export const uploadFile = async (
     credentials: 'include', // Send cookies
     headers: {
       ...(token && { 'Authorization': `Bearer ${token}` }),
+      ...(csrfToken && { 'X-XSRF-TOKEN': csrfToken }),
     },
   })
 
@@ -836,7 +840,7 @@ export default {
     return response.json()
   },
   // AI Assistant API
-  checkAIHealth: async () => {
+  checkAIAssistantHealth: async () => {
     const response = await apiCall('/api/reports/ai/health')
     return response.json()
   },

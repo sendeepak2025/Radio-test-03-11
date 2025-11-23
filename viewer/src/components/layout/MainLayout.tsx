@@ -168,6 +168,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           requiredRoles: ['admin', 'system:admin', 'technician']
         },
         // { text: 'Reports', icon: <AssessmentIcon />, path: '/app/reports' },
+        { text: 'Hospital Setting ', icon: <SettingsIcon />, path: '/app/admin/hospital-settings' },
       ]
     },
     {
