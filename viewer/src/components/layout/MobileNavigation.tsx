@@ -24,30 +24,30 @@ export default function MobileNavigation({ notificationCount = 0 }: MobileNaviga
 
   const getActiveTab = () => {
     const path = location.pathname;
-    if (path === '/' || path === '/dashboard') return 0;
-    if (path.startsWith('/search')) return 1;
-    if (path.startsWith('/reports')) return 2;
-    if (path.startsWith('/notifications')) return 3;
-    if (path.startsWith('/profile')) return 4;
+    if (path === '/app' || path === '/app/dashboard') return 0;
+    if (path.startsWith('/app/search')) return 1;
+    if (path.startsWith('/app/reports')) return 2;
+    if (path.startsWith('/app/notifications')) return 3;
+    if (path.startsWith('/app/profile')) return 4;
     return 0;
   };
 
   const handleChange = (event: React.SyntheticEvent, newValue: number) => {
     switch (newValue) {
       case 0:
-        navigate('/dashboard');
+        navigate('/app/dashboard');
         break;
       case 1:
-        navigate('/search');
+        navigate('/app/search');
         break;
       case 2:
-        navigate('/reports');
+        navigate('/app/reports');
         break;
       case 3:
-        navigate('/notifications');
+        navigate('/app/notifications');
         break;
       case 4:
-        navigate('/profile');
+        navigate('/app/profile');
         break;
     }
   };
@@ -60,7 +60,7 @@ export default function MobileNavigation({ notificationCount = 0 }: MobileNaviga
         left: 0,
         right: 0,
         zIndex: 1000,
-        display: { xs: 'block', md: 'none' }
+        display: { xs: 'block', sm: 'none' }
       }}
       elevation={3}
     >

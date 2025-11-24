@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const User = require('../models/User')
+const HospitalSettings = require('../models/HospitalSettings')
 
 const ACCESS_TOKEN_EXPIRES_IN = '30m'
 const REFRESH_TOKEN_EXPIRES_IN = '7d'
@@ -35,66 +36,103 @@ function setRefreshCookie(res, token) {
 
 exports.login = async (req, res) => {
   try {
-    const { username, password, email } = req.body
-    
-    // Allow login with either username or email
+    const { username, password, email } = req.body;
+
     if ((!username && !email) || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Username/email and password required' 
-      })
+      return res.status(400).json({
+        success: false,
+        message: 'Username/email and password required'
+      });
     }
 
-    // Find user by username or email
-    const query = username ? { username } : { email }
-    const user = await User.findOne(query)
-    
+    const query = username ? { username } : { email };
+    const user = await User.findOne(query);
+
     if (!user || !user.isActive) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Invalid credentials' 
-      })
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
     }
 
-    const ok = await bcrypt.compare(password, user.passwordHash)
+    const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Invalid credentials' 
-      })
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
     }
 
-    const userPublic = user.toPublicJSON()
-    const accessToken = signAccessToken(userPublic)
-    const refreshToken = signRefreshToken(userPublic)
+    const userPublic = user.toPublicJSON();
+    const accessToken = signAccessToken(userPublic);
+    const refreshToken = signRefreshToken(userPublic);
 
-    setRefreshCookie(res, refreshToken)
+    setRefreshCookie(res, refreshToken);
 
-    user.lastLogin = new Date()
-    await user.save()
+    user.lastLogin = new Date();
+    await user.save();
 
-    // Determine primary role for frontend routing
-    const primaryRole = user.getPrimaryRole()
+    const primaryRole = user.getPrimaryRole();
 
-    console.log(`✅ User logged in: ${user.username} (${primaryRole})`)
+    // ----------------------------------------------------
+    // 🏥 Hospital Settings Logic Based on Role
+    // ----------------------------------------------------
+    let hospitalIdToUse = null;
 
+    if (
+      user.roles.includes("admin") ||
+      user.roles.includes("super_admin") ||
+      user.roles.includes("system:admin")
+    ) {
+      // Admin — apna hospital
+      hospitalIdToUse = user.hospitalId;
+    } else {
+      // Non-admin — creator ka hospital
+      const creator = await User.findById(user.createdBy);
+
+      if (!creator) {
+        return res.status(500).json({
+          success: false,
+          message: "Creator user not found"
+        });
+      }
+
+      hospitalIdToUse = creator.hospitalId;
+    }
+
+    // ----------------------------------------------------
+    // 🔍 Fetch Hospital Settings
+    // ----------------------------------------------------
+    const hospitalSettings = await HospitalSettings.findOne({
+      hospitalId: hospitalIdToUse
+    });
+
+    // ----------------------------------------------------
+    // 🖼️ Add Hospital Logo to userPublic
+    // ----------------------------------------------------
+    userPublic.hospitalLogo = hospitalSettings?.logoUrl || null;
+
+    // ----------------------------------------------------
+    // Final Response
+    // ----------------------------------------------------
     return res.json({
       success: true,
       accessToken,
       refreshToken,
       user: userPublic,
-      role: primaryRole, // Primary role for routing
-      // Convert ObjectId to string for response
-      hospitalId: user._id ? user._id.toString() : null
-    })
+      role: primaryRole,
+      hospitalId: hospitalIdToUse || null
+    });
+
   } catch (err) {
-    console.error('Login error:', err)
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Server error' 
-    })
+    console.error('Login error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
   }
-}
+};
+
 
 exports.logout = async (req, res) => {
   try {

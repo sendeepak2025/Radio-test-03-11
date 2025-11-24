@@ -1,1685 +1,1279 @@
-"use client"
+"use client";
 
-import React, { useEffect, useState, useMemo } from "react"
+import React, { useEffect, useState, useMemo } from "react";
 import {
-  Box,
-  Paper,
-  Typography,
-  Card,
-  CardActionArea,
-  Button,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  TextField,
-  CircularProgress,
-  Alert,
-  Chip,
-  Avatar,
-  Stack,
-  Divider,
-  IconButton,
-  Grid,
-  List,
-  ListItemButton,
-  ListItemText,
-  ListItemIcon,
-  InputAdornment,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Tabs,
-  Tab,
-  Tooltip,
-  Fade,
-  Grow,
-  alpha,
-  useTheme,
-} from "@mui/material"
-import {
-  People,
-  Science,
-  Add,
-  Close,
-  CloudUpload,
+  Users,
+  Plus,
+  X,
+  UploadCloud,
   Image,
   Folder,
   ChevronRight,
-  Error as ErrorIcon,
+  AlertTriangle,
   Upload,
   CheckCircle,
   Download,
-  FileDownload,
+  FileDown,
   Search,
   Mic,
-  FilterList,
-  Clear,
-  Sort,
-  ViewModule,
-  ViewList,
-} from "@mui/icons-material"
-import { Helmet } from "react-helmet-async"
+  LayoutGrid,
+  List,
+  Calendar,
+} from "lucide-react";
+
+import { Helmet } from "react-helmet-async";
+import { useNavigate } from "react-router-dom";
+
 import {
   getPatients,
   getPatientStudies,
-  getStudies,
   createPatient,
   uploadDicomFileForPatient,
   uploadPacsStudy,
   exportPatientData,
   exportStudyData,
-} from "../../services/ApiService"
-import { useNavigate } from "react-router-dom"
-import { ExportButton } from '../../components/export/ExportButton'
+} from "../../services/ApiService";
 
+import { Alert } from "../../components/ui/alert";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/Button";
+import { Card, CardBody, CardFooter } from "../../components/ui/Card";
+import { Input } from "../../components/ui/Input";
+import { Modal, ModalFooter } from "../../components/ui/Modal";
+import { Select } from "../../components/ui/Select";
+
+// ---------------- Types ----------------
 interface PatientItem {
-  patientID: string
-  patientName: string
-  birthDate?: string
-  sex?: string
-  studyCount?: number
+  patientID: string;
+  patientName: string;
+  birthDate?: string;
+  sex?: string;
+  studyCount?: number;
 }
 
 interface PatientStudyItem {
-  studyInstanceUID: string
-  patientName: string
-  patientID: string
-  modality: string
-  numberOfSeries: number
-  numberOfInstances: number
-  studyDescription?: string
+  studyInstanceUID: string;
+  patientName: string;
+  patientID: string;
+  modality: string;
+  numberOfSeries: number;
+  numberOfInstances: number;
+  studyDescription?: string;
+  studyDate?: string;
 }
 
+// -------- DatePicker Wrapper (simple HTML date) --------
+interface DatePickerProps {
+  label: string;
+  selectedDate: Date | undefined;
+  onChange: (date: Date | undefined) => void;
+  placeholder?: string;
+  fullWidth?: boolean;
+}
+
+const DatePicker: React.FC<DatePickerProps> = ({
+  label,
+  selectedDate,
+  onChange,
+  placeholder = "Select date",
+  fullWidth = true,
+}) => {
+  return (
+    <div className={fullWidth ? "w-full" : ""}>
+      <label className="text-sm font-medium text-gray-700 block mb-1">
+        {label}
+      </label>
+      <Input
+        type="date"
+        value={selectedDate ? selectedDate.toISOString().substring(0, 10) : ""}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          onChange(e.target.value ? new Date(e.target.value) : undefined)
+        }
+        placeholder={placeholder}
+        fullWidth
+        startIcon={<Calendar className="w-5 h-5 text-gray-400" />}
+      />
+    </div>
+  );
+};
+
+// ================= MAIN COMPONENT ==================
 const PatientsPage: React.FC = () => {
-  const theme = useTheme()
-  const navigate = useNavigate()
-  
-  // Existing state
-  const [tabIndex, setTabIndex] = useState(0)
-  const [patients, setPatients] = useState<PatientItem[]>([])
-  const [selectedPatientID, setSelectedPatientID] = useState<string | null>(null)
-  const [studiesForPatient, setStudiesForPatient] = useState<PatientStudyItem[]>([])
-  const [loadingPatients, setLoadingPatients] = useState(false)
-  const [loadingPatientStudies, setLoadingPatientStudies] = useState(false)
-  const [allStudies, setAllStudies] = useState<PatientStudyItem[]>([])
-  const [loadingAllStudies, setLoadingAllStudies] = useState(false)
-  const [addOpen, setAddOpen] = useState(false)
-  const [studiesPopupOpen, setStudiesPopupOpen] = useState(false)
-  const [newPatientName, setNewPatientName] = useState("")
-  const [newPatientBirthDate, setNewPatientBirthDate] = useState("")
-  const [newPatientSex, setNewPatientSex] = useState("")
-  const [addingPatient, setAddingPatient] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [uploadFileObj, setUploadFileObj] = useState<File | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [pacsUploadOpen, setPacsUploadOpen] = useState(false)
-  const [pacsFiles, setPacsFiles] = useState<File[]>([])
-  const [pacsUploading, setPacsUploading] = useState(false)
-  const [pacsUploadSuccess, setPacsUploadSuccess] = useState(false)
-  const [uploadedStudyUID, setUploadedStudyUID] = useState<string | null>(null)
-  const [exporting, setExporting] = useState(false)
-  const [exportDialogOpen, setExportDialogOpen] = useState(false)
-  const [exportTarget, setExportTarget] = useState<{ type: 'patient' | 'study', id: string } | null>(null)
-  const [includeImages, setIncludeImages] = useState(true)
-  
-  // Enhanced search and filter state
-  const [searchTerm, setSearchTerm] = useState("") // Immediate input value
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("") // Value used for filtering
-  const [filterSex, setFilterSex] = useState<string>("all")
-  const [filterModality, setFilterModality] = useState<string>("all")
-  const [studyDateFilter, setStudyDateFilter] = useState<string>("30days") // Default to last 30 days
-  const [sortBy, setSortBy] = useState<string>("date") // Default sort by date (newest first)
-  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
-  const [isListening, setIsListening] = useState(false)
-  const [voiceSupported, setVoiceSupported] = useState(false)
+  const navigate = useNavigate();
 
-  // Check voice recognition support
+  // Core data
+  const [patients, setPatients] = useState<PatientItem[]>([]);
+  const [selectedPatientID, setSelectedPatientID] = useState<string | null>(
+    null
+  );
+  const [studiesForPatient, setStudiesForPatient] = useState<
+    PatientStudyItem[]
+  >([]);
+
+  // State: loading
+  const [loadingPatients, setLoadingPatients] = useState(false);
+  const [loadingPatientStudies, setLoadingPatientStudies] = useState(false);
+
+  // Add patient modal
+  const [addOpen, setAddOpen] = useState(false);
+  const [newPatientName, setNewPatientName] = useState("");
+  const [newPatientBirthDate, setNewPatientBirthDate] = useState<
+    Date | undefined
+  >(undefined);
+  const [newPatientSex, setNewPatientSex] = useState("");
+  const [addingPatient, setAddingPatient] = useState(false);
+
+  // Studies modal
+  const [studiesPopupOpen, setStudiesPopupOpen] = useState(false);
+  const [uploadFileObj, setUploadFileObj] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  // PACS upload modal
+  const [pacsUploadOpen, setPacsUploadOpen] = useState(false);
+  const [pacsFiles, setPacsFiles] = useState<File[]>([]);
+  const [pacsUploading, setPacsUploading] = useState(false);
+  const [pacsUploadSuccess, setPacsUploadSuccess] = useState(false);
+  const [uploadedStudyUID, setUploadedStudyUID] = useState<string | null>(null);
+
+  // Export dialog
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportTarget, setExportTarget] = useState<{
+    type: "patient" | "study";
+    id: string;
+  } | null>(null);
+  const [includeImages, setIncludeImages] = useState(true);
+  const [exporting, setExporting] = useState(false);
+
+  // Filters
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
+  const [filterSex, setFilterSex] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<string>("date");
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+
+  // Voice search
+  const [isListening, setIsListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+
+  // Error
+  const [error, setError] = useState<string | null>(null);
+
+  // Voice support check
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    setVoiceSupported(!!SpeechRecognition)
-  }, [])
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    setVoiceSupported(!!SpeechRecognition);
+  }, []);
 
-  // Debounce search term to prevent UI lag on large lists
+  // Debounce search input
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchTerm(searchTerm)
-    }, 300) // 300ms delay
+    const t = setTimeout(() => setDebouncedSearchTerm(searchTerm), 300);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
 
-    return () => clearTimeout(timer)
-  }, [searchTerm])
-
+  // Load patients on mount
   useEffect(() => {
     const loadPatients = async () => {
       try {
-        setLoadingPatients(true)
-        setError(null)
-        const res = await getPatients()
-        if (!res.success) throw new Error(res.message || "Failed to load patients")
-        setPatients(res.data || [])
+        setLoadingPatients(true);
+        setError(null);
+        const res = await getPatients();
+        if (!res.success)
+          throw new Error(res.message || "Failed to load patients");
+        setPatients(res.data || []);
       } catch (e: any) {
-        setError(e.message)
+        setError(e.message);
       } finally {
-        setLoadingPatients(false)
+        setLoadingPatients(false);
       }
-    }
-    loadPatients()
-  }, [])
+    };
+    loadPatients();
+  }, []);
 
-  useEffect(() => {
-    const maybeLoadStudies = async () => {
-      if (tabIndex === 1 && allStudies.length === 0 && !loadingAllStudies) {
-        try {
-          setLoadingAllStudies(true)
-          setError(null)
-          const res = await getStudies()
-          if (!res.success) throw new Error(res.message || "Failed to load studies")
-          setAllStudies(res.data || [])
-        } catch (e: any) {
-          setError(e.message)
-        } finally {
-          setLoadingAllStudies(false)
-        }
-      }
-    }
-    maybeLoadStudies()
-  }, [tabIndex])
+  // Selected patient object
+  const selectedPatient = useMemo(
+    () => patients.find((p) => p.patientID === selectedPatientID) || null,
+    [patients, selectedPatientID]
+  );
 
-  const handlePatientClick = async (patientID: string) => {
-    try {
-      setSelectedPatientID(patientID)
-      setStudiesPopupOpen(true)
-      setLoadingPatientStudies(true)
-      setError(null)
-      const res = await getPatientStudies(patientID)
-      if (!res.success) throw new Error(res.message || "Failed to load studies for patient")
-      setStudiesForPatient(res.data || [])
-    } catch (e: any) {
-      setError(e.message)
-    } finally {
-      setLoadingPatientStudies(false)
-    }
-  }
-
-  const handleStudyClick = (studyUID: string) => {
-    navigate(`/app/patient/studies/${studyUID}`)
-  }
-
-  const handleAddPatientOpen = () => setAddOpen(true)
-  const handleAddPatientClose = () => {
-    setAddOpen(false)
-    setNewPatientName("")
-    setNewPatientBirthDate("")
-    setNewPatientSex("")
-  }
-
-  const handleAddPatientSubmit = async () => {
-    try {
-      setAddingPatient(true)
-      setError(null)
-      const res = await createPatient({
-        patientName: newPatientName.trim(),
-        birthDate: newPatientBirthDate.trim(),
-        sex: newPatientSex.trim(),
-      })
-      if (!res.success) throw new Error(res.message || "Failed to create patient")
-      const list = await getPatients()
-      setPatients(list.data || [])
-      handleAddPatientClose()
-    } catch (e: any) {
-      setError(e.message)
-    } finally {
-      setAddingPatient(false)
-    }
-  }
-
-  const handleUploadDicom = async () => {
-    try {
-      if (!selectedPatientID || !uploadFileObj) return
-      setUploading(true)
-      setError(null)
-      const res = await uploadDicomFileForPatient(uploadFileObj, selectedPatientID)
-      if (!res.success) throw new Error(res.message || "Upload failed")
-      const studies = await getPatientStudies(selectedPatientID)
-      setStudiesForPatient(studies.data || [])
-      setUploadFileObj(null)
-    } catch (e: any) {
-      setError(e.message)
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const selectedPatient = patients.find((p) => p.patientID === selectedPatientID)
-
-  // Voice search handler
-  const handleVoiceSearch = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      setError("Voice recognition not supported in this browser")
-      return
-    }
-
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'en-US'
-    recognition.continuous = false
-    recognition.interimResults = false
-
-    recognition.onstart = () => {
-      setIsListening(true)
-    }
-
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript
-      setSearchTerm(transcript)
-      setIsListening(false)
-    }
-
-    recognition.onerror = (event: any) => {
-      console.error('Voice recognition error:', event.error)
-      setError(`Voice recognition error: ${event.error}`)
-      setIsListening(false)
-    }
-
-    recognition.onend = () => {
-      setIsListening(false)
-    }
-
-    recognition.start()
-  }
-
-  // Filtered and sorted patients
+  // Filter + sort patients
   const filteredPatients = useMemo(() => {
     let filtered = patients.filter((patient) => {
-      const matchesSearch = 
+      const matchesSearch =
         debouncedSearchTerm === "" ||
-        patient.patientName?.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-        patient.patientID.toLowerCase().includes(debouncedSearchTerm.toLowerCase())
-      
-      const matchesSex = filterSex === "all" || patient.sex === filterSex
-      
-      return matchesSearch && matchesSex
-    })
+        patient.patientName
+          ?.toLowerCase()
+          .includes(debouncedSearchTerm.toLowerCase()) ||
+        patient.patientID
+          .toLowerCase()
+          .includes(debouncedSearchTerm.toLowerCase());
 
-    // Sort patients
+      const matchesSex = filterSex === "all" || patient.sex === filterSex;
+
+      return matchesSearch && matchesSex;
+    });
+
     filtered.sort((a, b) => {
       switch (sortBy) {
         case "name":
-          return (a.patientName || "").localeCompare(b.patientName || "")
+          return (a.patientName || "").localeCompare(b.patientName || "");
         case "id":
-          return a.patientID.localeCompare(b.patientID)
+          return a.patientID.localeCompare(b.patientID);
         case "studies":
-          return (b.studyCount || 0) - (a.studyCount || 0)
+          return (b.studyCount || 0) - (a.studyCount || 0);
         case "date":
-          // Sort by birth date as a proxy for recent activity/relevance in this context if needed
-          // Or keep as is. Original code sorted by birthDate.
-          return (b.birthDate || "").localeCompare(a.birthDate || "")
+          return (b.birthDate || "").localeCompare(a.birthDate || "");
         default:
-          return 0
+          return 0;
       }
-    })
+    });
 
-    return filtered
-  }, [patients, debouncedSearchTerm, filterSex, sortBy])
+    return filtered;
+  }, [patients, debouncedSearchTerm, filterSex, sortBy]);
 
-  // Filtered and sorted studies
-  const filteredStudies = useMemo(() => {
-    let filtered = allStudies.filter((study) => {
-      const matchesSearch = 
-        debouncedSearchTerm === "" ||
-        study.patientName?.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-        study.patientID.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-        study.studyDescription?.toLowerCase().includes(debouncedSearchTerm.toLowerCase())
-      
-      const matchesModality = filterModality === "all" || study.modality === filterModality
-      
-      // Date filtering
-      let matchesDate = true
-      if (studyDateFilter !== "all") {
-        // Parse study date (YYYYMMDD format)
-        // Handle potentially missing or malformed dates gracefully
-        if (!study.studyDate || study.studyDate.length !== 8) {
-           matchesDate = false // Or true, depending on if we want to show undated studies
-        } else {
-          const year = parseInt(study.studyDate.substring(0, 4))
-          const month = parseInt(study.studyDate.substring(4, 6)) - 1
-          const day = parseInt(study.studyDate.substring(6, 8))
-          const studyDateObj = new Date(year, month, day)
-          
-          const today = new Date()
-          // Reset time part for accurate date comparison
-          today.setHours(0, 0, 0, 0)
-          
-          const diffTime = Math.abs(today.getTime() - studyDateObj.getTime())
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-          
-          if (studyDateFilter === "today") {
-             matchesDate = diffDays === 0
-          } else if (studyDateFilter === "7days") {
-             matchesDate = diffDays <= 7
-          } else if (studyDateFilter === "30days") {
-             matchesDate = diffDays <= 30
-          }
-        }
+  // Format date to DICOM format
+  const formatDateToYYYYMMDD = (date: Date | undefined): string => {
+    if (!date) return "";
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}${m}${d}`;
+  };
+
+  // Voice search handler
+  const handleVoiceSearch = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setError("Voice recognition not supported in this browser");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setSearchTerm(transcript);
+      setIsListening(false);
+    };
+    recognition.onerror = (event: any) => {
+      setError(`Voice recognition error: ${event.error}`);
+      setIsListening(false);
+    };
+    recognition.onend = () => setIsListening(false);
+
+    recognition.start();
+  };
+
+  // Add patient modal handlers
+  const handleAddPatientOpen = () => setAddOpen(true);
+  const handleAddPatientClose = () => {
+    setAddOpen(false);
+    setNewPatientName("");
+    setNewPatientBirthDate(undefined);
+    setNewPatientSex("");
+  };
+
+  const handleAddPatientSubmit = async () => {
+    const birthDateString = formatDateToYYYYMMDD(newPatientBirthDate);
+
+    try {
+      if (!newPatientName.trim() || !newPatientSex.trim()) {
+        throw new Error("Patient Name and Sex are required.");
       }
 
-      return matchesSearch && matchesModality && matchesDate
-    })
-    
-    // Always sort studies by date (newest first) for the worklist view
-    filtered.sort((a, b) => {
-       return (b.studyDate || "").localeCompare(a.studyDate || "")
-    })
+      setAddingPatient(true);
+      setError(null);
 
-    return filtered
-  }, [allStudies, debouncedSearchTerm, filterModality, studyDateFilter])
+      const res = await createPatient({
+        patientName: newPatientName.trim(),
+        birthDate: birthDateString,
+        sex: newPatientSex.trim(),
+      });
 
-  // Get unique modalities for filter
-  const availableModalities = useMemo(() => {
-    const modalities = new Set(allStudies.map(s => s.modality))
-    return Array.from(modalities).sort()
-  }, [allStudies])
+      if (!res.success)
+        throw new Error(res.message || "Failed to create patient");
 
+      const list = await getPatients();
+      setPatients(list.data || []);
+      handleAddPatientClose();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setAddingPatient(false);
+    }
+  };
+
+  // Studies modal + load
+  const handlePatientClick = async (patientID: string) => {
+    try {
+      setSelectedPatientID(patientID);
+      setStudiesPopupOpen(true);
+      setLoadingPatientStudies(true);
+      setError(null);
+
+      const res = await getPatientStudies(patientID);
+      if (!res.success)
+        throw new Error(res.message || "Failed to load studies for patient");
+
+      setStudiesForPatient(res.data || []);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoadingPatientStudies(false);
+    }
+  };
+
+  const handleStudyClick = (studyUID: string) => {
+    navigate(`/app/patient/studies/${studyUID}`);
+  };
+
+  const handleUploadDicom = async () => {
+    try {
+      if (!selectedPatientID || !uploadFileObj) return;
+      setUploading(true);
+      setError(null);
+
+      const res = await uploadDicomFileForPatient(
+        uploadFileObj,
+        selectedPatientID
+      );
+      if (!res.success) throw new Error(res.message || "Upload failed");
+
+      const studies = await getPatientStudies(selectedPatientID);
+      setStudiesForPatient(studies.data || []);
+      setUploadFileObj(null);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // PACS upload handlers
   const handlePacsUploadOpen = () => {
-    setPacsUploadOpen(true)
-    setPacsUploadSuccess(false)
-    setUploadedStudyUID(null)
-  }
+    setPacsUploadOpen(true);
+    setPacsUploadSuccess(false);
+    setUploadedStudyUID(null);
+  };
 
   const handlePacsUploadClose = () => {
-    setPacsUploadOpen(false)
-    setPacsFiles([])
-    setPacsUploadSuccess(false)
-    setUploadedStudyUID(null)
-  }
+    setPacsUploadOpen(false);
+    setPacsFiles([]);
+    setPacsUploadSuccess(false);
+    setUploadedStudyUID(null);
+  };
 
   const handlePacsFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || [])
-    setPacsFiles(files)
-  }
+    const files = Array.from(event.target.files || []);
+    setPacsFiles(files);
+  };
 
   const handlePacsUpload = async () => {
-    if (pacsFiles.length === 0) return
+    if (pacsFiles.length === 0) return;
 
     try {
-      setPacsUploading(true)
-      setError(null)
+      setPacsUploading(true);
+      setError(null);
 
-      // Upload files to PACS server using proper API service
-      const result = await uploadPacsStudy(pacsFiles)
+      const result = await uploadPacsStudy(pacsFiles);
 
       if (!result.success) {
-        throw new Error(result.message || 'PACS upload failed')
+        throw new Error(result.message || "PACS upload failed");
       }
 
-      // Success!
-      setPacsUploadSuccess(true)
-      setUploadedStudyUID(result.data?.studyInstanceUID || null)
+      setPacsUploadSuccess(true);
+      setUploadedStudyUID(result.data?.studyInstanceUID || null);
 
-      // Refresh studies list
-      if (tabIndex === 1) {
-        const res = await getStudies()
-        setAllStudies(res.data || [])
-      }
+      const updatedPatients = await getPatients();
+      setPatients(updatedPatients.data || []);
 
-      // Auto-close after 2 seconds and navigate to viewer
       setTimeout(() => {
-        handlePacsUploadClose()
+        handlePacsUploadClose();
         if (result.data?.studyInstanceUID) {
-          navigate(`/app/patient/studies/${result.data.studyInstanceUID}`)
+          navigate(`/app/patient/studies/${result.data.studyInstanceUID}`);
         }
-      }, 2000)
+      }, 2000);
     } catch (e: any) {
-      setError(e.message)
+      setError(e.message);
     } finally {
-      setPacsUploading(false)
+      setPacsUploading(false);
     }
-  }
+  };
 
+  // Export handlers
   const handleExportPatient = (patientID: string) => {
-    setExportTarget({ type: 'patient', id: patientID })
-    setExportDialogOpen(true)
-  }
+    setExportTarget({ type: "patient", id: patientID });
+    setExportDialogOpen(true);
+  };
 
   const handleExportStudy = (studyUID: string) => {
-    setExportTarget({ type: 'study', id: studyUID })
-    setExportDialogOpen(true)
-  }
+    setExportTarget({ type: "study", id: studyUID });
+    setExportDialogOpen(true);
+  };
 
   const handleExportConfirm = async () => {
-    if (!exportTarget) return
+    if (!exportTarget) return;
 
     try {
-      setExporting(true)
-      setError(null)
+      setExporting(true);
+      setError(null);
 
-      if (exportTarget.type === 'patient') {
-        await exportPatientData(exportTarget.id, includeImages, 'zip')
+      if (exportTarget.type === "patient") {
+        await exportPatientData(exportTarget.id, includeImages, "zip");
       } else {
-        await exportStudyData(exportTarget.id, includeImages, 'zip')
+        await exportStudyData(exportTarget.id, includeImages, "zip");
       }
 
-      setExportDialogOpen(false)
-      setExportTarget(null)
+      setExportDialogOpen(false);
+      setExportTarget(null);
     } catch (e: any) {
-      setError(e.message || 'Export failed')
+      setError(e.message || "Export failed");
     } finally {
-      setExporting(false)
+      setExporting(false);
     }
-  }
+  };
 
   const handleExportClose = () => {
-    setExportDialogOpen(false)
-    setExportTarget(null)
-    setIncludeImages(true)
-  }
+    setExportDialogOpen(false);
+    setExportTarget(null);
+    setIncludeImages(true);
+  };
 
+  // ===================== RENDER =========================
   return (
     <>
       <Helmet>
-        <title>Patients & Studies</title>
+        <title>Patients</title>
       </Helmet>
 
-      <Box sx={{ minHeight: "100vh", bgcolor: "grey.50" }}>
-        {/* Tabs */}
-        <Paper elevation={0} sx={{ borderBottom: 1, borderColor: "divider" }}>
-          <Box sx={{ px: 4, pt: 2 }}>
-            <Tabs value={tabIndex} onChange={(e, v) => setTabIndex(v)}>
-              <Tab 
-                icon={<People />} 
-                label="Patients" 
-                iconPosition="start"
-                sx={{ textTransform: "none", fontSize: "1rem", fontWeight: 600 }}
-              />
-              <Tab 
-                icon={<Science />} 
-                label="All Studies" 
-                iconPosition="start"
-                sx={{ textTransform: "none", fontSize: "1rem", fontWeight: 600 }}
-              />
-            </Tabs>
-          </Box>
-        </Paper>
-
-        {/* Main Content */}
-        <Box>
-          {tabIndex === 0 ? (
-            <Box sx={{ p: 4 }}>
-              <Box sx={{ maxWidth: "100%", mx: "auto" }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-                  <Box>
-                    <Typography variant="h4" fontWeight="bold" gutterBottom>
-                      Patients
-                    </Typography>
-                    <Typography variant="body1" color="text.secondary">
-                      Manage patient records and medical studies
-                    </Typography>
-                  </Box>
-                  <Stack direction="row" spacing={2}>
-                    <Button
-                      variant="outlined"
-                      startIcon={<Upload />}
-                      onClick={handlePacsUploadOpen}
-                      size="large"
-                      sx={{ textTransform: "none", px: 3 }}
-                    >
-                      Upload Study
-                    </Button>
-                    <Button
-                      variant="contained"
-                      startIcon={<Add />}
-                      onClick={handleAddPatientOpen}
-                      size="large"
-                      sx={{ textTransform: "none", px: 3 }}
-                    >
-                      Add Patient
-                    </Button>
-                  </Stack>
-                </Stack>
-
-                {/* Enhanced Search and Filters */}
-                <Fade in timeout={300}>
-                  <Paper 
-                    elevation={0} 
-                    sx={{ 
-                      p: 3, 
-                      mb: 3, 
-                      border: 1, 
-                      borderColor: "divider",
-                      background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.02)} 0%, ${alpha(theme.palette.primary.main, 0.01)} 100%)`,
-                    }}
-                  >
-                    <Grid container spacing={2} alignItems="center">
-                      <Grid item xs={12} md={5}>
-                        <TextField
-                          fullWidth
-                          placeholder="Search by patient name or ID..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          InputProps={{
-                            startAdornment: (
-                              <InputAdornment position="start">
-                                <Search color="action" />
-                              </InputAdornment>
-                            ),
-                            endAdornment: searchTerm || isListening ? (
-                              <InputAdornment position="end">
-                                {isListening ? (
-                                  <CircularProgress size={20} />
-                                ) : (
-                                  <IconButton size="small" onClick={() => setSearchTerm("")}>
-                                    <Clear fontSize="small" />
-                                  </IconButton>
-                                )}
-                              </InputAdornment>
-                            ) : null,
-                          }}
-                          sx={{
-                            '& .MuiOutlinedInput-root': {
-                              bgcolor: 'background.paper',
-                            }
-                          }}
-                        />
-                      </Grid>
-                      
-                      {voiceSupported && (
-                        <Grid item xs={12} sm={6} md={1}>
-                          <Tooltip title="Voice Search">
-                            <IconButton
-                              onClick={handleVoiceSearch}
-                              disabled={isListening}
-                              sx={{
-                                bgcolor: isListening ? 'error.main' : alpha(theme.palette.primary.main, 0.1),
-                                color: isListening ? 'white' : 'primary.main',
-                                '&:hover': {
-                                  bgcolor: isListening ? 'error.dark' : alpha(theme.palette.primary.main, 0.2),
-                                },
-                                width: 48,
-                                height: 48,
-                              }}
-                            >
-                              <Mic />
-                            </IconButton>
-                          </Tooltip>
-                        </Grid>
-                      )}
-                      
-                      <Grid item xs={12} sm={6} md={2}>
-                        <FormControl fullWidth size="small">
-                          <InputLabel>Filter by Sex</InputLabel>
-                          <Select
-                            value={filterSex}
-                            label="Filter by Sex"
-                            onChange={(e) => setFilterSex(e.target.value)}
-                            sx={{ bgcolor: 'background.paper' }}
-                          >
-                            <MenuItem value="all">All</MenuItem>
-                            <MenuItem value="M">Male</MenuItem>
-                            <MenuItem value="F">Female</MenuItem>
-                            <MenuItem value="O">Other</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Grid>
-                      
-                      <Grid item xs={12} sm={6} md={2}>
-                        <FormControl fullWidth size="small">
-                          <InputLabel>Sort By</InputLabel>
-                          <Select
-                            value={sortBy}
-                            label="Sort By"
-                            onChange={(e) => setSortBy(e.target.value)}
-                            sx={{ bgcolor: 'background.paper' }}
-                          >
-                            <MenuItem value="name">Name</MenuItem>
-                            <MenuItem value="id">Patient ID</MenuItem>
-                            <MenuItem value="studies">Study Count</MenuItem>
-                            <MenuItem value="date">Birth Date</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Grid>
-                      
-                      <Grid item xs={12} sm={6} md={2}>
-                        <Stack direction="row" spacing={1} justifyContent="flex-end">
-                          <Tooltip title="Grid View">
-                            <IconButton
-                              onClick={() => setViewMode("grid")}
-                              sx={{
-                                bgcolor: viewMode === "grid" ? alpha(theme.palette.primary.main, 0.1) : 'transparent',
-                                color: viewMode === "grid" ? 'primary.main' : 'action.active',
-                              }}
-                            >
-                              <ViewModule />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="List View">
-                            <IconButton
-                              onClick={() => setViewMode("list")}
-                              sx={{
-                                bgcolor: viewMode === "list" ? alpha(theme.palette.primary.main, 0.1) : 'transparent',
-                                color: viewMode === "list" ? 'primary.main' : 'action.active',
-                              }}
-                            >
-                              <ViewList />
-                            </IconButton>
-                          </Tooltip>
-                        </Stack>
-                      </Grid>
-                    </Grid>
-                    
-                    {(debouncedSearchTerm || filterSex !== "all") && (
-                      <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
-                        <Typography variant="caption" color="text.secondary">
-                          Active filters:
-                        </Typography>
-                        {debouncedSearchTerm && (
-                          <Chip
-                            label={`Search: "${debouncedSearchTerm}"`}
-                            size="small"
-                            onDelete={() => setSearchTerm("")}
-                          />
-                        )}
-                        {filterSex !== "all" && (
-                          <Chip
-                            label={`Sex: ${filterSex}`}
-                            size="small"
-                            onDelete={() => setFilterSex("all")}
-                          />
-                        )}
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            setSearchTerm("")
-                            setFilterSex("all")
-                          }}
-                          sx={{ textTransform: "none", ml: 1 }}
-                        >
-                          Clear All
-                        </Button>
-                      </Box>
-                    )}
-                  </Paper>
-                </Fade>
-
-                {/* Results Count */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Showing {filteredPatients.length} of {patients.length} patients
-                  </Typography>
-                </Box>
-
-                {loadingPatients ? (
-                  <Box sx={{ display: "flex", justifyContent: "center", py: 10 }}>
-                    <CircularProgress size={48} />
-                  </Box>
-                ) : viewMode === "grid" ? (
-                  <Grid container spacing={3}>
-                    {filteredPatients.map((patient, index) => (
-                      <Grid item xs={12} sm={6} md={4} key={patient.patientID}>
-                        <Grow in timeout={300 + index * 50}>
-                        <Card
-                          elevation={0}
-                          sx={{
-                            border: 1,
-                            borderColor: "divider",
-                            transition: "all 0.2s",
-                            "&:hover": {
-                              borderColor: "primary.main",
-                              boxShadow: 2,
-                            },
-                          }}
-                        >
-                          <CardActionArea onClick={() => handlePatientClick(patient.patientID)} sx={{ p: 3 }}>
-                            <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: 2 }}>
-                              <Avatar
-                                sx={{
-                                  width: 56,
-                                  height: 56,
-                                  bgcolor: "primary.main",
-                                  fontSize: "1.5rem",
-                                  fontWeight: "bold",
-                                }}
-                              >
-                                {patient.patientName?.charAt(0) || patient.patientID.charAt(0)}
-                              </Avatar>
-                              <Box sx={{ flex: 1 }}>
-                                <Chip
-                                  label={`${patient.studyCount || 0} studies`}
-                                  size="small"
-                                  color="primary"
-                                  variant="outlined"
-                                />
-                              </Box>
-                            </Stack>
-                            <Typography variant="h6" fontWeight="bold" gutterBottom>
-                              {patient.patientName || "Unknown"}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary" gutterBottom>
-                              ID: {patient.patientID}
-                            </Typography>
-                            {patient.birthDate && (
-                              <Typography variant="caption" color="text.secondary" display="block">
-                                DOB: {patient.birthDate}
-                              </Typography>
-                            )}
-                            {patient.sex && (
-                              <Typography variant="caption" color="text.secondary" display="block">
-                                Sex: {patient.sex}
-                              </Typography>
-                            )}
-                          </CardActionArea>
-                          <Box sx={{ px: 3, pb: 2 }}>
-                            <ExportButton type="patient" id={patient.patientID} />
-                          </Box>
-                        </Card>
-                        </Grow>
-                      </Grid>
-                    ))}
-                    {filteredPatients.length === 0 && patients.length > 0 && (
-                      <Grid item xs={12}>
-                        <Box sx={{ textAlign: "center", py: 10 }}>
-                          <Search sx={{ fontSize: 80, color: "text.disabled", mb: 2 }} />
-                          <Typography variant="h6" color="text.secondary" gutterBottom>
-                            No patients match your search
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            Try adjusting your filters or search query
-                          </Typography>
-                          <Button
-                            variant="outlined"
-                            onClick={() => {
-                              setSearchQuery("")
-                              setFilterSex("all")
-                            }}
-                            sx={{ mt: 2, textTransform: "none" }}
-                          >
-                            Clear Filters
-                          </Button>
-                        </Box>
-                      </Grid>
-                    )}
-                    {patients.length === 0 && (
-                      <Grid item xs={12}>
-                        <Box sx={{ textAlign: "center", py: 10 }}>
-                          <People sx={{ fontSize: 80, color: "text.disabled", mb: 2 }} />
-                          <Typography variant="h6" color="text.secondary" gutterBottom>
-                            No patients found
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            Add your first patient to get started
-                          </Typography>
-                        </Box>
-                      </Grid>
-                    )}
-                  </Grid>
-                ) : (
-                  <Paper elevation={0} sx={{ border: 1, borderColor: "divider" }}>
-                    <List disablePadding>
-                      {filteredPatients.map((patient, idx) => (
-                        <React.Fragment key={patient.patientID}>
-                          <Fade in timeout={300 + idx * 30}>
-                            <ListItemButton
-                              onClick={() => handlePatientClick(patient.patientID)}
-                              sx={{ py: 2.5, px: 3 }}
-                            >
-                              <ListItemIcon>
-                                <Avatar
-                                  sx={{
-                                    width: 48,
-                                    height: 48,
-                                    bgcolor: "primary.main",
-                                    fontSize: "1.2rem",
-                                    fontWeight: "bold",
-                                  }}
-                                >
-                                  {patient.patientName?.charAt(0) || patient.patientID.charAt(0)}
-                                </Avatar>
-                              </ListItemIcon>
-                              <ListItemText
-                                primary={
-                                  <Stack direction="row" spacing={1} alignItems="center">
-                                    <Typography variant="subtitle1" fontWeight="bold">
-                                      {patient.patientName || "Unknown"}
-                                    </Typography>
-                                    <Chip 
-                                      label={`${patient.studyCount || 0} studies`} 
-                                      size="small" 
-                                      color="primary" 
-                                    />
-                                    {patient.sex && (
-                                      <Chip label={patient.sex} size="small" variant="outlined" />
-                                    )}
-                                  </Stack>
-                                }
-                                secondary={
-                                  <Box sx={{ mt: 0.5 }}>
-                                    <Typography variant="body2" color="text.secondary">
-                                      ID: {patient.patientID}
-                                    </Typography>
-                                    {patient.birthDate && (
-                                      <Typography variant="caption" color="text.secondary">
-                                        DOB: {patient.birthDate}
-                                      </Typography>
-                                    )}
-                                  </Box>
-                                }
-                              />
-                              <IconButton
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleExportPatient(patient.patientID)
-                                }}
-                                sx={{ mr: 1 }}
-                              >
-                                <Download />
-                              </IconButton>
-                              <ChevronRight color="action" />
-                            </ListItemButton>
-                          </Fade>
-                          {idx < filteredPatients.length - 1 && <Divider />}
-                        </React.Fragment>
-                      ))}
-                    </List>
-                  </Paper>
-                )}
-              </Box>
-            </Box>
-          ) : (
-            <Box sx={{ p: 4 }}>
-              <Box sx={{ maxWidth: 1400, mx: "auto" }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-                  <Box>
-                    <Typography variant="h4" fontWeight="bold" gutterBottom>
-                      All Studies
-                    </Typography>
-                    <Typography variant="body1" color="text.secondary">
-                      Browse all medical imaging studies
-                    </Typography>
-                  </Box>
-                  <Button
-                    variant="contained"
-                    startIcon={<Upload />}
-                    onClick={handlePacsUploadOpen}
-                    size="large"
-                    sx={{ textTransform: "none", px: 3 }}
-                  >
-                    Upload Study
-                  </Button>
-                </Stack>
-
-                {/* Enhanced Search and Filters for Studies */}
-                <Fade in timeout={300}>
-                  <Paper 
-                    elevation={0} 
-                    sx={{ 
-                      p: 3, 
-                      mb: 3, 
-                      border: 1, 
-                      borderColor: "divider",
-                      background: `linear-gradient(135deg, ${alpha(theme.palette.secondary.main, 0.02)} 0%, ${alpha(theme.palette.secondary.main, 0.01)} 100%)`,
-                    }}
-                  >
-                    <Grid container spacing={2} alignItems="center">
-                      <Grid item xs={12} md={6}>
-                        <TextField
-                          fullWidth
-                          placeholder="Search by patient name, ID, or study description..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                          InputProps={{
-                            startAdornment: (
-                              <InputAdornment position="start">
-                                <Search color="action" />
-                              </InputAdornment>
-                            ),
-                            endAdornment: searchTerm || isListening ? (
-                              <InputAdornment position="end">
-                                {isListening ? (
-                                  <CircularProgress size={20} />
-                                ) : (
-                                  <IconButton size="small" onClick={() => setSearchTerm("")}>
-                                    <Clear fontSize="small" />
-                                  </IconButton>
-                                )}
-                              </InputAdornment>
-                            ) : null,
-                          }}
-                          sx={{
-                            '& .MuiOutlinedInput-root': {
-                              bgcolor: 'background.paper',
-                            }
-                          }}
-                        />
-                      </Grid>
-                      
-                      {voiceSupported && (
-                        <Grid item xs={12} sm={6} md={1}>
-                          <Tooltip title="Voice Search">
-                            <IconButton
-                              onClick={handleVoiceSearch}
-                              disabled={isListening}
-                              sx={{
-                                bgcolor: isListening ? 'error.main' : alpha(theme.palette.secondary.main, 0.1),
-                                color: isListening ? 'white' : 'secondary.main',
-                                '&:hover': {
-                                  bgcolor: isListening ? 'error.dark' : alpha(theme.palette.secondary.main, 0.2),
-                                },
-                                width: 48,
-                                height: 48,
-                              }}
-                            >
-                              <Mic />
-                            </IconButton>
-                          </Tooltip>
-                        </Grid>
-                      )}
-                      
-                      <Grid item xs={12} sm={6} md={2}>
-                        <FormControl fullWidth size="small">
-                          <InputLabel>Study Date</InputLabel>
-                          <Select
-                            value={studyDateFilter}
-                            label="Study Date"
-                            onChange={(e) => setStudyDateFilter(e.target.value)}
-                            sx={{ bgcolor: 'background.paper' }}
-                          >
-                            <MenuItem value="all">All Time</MenuItem>
-                            <MenuItem value="today">Today</MenuItem>
-                            <MenuItem value="7days">Last 7 Days</MenuItem>
-                            <MenuItem value="30days">Last 30 Days</MenuItem>
-                          </Select>
-                        </FormControl>
-                      </Grid>
-
-                      <Grid item xs={12} sm={6} md={3}>
-                        <FormControl fullWidth size="small">
-                          <InputLabel>Filter by Modality</InputLabel>
-                          <Select
-                            value={filterModality}
-                            label="Filter by Modality"
-                            onChange={(e) => setFilterModality(e.target.value)}
-                            sx={{ bgcolor: 'background.paper' }}
-                          >
-                            <MenuItem value="all">All Modalities</MenuItem>
-                            {availableModalities.map((modality) => (
-                              <MenuItem key={modality} value={modality}>
-                                {modality}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
-                      </Grid>
-                    </Grid>
-                    
-                    {(debouncedSearchTerm || filterModality !== "all" || studyDateFilter !== "all") && (
-                      <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
-                        <Typography variant="caption" color="text.secondary">
-                          Active filters:
-                        </Typography>
-                        {debouncedSearchTerm && (
-                          <Chip
-                            label={`Search: "${debouncedSearchTerm}"`}
-                            size="small"
-                            onDelete={() => setSearchTerm("")}
-                          />
-                        )}
-                        {studyDateFilter !== "all" && (
-                          <Chip
-                            label={`Date: ${studyDateFilter === 'today' ? 'Today' : studyDateFilter === '7days' ? 'Last 7 Days' : studyDateFilter === '30days' ? 'Last 30 Days' : studyDateFilter}`}
-                            size="small"
-                            onDelete={() => setStudyDateFilter("all")}
-                          />
-                        )}
-                        {filterModality !== "all" && (
-                          <Chip
-                            label={`Modality: ${filterModality}`}
-                            size="small"
-                            onDelete={() => setFilterModality("all")}
-                          />
-                        )}
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            setSearchTerm("")
-                            setFilterModality("all")
-                            setStudyDateFilter("all")
-                          }}
-                          sx={{ textTransform: "none", ml: 1 }}
-                        >
-                          Clear All
-                        </Button>
-                      </Box>
-                    )}
-                  </Paper>
-                </Fade>
-
-                {/* Results Count */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Showing {filteredStudies.length} of {allStudies.length} studies
-                  </Typography>
-                </Box>
-
-                {loadingAllStudies ? (
-                  <Box sx={{ display: "flex", justifyContent: "center", py: 10 }}>
-                    <CircularProgress size={48} />
-                  </Box>
-                ) : (
-                  <Paper elevation={0} sx={{ border: 1, borderColor: "divider" }}>
-                    <List disablePadding>
-                      {filteredStudies.map((study, idx) => (
-                        <React.Fragment key={study.studyInstanceUID}>
-                          <ListItemButton
-                            onClick={() => handleStudyClick(study.studyInstanceUID)}
-                            sx={{ py: 2.5, px: 3 }}
-                          >
-                            <ListItemIcon>
-                              <Folder color="primary" />
-                            </ListItemIcon>
-                            <ListItemText
-                              primary={
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                  <Typography variant="subtitle1" fontWeight="bold">
-                                    {study.patientName || "Unknown Patient"}
-                                  </Typography>
-                                  <Chip label={study.modality} size="small" color="primary" />
-                                </Stack>
-                              }
-                              secondary={
-                                <Box sx={{ mt: 0.5 }}>
-                                  <Typography variant="body2" color="text.secondary">
-                                    {study.studyDescription || "No description"}
-                                  </Typography>
-                                  <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
-                                    <Typography variant="caption" color="text.secondary">
-                                      <Image sx={{ fontSize: 14, verticalAlign: "middle", mr: 0.5 }} />
-                                      {study.numberOfInstances} images
-                                    </Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {study.numberOfSeries} series
-                                    </Typography>
-                                  </Stack>
-                                </Box>
-                              }
-                            />
-                            <IconButton
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleExportStudy(study.studyInstanceUID)
-                              }}
-                              sx={{ mr: 1 }}
-                            >
-                              <Download />
-                            </IconButton>
-                            <ChevronRight color="action" />
-                          </ListItemButton>
-                          {idx < filteredStudies.length - 1 && <Divider />}
-                        </React.Fragment>
-                      ))}
-                      {filteredStudies.length === 0 && allStudies.length > 0 && (
-                        <Box sx={{ textAlign: "center", py: 10 }}>
-                          <Search sx={{ fontSize: 80, color: "text.disabled", mb: 2 }} />
-                          <Typography variant="h6" color="text.secondary" gutterBottom>
-                            No studies match your search
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            Try adjusting your filters or search query
-                          </Typography>
-                          <Button
-                            variant="outlined"
-                            onClick={() => {
-                              setSearchQuery("")
-                              setFilterModality("all")
-                            }}
-                            sx={{ mt: 2, textTransform: "none" }}
-                          >
-                            Clear Filters
-                          </Button>
-                        </Box>
-                      )}
-                      {allStudies.length === 0 && (
-                        <Box sx={{ textAlign: "center", py: 10 }}>
-                          <Science sx={{ fontSize: 80, color: "text.disabled", mb: 2 }} />
-                          <Typography variant="h6" color="text.secondary">
-                            No studies found
-                          </Typography>
-                        </Box>
-                      )}
-                    </List>
-                  </Paper>
-                )}
-              </Box>
-            </Box>
-          )}
-        </Box>
-      </Box>
-
-      <Dialog
-        open={studiesPopupOpen}
-        onClose={() => {
-          setStudiesPopupOpen(false)
-          setUploadFileObj(null)
-        }}
-        maxWidth="md"
-        fullWidth
-        PaperProps={{
-          sx: { borderRadius: 2 },
-        }}
-      >
-        <DialogTitle
-          sx={{
-            background: "linear-gradient(135deg, #1976d2 0%, #1565c0 100%)",
-            color: "white",
-            py: 3,
-          }}
-        >
-          <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-            <Box>
-              <Typography variant="h5" fontWeight="bold">
-                {selectedPatient?.patientName || "Unknown Patient"}
-              </Typography>
-              <Typography variant="body2" sx={{ opacity: 0.9, mt: 0.5 }}>
-                Patient ID: {selectedPatientID}
-              </Typography>
-              {selectedPatient?.birthDate && (
-                <Typography variant="caption" sx={{ opacity: 0.8, display: "block", mt: 0.5 }}>
-                  DOB: {selectedPatient.birthDate}
-                </Typography>
-              )}
-            </Box>
-            <IconButton
-              onClick={() => {
-                setStudiesPopupOpen(false)
-                setUploadFileObj(null)
-              }}
-              sx={{ color: "white" }}
-            >
-              <Close />
-            </IconButton>
-          </Stack>
-        </DialogTitle>
-
-        <DialogContent sx={{ p: 0 }}>
-          <Box sx={{ p: 3, bgcolor: "grey.50", borderBottom: 1, borderColor: "divider" }}>
-            <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-              Upload DICOM File
-            </Typography>
-            <Stack direction="row" spacing={2} alignItems="center">
+      <div className="min-h-screen bg-gray-50 p-6 sm:p-8 lg:p-10">
+        <div className="max-w-6xl mx-auto">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row justify-between items-center mb-6">
+            <div>
+              <h1 className="text-4xl font-extrabold text-gray-900 mb-1 flex items-center gap-2">
+                <Users className="w-8 h-8 text-primary-600" />
+                Patients Records
+              </h1>
+              <p className="text-gray-600 text-lg">
+                Manage patient records and medical studies efficiently
+              </p>
+            </div>
+            <div className="flex gap-4 mt-4 sm:mt-0">
               <Button
-                component="label"
-                variant="outlined"
-                startIcon={<CloudUpload />}
-                fullWidth
-                sx={{
-                  py: 2,
-                  textTransform: "none",
-                  borderStyle: "dashed",
-                  borderWidth: 2,
-                  bgcolor: uploadFileObj ? "success.50" : "background.paper",
-                  borderColor: uploadFileObj ? "success.main" : "divider",
-                  "&:hover": {
-                    borderColor: "primary.main",
-                    bgcolor: "primary.50",
-                  },
-                }}
+                variant="outline"
+                size="lg"
+                startIcon={<Upload />}
+                onClick={handlePacsUploadOpen}
+                className="shadow-sm"
               >
-                {uploadFileObj ? (
-                  <Box>
-                    <Typography variant="body2" fontWeight="bold" color="success.main">
-                      {uploadFileObj.name}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {(uploadFileObj.size / 1024 / 1024).toFixed(2)} MB
-                    </Typography>
-                  </Box>
-                ) : (
-                  <Box>
-                    <Typography variant="body2" fontWeight="bold">
-                      Choose DICOM file
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Click to browse
-                    </Typography>
-                  </Box>
-                )}
-                <input
-                  type="file"
-                  hidden
-                  accept="*/*"
-                  onChange={(e) => setUploadFileObj(e.target.files?.[0] || null)}
+                Upload Study
+              </Button>
+              <Button
+                variant="primary"
+                size="lg"
+                startIcon={<Plus />}
+                onClick={handleAddPatientOpen}
+                className="shadow-md hover:shadow-lg"
+              >
+                Add Patient
+              </Button>
+            </div>
+          </div>
+
+          {/* Filters Card */}
+          <div className="bg-white p-6 mb-6 border border-gray-200 rounded-xl shadow-lg">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 items-end">
+              {/* Search */}
+              <div className="col-span-1 sm:col-span-2 md:col-span-2">
+                <Input
+                  label="Search"
+                  fullWidth
+                  placeholder="Search by patient name or ID..."
+                  value={searchTerm}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setSearchTerm(e.target.value)
+                  }
+                  startIcon={<Search className="w-5 h-5 text-gray-400" />}
+                  endIcon={
+                    searchTerm || isListening ? (
+                      isListening ? (
+                        <div className="animate-pulse rounded-full h-4 w-4 bg-red-500" />
+                      ) : (
+                        <button
+                          onClick={() => setSearchTerm("")}
+                          className="text-gray-400 hover:text-gray-600 focus:outline-none"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                      )
+                    ) : (
+                      voiceSupported && (
+                        <button
+                          onClick={handleVoiceSearch}
+                          disabled={isListening}
+                          title="Voice Search"
+                          className={`p-1 rounded-full transition-colors duration-200 ${
+                            isListening
+                              ? "bg-red-500 text-white"
+                              : "text-primary hover:bg-primary-100"
+                          }`}
+                        >
+                          <Mic className="w-5 h-5" />
+                        </button>
+                      )
+                    )
+                  }
                 />
-              </Button>
-              <Button
-                variant="contained"
-                onClick={handleUploadDicom}
-                disabled={!uploadFileObj || uploading}
-                startIcon={uploading ? <CircularProgress size={20} color="inherit" /> : <CloudUpload />}
-                sx={{ px: 4, py: 2, textTransform: "none", minWidth: 140 }}
-              >
-                {uploading ? "Uploading..." : "Upload"}
-              </Button>
-            </Stack>
-          </Box>
+              </div>
 
-          <Box sx={{ p: 3 }}>
-            <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-              Medical Studies ({studiesForPatient.length})
-            </Typography>
+              {/* Sex filter */}
+              <div>
+                <Select
+                  label="Filter by Sex"
+                  value={filterSex}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                    setFilterSex(e.target.value)
+                  }
+                  options={[
+                    { value: "all", label: "All Sexes" },
+                    { value: "M", label: "Male" },
+                    { value: "F", label: "Female" },
+                    { value: "O", label: "Other" },
+                  ]}
+                  fullWidth
+                  size="sm"
+                />
+              </div>
 
-            {loadingPatientStudies ? (
-              <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-                <CircularProgress />
-              </Box>
-            ) : studiesForPatient.length > 0 ? (
-              <Stack spacing={2} sx={{ mt: 2 }}>
-                {studiesForPatient.map((study) => (
-                  <Card
-                    key={study.studyInstanceUID}
-                    elevation={0}
-                    sx={{
-                      border: 1,
-                      borderColor: "divider",
-                      transition: "all 0.2s",
-                      "&:hover": {
-                        borderColor: "primary.main",
-                        boxShadow: 1,
-                      },
-                    }}
+              {/* Sort + View mode */}
+              <div className="flex items-center gap-4 col-span-1 md:col-span-1">
+                <Select
+                  label="Sort By"
+                  value={sortBy}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                    setSortBy(e.target.value)
+                  }
+                  options={[
+                    { value: "date", label: "Birth Date (Newest)" },
+                    { value: "name", label: "Name (A-Z)" },
+                    { value: "id", label: "Patient ID" },
+                    { value: "studies", label: "Study Count" },
+                  ]}
+                  fullWidth
+                  size="sm"
+                />
+
+                <div className="flex-shrink-0 flex gap-1 border border-gray-200 rounded-lg p-1">
+                  <button
+                    onClick={() => setViewMode("grid")}
+                    title="Grid View"
+                    className={`p-2 rounded-md transition-colors duration-200 ${
+                      viewMode === "grid"
+                        ? "bg-primary-600 text-white shadow-md"
+                        : "text-gray-500 hover:bg-gray-100"
+                    }`}
                   >
-                    <CardActionArea onClick={() => handleStudyClick(study.studyInstanceUID)} sx={{ p: 2.5 }}>
-                      <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                        <Box sx={{ flex: 1 }}>
-                          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                            <Chip label={study.modality} size="small" color="primary" />
-                            <Typography variant="subtitle1" fontWeight="bold">
-                              {study.studyDescription || "Untitled Study"}
-                            </Typography>
-                          </Stack>
-                          <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
-                            <Typography variant="body2" color="text.secondary">
-                              <Image sx={{ fontSize: 16, verticalAlign: "middle", mr: 0.5 }} />
-                              {study.numberOfInstances} images
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              <Folder sx={{ fontSize: 16, verticalAlign: "middle", mr: 0.5 }} />
-                              {study.numberOfSeries} series
-                            </Typography>
-                          </Stack>
-                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
-                            UID: {study.studyInstanceUID}
-                          </Typography>
-                        </Box>
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          <IconButton
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleExportStudy(study.studyInstanceUID)
-                            }}
-                            size="small"
-                          >
-                            <Download fontSize="small" />
-                          </IconButton>
-                          <ChevronRight color="action" />
-                        </Stack>
-                      </Stack>
-                    </CardActionArea>
-                  </Card>
-                ))}
-              </Stack>
-            ) : (
-              <Box sx={{ textAlign: "center", py: 6 }}>
-                <Science sx={{ fontSize: 64, color: "text.disabled", mb: 2 }} />
-                <Typography variant="body1" color="text.secondary" gutterBottom>
-                  No studies found
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Upload a DICOM file to create a new study
-                </Typography>
-              </Box>
-            )}
-          </Box>
-        </DialogContent>
-      </Dialog>
+                    <LayoutGrid className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode("list")}
+                    title="List View"
+                    className={`p-2 rounded-md transition-colors duration-200 ${
+                      viewMode === "list"
+                        ? "bg-primary-600 text-white shadow-md"
+                        : "text-gray-500 hover:bg-gray-100"
+                    }`}
+                  >
+                    <List className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            </div>
 
-      {/* Add Patient Dialog */}
-      <Dialog open={addOpen} onClose={handleAddPatientClose} maxWidth="sm" fullWidth>
-        <DialogTitle
-          sx={{
-            background: "linear-gradient(135deg, #1976d2 0%, #1565c0 100%)",
-            color: "white",
-          }}
-        >
-          <Typography variant="h6" fontWeight="bold">
-            Add New Patient
-          </Typography>
-          <Typography variant="body2" sx={{ opacity: 0.9, mt: 0.5 }}>
-            Enter patient information
-          </Typography>
-        </DialogTitle>
-        <DialogContent sx={{ mt: 2 }}>
-          <Stack spacing={3}>
-            <TextField
-              label="Patient Name"
-              value={newPatientName}
-              onChange={(e) => setNewPatientName(e.target.value)}
-              fullWidth
-              variant="outlined"
-            />
-            <TextField
-              label="Birth Date"
-              value={newPatientBirthDate}
-              onChange={(e) => setNewPatientBirthDate(e.target.value)}
-              placeholder="YYYYMMDD"
-              fullWidth
-              variant="outlined"
-            />
-            <TextField
-              label="Sex"
-              value={newPatientSex}
-              onChange={(e) => setNewPatientSex(e.target.value)}
-              placeholder="M/F/O"
-              fullWidth
-              variant="outlined"
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ p: 2.5, bgcolor: "grey.50" }}>
-          <Button onClick={handleAddPatientClose} disabled={addingPatient} sx={{ textTransform: "none" }}>
+            {/* Active filters */}
+            {(debouncedSearchTerm || filterSex !== "all") && (
+              <div className="flex flex-wrap gap-2 items-center mt-4 pt-4 border-t border-gray-100">
+                <span className="text-sm text-gray-600 font-semibold">
+                  Active filters:
+                </span>
+                {debouncedSearchTerm && (
+                  <Badge
+                    label={`Search: "${debouncedSearchTerm}"`}
+                    onDelete={() => setSearchTerm("")}
+                    color="primary"
+                    size="small"
+                  />
+                )}
+                {filterSex !== "all" && (
+                  <Badge
+                    label={`Sex: ${
+                      filterSex === "M"
+                        ? "Male"
+                        : filterSex === "F"
+                        ? "Female"
+                        : "Other"
+                    }`}
+                    onDelete={() => setFilterSex("all")}
+                    color="secondary"
+                    size="small"
+                  />
+                )}
+                <button
+                  onClick={() => {
+                    setSearchTerm("");
+                    setFilterSex("all");
+                  }}
+                  className="text-sm text-primary-600 hover:text-primary-800 font-medium ml-2"
+                >
+                  Clear All
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Count */}
+          <div className="mb-4 text-gray-600 text-sm font-medium">
+            Showing {filteredPatients.length} of {patients.length} patients
+          </div>
+
+          {/* Patients area */}
+          {loadingPatients ? (
+            <div className="flex justify-center py-10">
+              <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary-500 border-t-transparent" />
+            </div>
+          ) : viewMode === "grid" ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredPatients.map((patient) => (
+                <Card
+                  key={patient.patientID}
+                  actionable
+                  onClick={() => handlePatientClick(patient.patientID)}
+                  className="hover:shadow-xl transition-all duration-300"
+                >
+                  <CardBody className="p-6">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex-shrink-0 w-14 h-14 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center text-xl font-extrabold border-2 border-primary-300">
+                        {patient.patientName?.charAt(0) ||
+                          patient.patientID.charAt(0)}
+                      </div>
+                      <Badge
+                        label={`${patient.studyCount || 0} studies`}
+                        color="primary"
+                        size="medium"
+                      />
+                    </div>
+                    <h2 className="text-xl font-bold text-gray-800 mb-1 truncate">
+                      {patient.patientName || "Unknown Patient"}
+                    </h2>
+                    <p className="text-gray-600 text-sm font-mono mb-1">
+                      ID: {patient.patientID}
+                    </p>
+                    {patient.birthDate && (
+                      <p className="text-gray-500 text-xs mb-1">
+                        DOB: {patient.birthDate}
+                      </p>
+                    )}
+                    {patient.sex && (
+                      <p className="text-gray-500 text-xs">Sex: {patient.sex}</p>
+                    )}
+                  </CardBody>
+                  <CardFooter className="flex justify-end p-4 border-t border-gray-100">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      startIcon={<Download className="w-4 h-4" />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleExportPatient(patient.patientID);
+                      }}
+                      className="text-primary-600 hover:bg-primary-50"
+                    >
+                      Export
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      endIcon={<ChevronRight className="w-4 h-4" />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePatientClick(patient.patientID);
+                      }}
+                      className="ml-2"
+                    >
+                      View Studies
+                    </Button>
+                  </CardFooter>
+                </Card>
+              ))}
+
+              {filteredPatients.length === 0 && (
+                <div className="col-span-full text-center py-10">
+                  {patients.length > 0 ? (
+                    <>
+                      <Search className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+                      <p className="text-2xl font-semibold text-gray-600 mb-2">
+                        No patients match your search
+                      </p>
+                      <p className="text-gray-500 mb-4">
+                        Try adjusting your filters or search query
+                      </p>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSearchTerm("");
+                          setFilterSex("all");
+                        }}
+                      >
+                        Clear Filters
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Users className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+                      <p className="text-2xl font-semibold text-gray-600 mb-2">
+                        No patients found
+                      </p>
+                      <p className="text-gray-500">
+                        Add your first patient to get started
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-xl shadow-lg divide-y divide-gray-100">
+              {filteredPatients.map((patient) => (
+                <div
+                  key={patient.patientID}
+                  className="transition-all duration-150 ease-in-out hover:bg-primary-50"
+                >
+                  <button
+                    onClick={() => handlePatientClick(patient.patientID)}
+                    className="flex items-center w-full px-6 py-4 text-left group"
+                  >
+                    <div className="flex-shrink-0 w-12 h-12 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center text-lg font-bold mr-4">
+                      {patient.patientName?.charAt(0) ||
+                        patient.patientID.charAt(0)}
+                    </div>
+                    <div className="flex-grow grid grid-cols-3 items-center">
+                      <div className="col-span-1">
+                        <h3 className="text-lg font-bold text-gray-800 group-hover:text-primary-700 transition-colors">
+                          {patient.patientName || "Unknown Patient"}
+                        </h3>
+                        <p className="text-gray-600 text-sm font-mono">
+                          ID: {patient.patientID}
+                        </p>
+                      </div>
+                      <div className="col-span-1 flex items-center gap-4">
+                        <Badge
+                          label={`${patient.studyCount || 0} studies`}
+                          color="primary"
+                          size="small"
+                        />
+                        {patient.sex && (
+                          <Badge
+                            label={
+                              patient.sex === "M"
+                                ? "Male"
+                                : patient.sex === "F"
+                                ? "Female"
+                                : "Other"
+                            }
+                            variant="outlined"
+                            size="small"
+                            color="secondary"
+                          />
+                        )}
+                      </div>
+                      <div className="col-span-1 text-sm text-gray-500">
+                        {patient.birthDate && (
+                          <p>DOB: {patient.birthDate}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0 flex items-center gap-3 ml-4">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleExportPatient(patient.patientID);
+                        }}
+                        className="p-2 rounded-full text-gray-500 hover:bg-gray-200 hover:text-primary-600 transition-colors duration-150"
+                        title="Download Patient Data"
+                      >
+                        <Download className="w-5 h-5" />
+                      </button>
+                      <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-primary-600 transition-colors" />
+                    </div>
+                  </button>
+                </div>
+              ))}
+
+              {filteredPatients.length === 0 && (
+                <div className="text-center py-10">
+                  {patients.length > 0 ? (
+                    <>
+                      <Search className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+                      <p className="text-2xl font-semibold text-gray-600 mb-2">
+                        No patients match your search
+                      </p>
+                      <p className="text-gray-500 mb-4">
+                        Try adjusting your filters or search query
+                      </p>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSearchTerm("");
+                          setFilterSex("all");
+                        }}
+                      >
+                        Clear Filters
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Users className="w-20 h-20 text-gray-300 mx-auto mb-4" />
+                      <p className="text-2xl font-semibold text-gray-600 mb-2">
+                        No patients found
+                      </p>
+                      <p className="text-gray-500">
+                        Add your first patient to get started
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Studies Modal */}
+      <Modal
+        isOpen={studiesPopupOpen}
+        onClose={() => {
+          setStudiesPopupOpen(false);
+          setUploadFileObj(null);
+        }}
+        title={selectedPatient?.patientName || "Unknown Patient"}
+        description={`Patient ID: ${selectedPatientID}${
+          selectedPatient?.birthDate ? ` (DOB: ${selectedPatient.birthDate})` : ""
+        }`}
+        maxWidth="lg"
+      >
+        <div className="-mx-6 -mt-6 p-4 bg-gray-50 border-b border-gray-200 rounded-t-xl">
+          <h4 className="text-lg font-bold text-gray-800 mb-3">
+            Upload DICOM File
+          </h4>
+          <div className="flex flex-col sm:flex-row gap-4 items-center">
+            <label
+              className={`flex-grow flex flex-col items-center justify-center p-6 border-2 ${
+                uploadFileObj
+                  ? "border-green-500 text-green-700 bg-green-50"
+                  : "border-dashed border-gray-300 text-gray-600 bg-white"
+              } rounded-lg cursor-pointer hover:border-primary-500 hover:bg-primary-50 transition-colors duration-200`}
+            >
+              <UploadCloud className="w-8 h-8 mb-2" />
+              {uploadFileObj ? (
+                <div>
+                  <p className="font-bold text-green-700 text-sm">
+                    {uploadFileObj.name}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {(uploadFileObj.size / 1024 / 1024).toFixed(2)} MB
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <p className="font-bold text-sm">Choose DICOM file</p>
+                  <p className="text-xs text-gray-500">Click to browse</p>
+                </div>
+              )}
+              <input
+                type="file"
+                hidden
+                accept="*/*"
+                onChange={(e) =>
+                  setUploadFileObj(e.target.files?.[0] || null)
+                }
+              />
+            </label>
+            <Button
+              onClick={handleUploadDicom}
+              disabled={!uploadFileObj || uploading}
+              startIcon={<UploadCloud className="w-5 h-5" />}
+              loading={uploading}
+              className="min-w-[120px] shadow-sm"
+            >
+              {uploading ? "Uploading..." : "Upload"}
+            </Button>
+          </div>
+        </div>
+
+        <div className="-mx-6 p-4">
+          <h4 className="text-lg font-bold text-gray-800 mb-3 px-6">
+            Medical Studies ({studiesForPatient.length})
+          </h4>
+
+          {loadingPatientStudies ? (
+            <div className="flex justify-center py-6">
+              <div className="animate-spin rounded-full h-8 w-8 border-4 border-primary-500 border-t-transparent" />
+            </div>
+          ) : studiesForPatient.length > 0 ? (
+            <div className="space-y-4 max-h-80 overflow-y-auto px-6">
+              {studiesForPatient.map((study) => (
+                <div
+                  key={study.studyInstanceUID}
+                  className="bg-white border border-gray-200 rounded-lg shadow-sm hover:border-primary-500 hover:shadow-md transition-all duration-200 cursor-pointer"
+                >
+                  <div
+                    onClick={() => handleStudyClick(study.studyInstanceUID)}
+                    className="p-4 flex justify-between items-start"
+                  >
+                    <div className="flex-grow">
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <Badge
+                          label={study.modality}
+                          color="primary"
+                          size="small"
+                        />
+                        <p className="text-base font-bold text-gray-800 truncate max-w-xs">
+                          {study.studyDescription || "Untitled Study"}
+                        </p>
+                      </div>
+                      <div className="flex gap-4 text-sm text-gray-600 mb-2">
+                        <p className="inline-flex items-center">
+                          <Image className="w-4 h-4 mr-1 text-gray-500" />
+                          {study.numberOfInstances} images
+                        </p>
+                        <p className="inline-flex items-center">
+                          <Folder className="w-4 h-4 mr-1 text-gray-500" />
+                          {study.numberOfSeries} series
+                        </p>
+                      </div>
+                      <p className="text-xs text-gray-500 font-mono break-all max-w-full">
+                        UID: {study.studyInstanceUID}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleExportStudy(study.studyInstanceUID);
+                        }}
+                        className="p-2 rounded-full text-gray-500 hover:bg-gray-100 hover:text-primary-600 transition-colors duration-150"
+                        title="Download Study Data"
+                      >
+                        <Download className="w-5 h-5" />
+                      </button>
+                      <ChevronRight className="w-5 h-5 text-gray-400" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-6 px-6">
+              <Folder className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <p className="text-lg text-gray-600 mb-2">No studies found</p>
+              <p className="text-gray-500 text-sm">
+                Upload a DICOM file above to create a new study
+              </p>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* Add Patient Modal */}
+      <Modal
+        isOpen={addOpen}
+        onClose={handleAddPatientClose}
+        title="Add New Patient"
+        description="Enter essential patient information"
+        maxWidth="sm"
+      >
+        <div className="space-y-5">
+          <Input
+            label="Patient Name (Required)"
+            value={newPatientName}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setNewPatientName(e.target.value)
+            }
+            fullWidth
+            required
+          />
+
+          <DatePicker
+            label="Birth Date (Optional)"
+            selectedDate={newPatientBirthDate}
+            onChange={setNewPatientBirthDate}
+            placeholder="Select date"
+            fullWidth
+          />
+
+          <Select
+            label="Sex (Required)"
+            value={newPatientSex}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+              setNewPatientSex(e.target.value)
+            }
+            options={[
+              { value: "", label: "Select Sex" },
+              { value: "M", label: "Male" },
+              { value: "F", label: "Female" },
+              { value: "O", label: "Other" },
+            ]}
+            fullWidth
+            required
+            size="md"
+          />
+        </div>
+
+        <ModalFooter>
+          <Button
+            variant="outline"
+            onClick={handleAddPatientClose}
+            disabled={addingPatient}
+          >
             Cancel
           </Button>
           <Button
+            variant="primary"
             onClick={handleAddPatientSubmit}
-            variant="contained"
-            disabled={addingPatient}
-            startIcon={addingPatient ? <CircularProgress size={20} color="inherit" /> : null}
-            sx={{ textTransform: "none", px: 3 }}
+            disabled={
+              addingPatient || !newPatientName.trim() || !newPatientSex.trim()
+            }
+            loading={addingPatient}
+            startIcon={<Plus />}
           >
             {addingPatient ? "Saving..." : "Save Patient"}
           </Button>
-        </DialogActions>
-      </Dialog>
+        </ModalFooter>
+      </Modal>
 
-      {/* PACS Upload Dialog */}
-      <Dialog
-        open={pacsUploadOpen}
+      {/* PACS Upload Modal */}
+      <Modal
+        isOpen={pacsUploadOpen}
         onClose={handlePacsUploadClose}
-        maxWidth="md"
-        fullWidth
-        PaperProps={{
-          sx: { borderRadius: 2 },
-        }}
+        title={pacsUploadSuccess ? "Upload Successful! 🎉" : "Upload DICOM Study"}
+        description={
+          pacsUploadSuccess
+            ? "Study uploaded and ready for viewing"
+            : "Upload DICOM files directly to PACS server"
+        }
+        titleBgClass={pacsUploadSuccess ? "bg-green-600" : "bg-primary-600"}
+        maxWidth="lg"
       >
-        <DialogTitle
-          sx={{
-            background: pacsUploadSuccess
-              ? "linear-gradient(135deg, #4caf50 0%, #388e3c 100%)"
-              : "linear-gradient(135deg, #1976d2 0%, #1565c0 100%)",
-            color: "white",
-            py: 3,
-          }}
-        >
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Box>
-              <Typography variant="h5" fontWeight="bold">
-                {pacsUploadSuccess ? "Upload Successful!" : "Upload DICOM Study"}
-              </Typography>
-              <Typography variant="body2" sx={{ opacity: 0.9, mt: 0.5 }}>
-                {pacsUploadSuccess
-                  ? "Study uploaded and ready for viewing"
-                  : "Upload DICOM files directly to PACS server"}
-              </Typography>
-            </Box>
-            <IconButton onClick={handlePacsUploadClose} sx={{ color: "white" }}>
-              <Close />
-            </IconButton>
-          </Stack>
-        </DialogTitle>
+        {pacsUploadSuccess ? (
+          <div className="text-center py-8">
+            <CheckCircle className="w-20 h-20 text-green-500 mx-auto mb-4 animate-bounce" />
+            <h4 className="text-2xl font-bold text-gray-800 mb-2">
+              Study Uploaded Successfully!
+            </h4>
+            <p className="text-gray-600 mb-4">
+              {pacsFiles.length} file(s) processed
+            </p>
+            {uploadedStudyUID && (
+              <div className="mt-6 p-4 bg-gray-100 rounded-lg border border-gray-200 mx-auto max-w-sm">
+                <p className="text-sm text-gray-600 mb-1 font-semibold">
+                  Study UID:
+                </p>
+                <p className="text-base font-mono text-gray-800 break-all">
+                  {uploadedStudyUID}
+                </p>
+              </div>
+            )}
+            <p className="text-primary-600 mt-6 text-sm font-semibold">
+              Redirecting to viewer...
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <label className="block w-full border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer bg-gray-50 hover:border-primary-500 hover:bg-primary-50 transition-colors duration-200">
+              <input
+                type="file"
+                hidden
+                multiple
+                accept=".dcm,application/dicom"
+                onChange={handlePacsFileSelect}
+              />
+              <UploadCloud className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+              <p className="text-xl font-bold text-gray-800 mb-2">
+                {pacsFiles.length > 0
+                  ? `Selected: ${pacsFiles.length} file(s)`
+                  : "Choose DICOM Files"}
+              </p>
+              <p className="text-gray-600 text-sm">
+                Click to browse or drag and drop DICOM files here
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Supports .dcm files and multi-frame DICOM
+              </p>
+            </label>
 
-        <DialogContent sx={{ p: 4 }}>
-          {pacsUploadSuccess ? (
-            <Box sx={{ textAlign: "center", py: 4 }}>
-              <CheckCircle sx={{ fontSize: 80, color: "success.main", mb: 2 }} />
-              <Typography variant="h6" fontWeight="bold" gutterBottom>
-                Study Uploaded Successfully!
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                {pacsFiles.length} file(s) processed
-              </Typography>
-              {uploadedStudyUID && (
-                <Box
-                  sx={{
-                    mt: 3,
-                    p: 2,
-                    bgcolor: "grey.50",
-                    borderRadius: 1,
-                    border: 1,
-                    borderColor: "divider",
-                  }}
-                >
-                  <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                    Study UID:
-                  </Typography>
-                  <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
-                    {uploadedStudyUID}
-                  </Typography>
-                </Box>
-              )}
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 3 }}>
-                Redirecting to viewer...
-              </Typography>
-            </Box>
-          ) : (
-            <Stack spacing={3}>
-              <Box
-                sx={{
-                  border: 2,
-                  borderStyle: "dashed",
-                  borderColor: pacsFiles.length > 0 ? "success.main" : "divider",
-                  borderRadius: 2,
-                  p: 4,
-                  textAlign: "center",
-                  bgcolor: pacsFiles.length > 0 ? "success.50" : "grey.50",
-                  transition: "all 0.3s",
-                  cursor: "pointer",
-                  "&:hover": {
-                    borderColor: "primary.main",
-                    bgcolor: "primary.50",
-                  },
-                }}
-                component="label"
-              >
-                <input
-                  type="file"
-                  hidden
-                  multiple
-                  accept=".dcm,application/dicom"
-                  onChange={handlePacsFileSelect}
-                />
-                <CloudUpload sx={{ fontSize: 64, color: pacsFiles.length > 0 ? "success.main" : "text.secondary", mb: 2 }} />
-                <Typography variant="h6" fontWeight="bold" gutterBottom>
-                  {pacsFiles.length > 0 ? `${pacsFiles.length} file(s) selected` : "Choose DICOM Files"}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Click to browse or drag and drop DICOM files here
-                </Typography>
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                  Supports .dcm files and multi-frame DICOM
-                </Typography>
-              </Box>
+            {pacsFiles.length > 0 && (
+              <div>
+                <h4 className="text-lg font-bold text-gray-800 mb-2">
+                  Selected Files:
+                </h4>
+                <div className="bg-white border border-gray-200 rounded-md max-h-48 overflow-y-auto p-4 space-y-2">
+                  {pacsFiles.map((file, idx) => (
+                    <div
+                      key={idx}
+                      className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-100"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <Image className="w-4 h-4 text-primary-600 flex-shrink-0" />
+                        <p className="text-sm text-gray-800 truncate">
+                          {file.name}
+                        </p>
+                      </div>
+                      <p className="text-xs text-gray-500 flex-shrink-0 ml-4">
+                        {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
-              {pacsFiles.length > 0 && (
-                <Box>
-                  <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                    Selected Files:
-                  </Typography>
-                  <Paper variant="outlined" sx={{ maxHeight: 200, overflow: "auto", p: 2 }}>
-                    <Stack spacing={1}>
-                      {pacsFiles.map((file, idx) => (
-                        <Box
-                          key={idx}
-                          sx={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            p: 1,
-                            bgcolor: "grey.50",
-                            borderRadius: 1,
-                          }}
-                        >
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                            <Image color="primary" fontSize="small" />
-                            <Typography variant="body2">{file.name}</Typography>
-                          </Box>
-                          <Typography variant="caption" color="text.secondary">
-                            {(file.size / 1024 / 1024).toFixed(2)} MB
-                          </Typography>
-                        </Box>
-                      ))}
-                    </Stack>
-                  </Paper>
-                </Box>
-              )}
-
-              <Alert severity="info" icon={<CloudUpload />}>
-                <Typography variant="body2">
-                  <strong>Direct PACS Upload:</strong> Files will be uploaded to Orthanc PACS server and immediately
-                  available for viewing. The study will appear in your studies list automatically.
-                </Typography>
-              </Alert>
-            </Stack>
-          )}
-        </DialogContent>
+            <Alert severity="info" icon={<UploadCloud />}>
+              <p className="font-bold text-sm">Direct PACS Upload:</p>
+              <p className="text-sm">
+                Files will be uploaded to the PACS server and will appear in the
+                patient list shortly.
+              </p>
+            </Alert>
+          </div>
+        )}
 
         {!pacsUploadSuccess && (
-          <DialogActions sx={{ p: 3, bgcolor: "grey.50" }}>
-            <Button onClick={handlePacsUploadClose} disabled={pacsUploading} sx={{ textTransform: "none" }}>
+          <ModalFooter>
+            <Button
+              variant="outline"
+              onClick={handlePacsUploadClose}
+              disabled={pacsUploading}
+            >
               Cancel
             </Button>
             <Button
+              variant="primary"
               onClick={handlePacsUpload}
-              variant="contained"
               disabled={pacsFiles.length === 0 || pacsUploading}
-              startIcon={pacsUploading ? <CircularProgress size={20} color="inherit" /> : <Upload />}
-              sx={{ textTransform: "none", px: 4 }}
+              loading={pacsUploading}
+              startIcon={<Upload className="w-4 h-4" />}
             >
-              {pacsUploading ? "Uploading..." : `Upload ${pacsFiles.length} File(s)`}
+              {pacsUploading
+                ? "Uploading..."
+                : `Upload ${pacsFiles.length} File(s)`}
             </Button>
-          </DialogActions>
+          </ModalFooter>
         )}
-      </Dialog>
+      </Modal>
 
       {/* Export Dialog */}
-      <Dialog open={exportDialogOpen} onClose={handleExportClose} maxWidth="sm" fullWidth>
-        <DialogTitle
-          sx={{
-            background: "linear-gradient(135deg, #1976d2 0%, #1565c0 100%)",
-            color: "white",
-          }}
-        >
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Box>
-              <Typography variant="h6" fontWeight="bold">
-                Export {exportTarget?.type === 'patient' ? 'Patient' : 'Study'} Data
-              </Typography>
-              <Typography variant="body2" sx={{ opacity: 0.9, mt: 0.5 }}>
-                Download complete data package with DICOM files
-              </Typography>
-            </Box>
-            <IconButton onClick={handleExportClose} sx={{ color: "white" }}>
-              <Close />
-            </IconButton>
-          </Stack>
-        </DialogTitle>
+      <Modal
+        isOpen={exportDialogOpen}
+        onClose={handleExportClose}
+        title={`Export ${
+          exportTarget?.type === "patient" ? "Patient" : "Study"
+        } Data`}
+        description="Download complete data package with DICOM files"
+        maxWidth="sm"
+      >
+        <div className="space-y-6">
+          <Alert severity="info" icon={<FileDown />}>
+            <p className="font-bold text-sm">
+              This will create a ZIP file containing:
+            </p>
+            <ul className="list-disc list-inside text-sm mt-2 space-y-1 ml-4">
+              <li>Complete metadata (JSON format)</li>
+              <li>Patient and study information</li>
+              {includeImages && <li>All DICOM files (.dcm)</li>}
+              {includeImages && <li>Preview images (PNG format)</li>}
+              <li>AI analysis results (if available)</li>
+            </ul>
+          </Alert>
 
-        <DialogContent sx={{ mt: 3 }}>
-          <Stack spacing={3}>
-            <Alert severity="info" icon={<FileDownload />}>
-              <Typography variant="body2">
-                This will create a ZIP file containing:
-              </Typography>
-              <Box component="ul" sx={{ mt: 1, mb: 0, pl: 2 }}>
-                <li>Complete metadata (JSON format)</li>
-                <li>Patient and study information</li>
-                {includeImages && <li>All DICOM files (.dcm)</li>}
-                {includeImages && <li>Preview images (PNG format)</li>}
-                <li>AI analysis results (if available)</li>
-              </Box>
-            </Alert>
+          <div className="flex items-start">
+            <input
+              type="checkbox"
+              id="includeImages"
+              checked={includeImages}
+              onChange={(e) => setIncludeImages(e.target.checked)}
+              className="mt-1 h-5 w-5 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+            />
+            <label htmlFor="includeImages" className="ml-3 cursor-pointer">
+              <span className="text-base font-medium text-gray-700">
+                Include DICOM images and previews
+              </span>
+              <span className="block text-sm text-gray-500">
+                Unchecking this will only export metadata (faster, smaller file)
+              </span>
+            </label>
+          </div>
 
-            <Box>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <input
-                  type="checkbox"
-                  id="includeImages"
-                  checked={includeImages}
-                  onChange={(e) => setIncludeImages(e.target.checked)}
-                  style={{ width: 20, height: 20, cursor: 'pointer' }}
-                />
-                <label htmlFor="includeImages" style={{ cursor: 'pointer' }}>
-                  <Typography variant="body1">
-                    Include DICOM images and previews
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Unchecking this will only export metadata (smaller file size)
-                  </Typography>
-                </label>
-              </Stack>
-            </Box>
+          {exportTarget && (
+            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+              <p className="text-sm font-bold text-gray-800 mb-1">
+                Export Target:
+              </p>
+              <p className="text-sm text-gray-600">
+                Type:{" "}
+                {exportTarget.type === "patient"
+                  ? "Patient Data"
+                  : "Study Data"}
+              </p>
+              <p className="text-sm text-gray-600 font-mono mt-1 break-all">
+                ID: {exportTarget.id}
+              </p>
+            </div>
+          )}
+        </div>
 
-            {exportTarget && (
-              <Paper variant="outlined" sx={{ p: 2, bgcolor: "grey.50" }}>
-                <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                  Export Details:
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Type: {exportTarget.type === 'patient' ? 'Patient Data' : 'Study Data'}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ fontFamily: "monospace", mt: 0.5 }}>
-                  ID: {exportTarget.id}
-                </Typography>
-              </Paper>
-            )}
-          </Stack>
-        </DialogContent>
-
-        <DialogActions sx={{ p: 2.5, bgcolor: "grey.50" }}>
-          <Button onClick={handleExportClose} disabled={exporting} sx={{ textTransform: "none" }}>
+        <ModalFooter>
+          <Button
+            variant="outline"
+            onClick={handleExportClose}
+            disabled={exporting}
+          >
             Cancel
           </Button>
           <Button
+            variant="primary"
             onClick={handleExportConfirm}
-            variant="contained"
             disabled={exporting}
-            startIcon={exporting ? <CircularProgress size={20} color="inherit" /> : <FileDownload />}
-            sx={{ textTransform: "none", px: 3 }}
+            loading={exporting}
+            startIcon={<FileDown className="w-4 h-4" />}
           >
             {exporting ? "Exporting..." : "Export Data"}
           </Button>
-        </DialogActions>
-      </Dialog>
+        </ModalFooter>
+      </Modal>
 
-      {/* Error Alert */}
+      {/* Global Error */}
       {error && (
         <Alert
           severity="error"
           onClose={() => setError(null)}
-          icon={<ErrorIcon />}
-          sx={{
-            position: "fixed",
-            bottom: 24,
-            right: 24,
-            minWidth: 300,
-            boxShadow: 3,
-          }}
+          icon={<AlertTriangle />}
+          className="fixed bottom-6 right-6 min-w-[300px] z-50 shadow-xl"
         >
-          <Typography variant="subtitle2" fontWeight="bold">
-            Error
-          </Typography>
-          <Typography variant="body2">{error}</Typography>
+          <p className="font-bold text-sm">Error</p>
+          <p className="text-sm">{error}</p>
         </Alert>
       )}
     </>
-  )
-}
+  );
+};
 
-export default PatientsPage
+export default PatientsPage;

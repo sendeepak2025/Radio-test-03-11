@@ -18,6 +18,17 @@ export default function HospitalSettingsPage() {
   const [hospitalId, setHospitalId] = useState("");
   const [hospitalUsername, setHospitalUsername] = useState("");
 
+  // FIXED INPUT & TOGGLE STYLES
+  const inputClass =
+    "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm " +
+    "focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500";
+
+  const toggleClass =
+    "h-5 w-10 cursor-pointer rounded-full bg-gray-300 appearance-none relative " +
+    "checked:bg-indigo-600 transition-all " +
+    "before:absolute before:top-0.5 before:left-0.5 before:h-4 before:w-4 before:bg-white " +
+    "before:rounded-full before:transition-all checked:before:translate-x-5";
+
   const [form, setForm] = useState({
     name: "",
     contactEmail: "",
@@ -39,9 +50,7 @@ export default function HospitalSettingsPage() {
     },
   });
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
+  const handleCopy = (text: string) => navigator.clipboard.writeText(text);
 
   useEffect(() => {
     const load = async () => {
@@ -75,23 +84,20 @@ export default function HospitalSettingsPage() {
     load();
   }, []);
 
-  const update = (key: string, value: any) => {
+  const update = (key: string, value: any) =>
     setForm((prev) => ({ ...prev, [key]: value }));
-  };
 
-  const updateAddress = (key: string, value: string) => {
+  const updateAddress = (key: string, value: string) =>
     setForm((prev) => ({
       ...prev,
       address: { ...prev.address, [key]: value },
     }));
-  };
 
-  const updateSetting = (key: string, value: any) => {
+  const updateSetting = (key: string, value: any) =>
     setForm((prev) => ({
       ...prev,
       settings: { ...prev.settings, [key]: value },
     }));
-  };
 
   const handleLogoUpload = async (file: File) => {
     try {
@@ -150,13 +156,11 @@ export default function HospitalSettingsPage() {
         </p>
       </div>
 
-      {/* Hospital Info */}
+      {/* ACCOUNT INFO */}
       <div className="bg-white rounded-xl shadow p-5 space-y-4 border border-gray-100">
-
         <h2 className="font-semibold text-gray-800">Account Information</h2>
 
         <div className="grid sm:grid-cols-2 gap-4">
-          {/* Hospital ID */}
           <div className="border rounded-lg p-3 bg-gray-50">
             <p className="text-sm text-gray-500">Hospital ID</p>
             <div className="flex justify-between mt-1">
@@ -168,7 +172,6 @@ export default function HospitalSettingsPage() {
             </div>
           </div>
 
-          {/* Hospital Username */}
           <div className="border rounded-lg p-3 bg-gray-50">
             <p className="text-sm text-gray-500">Hospital Username</p>
             <div className="flex justify-between mt-1">
@@ -180,13 +183,12 @@ export default function HospitalSettingsPage() {
             </div>
           </div>
         </div>
-
       </div>
 
-      {/* MAIN FORM GRID */}
+      {/* MAIN GRID */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-        {/* LEFT: BASIC DETAILS */}
+        {/* LEFT SIDE */}
         <div className="lg:col-span-2 space-y-6">
 
           {/* Basic Info */}
@@ -198,7 +200,7 @@ export default function HospitalSettingsPage() {
               <div>
                 <label className="text-sm text-gray-600">Hospital Name</label>
                 <input
-                  className="input"
+                  className={inputClass}
                   value={form.name}
                   onChange={(e) => update("name", e.target.value)}
                 />
@@ -207,7 +209,7 @@ export default function HospitalSettingsPage() {
               <div>
                 <label className="text-sm text-gray-600">Email</label>
                 <input
-                  className="input"
+                  className={inputClass}
                   value={form.contactEmail}
                   onChange={(e) => update("contactEmail", e.target.value)}
                 />
@@ -216,7 +218,7 @@ export default function HospitalSettingsPage() {
               <div>
                 <label className="text-sm text-gray-600">Contact Number</label>
                 <input
-                  className="input"
+                  className={inputClass}
                   value={form.contactPhone}
                   onChange={(e) => update("contactPhone", e.target.value)}
                 />
@@ -234,7 +236,7 @@ export default function HospitalSettingsPage() {
                 <div key={key}>
                   <label className="text-sm text-gray-600 capitalize">{key}</label>
                   <input
-                    className="input"
+                    className={inputClass}
                     value={(form.address as any)[key] || ""}
                     onChange={(e) => updateAddress(key, e.target.value)}
                   />
@@ -243,7 +245,7 @@ export default function HospitalSettingsPage() {
             </div>
           </div>
 
-          {/* Settings Toggles */}
+          {/* Security Settings */}
           <div className="bg-white p-6 rounded-xl shadow border border-gray-100 space-y-4">
             <h3 className="font-semibold text-gray-800">Security Settings</h3>
 
@@ -251,9 +253,9 @@ export default function HospitalSettingsPage() {
               <span className="text-gray-700">Require MFA</span>
               <input
                 type="checkbox"
+                className={toggleClass}
                 checked={form.settings.requireMFA}
                 onChange={(e) => updateSetting("requireMFA", e.target.checked)}
-                className="toggle"
               />
             </div>
 
@@ -261,9 +263,9 @@ export default function HospitalSettingsPage() {
               <span className="text-gray-700">Auto Backup</span>
               <input
                 type="checkbox"
+                className={toggleClass}
                 checked={form.settings.autoBackup}
                 onChange={(e) => updateSetting("autoBackup", e.target.checked)}
-                className="toggle"
               />
             </div>
 
@@ -271,9 +273,9 @@ export default function HospitalSettingsPage() {
               <span className="text-gray-700">Allow Data Sharing</span>
               <input
                 type="checkbox"
+                className={toggleClass}
                 checked={form.settings.allowDataSharing}
                 onChange={(e) => updateSetting("allowDataSharing", e.target.checked)}
-                className="toggle"
               />
             </div>
 
@@ -281,21 +283,19 @@ export default function HospitalSettingsPage() {
               <label className="text-sm text-gray-600">Data Retention (days)</label>
               <input
                 type="number"
-                className="input"
+                className={inputClass}
                 value={form.settings.dataRetentionDays}
                 onChange={(e) =>
                   updateSetting("dataRetentionDays", Number(e.target.value))
                 }
               />
             </div>
-
           </div>
 
         </div>
 
-        {/* RIGHT: LOGO UPLOADER */}
+        {/* RIGHT SIDE → LOGO UPLOAD */}
         <div>
-
           <div className="bg-white p-6 rounded-xl shadow border border-gray-100">
             <h3 className="font-semibold text-gray-800">Branding</h3>
 
@@ -315,12 +315,14 @@ export default function HospitalSettingsPage() {
                   type="file"
                   className="hidden"
                   accept="image/*"
-                  onChange={(e) => e.target.files?.[0] && handleLogoUpload(e.target.files[0])}
+                  onChange={(e) =>
+                    e.target.files?.[0] && handleLogoUpload(e.target.files[0])
+                  }
                 />
               </label>
+
             </div>
           </div>
-
         </div>
       </div>
 
@@ -328,14 +330,10 @@ export default function HospitalSettingsPage() {
       <div className="flex justify-end">
         <button
           onClick={handleSave}
-          className="btn-primary"
+          className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg shadow disabled:opacity-60 flex items-center gap-2"
           disabled={saving}
         >
-          {saving ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : (
-            "Save Settings"
-          )}
+          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : "Save Settings"}
         </button>
       </div>
 
@@ -347,11 +345,7 @@ export default function HospitalSettingsPage() {
         </div>
       )}
 
-      {error && (
-        <div className="text-red-600 text-sm mt-2">
-          {error}
-        </div>
-      )}
+      {error && <div className="text-red-600 text-sm mt-2">{error}</div>}
     </div>
   );
 }

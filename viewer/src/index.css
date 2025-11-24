@@ -3,6 +3,10 @@
 @tailwind components;
 @tailwind utilities;
 
+
+
+
+
 /* Landing page theme variables */
 @layer base {
   :root {

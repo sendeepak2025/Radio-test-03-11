@@ -211,8 +211,8 @@ if (refreshToken) {
       <AppProvider>
         <WebSocketProvider autoConnect={isAuthenticated}>
           <Helmet>
-            <title>Medical Imaging Viewer</title>
-            <meta name="description" content="Advanced medical imaging viewer with AI-powered analysis" />
+            <title>ScanFlowAI</title>
+            <meta name="description" content="Advanced ScanFlowAI with AI-powered analysis" />
           </Helmet>
 
           <CssBaseline />

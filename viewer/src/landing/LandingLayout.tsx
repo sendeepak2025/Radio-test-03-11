@@ -3,16 +3,16 @@ import { useEffect } from 'react';
 
 const LandingLayout = () => {
   useEffect(() => {
-    // Override body styles for landing page
+    const prevBackground = document.body.style.backgroundColor;
+    const prevColor = document.body.style.color;
+    const prevOverflow = document.body.style.overflow;
     document.body.style.backgroundColor = 'hsl(0 0% 100%)';
     document.body.style.color = 'hsl(222.2 84% 4.9%)';
     document.body.style.overflow = 'auto';
-    
     return () => {
-      // Restore original styles when leaving landing page
-      document.body.style.backgroundColor = '#121212';
-      document.body.style.color = '#ffffff';
-      document.body.style.overflow = 'hidden';
+      document.body.style.backgroundColor = prevBackground;
+      document.body.style.color = prevColor;
+      document.body.style.overflow = prevOverflow || 'auto';
     };
   }, []);
 
