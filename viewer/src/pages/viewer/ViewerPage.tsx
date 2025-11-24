@@ -331,7 +331,8 @@ const ViewerPage: React.FC = () => {
         bgcolor: '#000',
         display: 'flex',
         flexDirection: 'column',
-        overflow: 'hidden',
+        overflowX: 'hidden',
+        overflowY: 'auto',
       }}>
         {/* Modern Header */}
         <Fade in={showToolbar}>
@@ -605,7 +606,8 @@ const ViewerPage: React.FC = () => {
           flex: 1, 
           display: 'flex',
           position: 'relative',
-          overflow: 'hidden',
+          overflowX: 'hidden',
+          overflowY: 'auto',
         }}>
           {/* Viewer Area with Tabs */}
           <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
