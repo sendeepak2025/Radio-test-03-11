@@ -32,7 +32,9 @@ app.use(cors({
       'http://localhost:3000',
       'http://127.0.0.1:3010',
       'http://127.0.0.1:5173',
-      'http://127.0.0.1:3000'
+      'http://127.0.0.1:3000',
+      'https://scanflowai.com',
+      'https://www.scanflowai.com'
     ];
     
     if (allowedOrigins.indexOf(origin) !== -1) {
@@ -402,7 +404,9 @@ async function startServer() {
         'http://localhost:3000',
         'http://127.0.0.1:3010',
         'http://127.0.0.1:5173',
-        'http://127.0.0.1:3000'
+        'http://127.0.0.1:3000',
+        'https://scanflowai.com',
+        'https://www.scanflowai.com'
       ]
     });
 

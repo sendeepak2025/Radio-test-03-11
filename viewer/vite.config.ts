@@ -5,7 +5,7 @@ import viteCompression from 'vite-plugin-compression'
 import { visualizer } from 'rollup-plugin-visualizer'
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     // Gzip compression
@@ -70,8 +70,14 @@ export default defineConfig({
       '.emergentagent.com',
       '.preview.emergentagent.com',
       '.scanflowai.com',
+      'scanflowai.com',
       'wwww.scanflowai.com'
     ],
+    hmr: {
+      // In production, disable HMR WebSocket or use proper domain
+      port: process.env.NODE_ENV === 'production' ? false : 3011,
+      host: process.env.NODE_ENV === 'production' ? false : 'localhost'
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:8001',
@@ -114,6 +120,7 @@ export default defineConfig({
     sourcemap: process.env.NODE_ENV !== 'production',
     minify: 'terser',
     chunkSizeWarningLimit: 800,
+    assetsDir: 'assets',
     terserOptions: {
       compress: {
         drop_console: process.env.NODE_ENV === 'production',
@@ -198,4 +205,4 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: true,
   },
-})
+}))
