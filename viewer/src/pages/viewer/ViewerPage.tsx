@@ -80,7 +80,7 @@ function TabPanel({ children, value, index, ...other }: TabPanelProps) {
 const ViewerPage: React.FC = () => {
   const theme = useTheme()
   const { studyInstanceUID } = useParams<{ studyInstanceUID: string }>()
-  console.log(studyInstanceUID)
+  // console.log(studyInstanceUID)
   const { user } = useAuth()
   const navigate = useNavigate()
   const { setCurrentStudy, addToHistory } = useWorkflow()
