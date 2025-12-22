@@ -297,4 +297,28 @@ router.use('/api/monitoring', monitoringRoutes);
 const searchRoutes = require('./search');
 router.use('/api/search', searchRoutes);
 
+// Critical Communications API - ACR compliant critical findings communication
+const criticalCommunicationsRoutes = require('./critical-communications');
+router.use('/api/critical-communications', criticalCommunicationsRoutes);
+
+// Report Versions API - Full audit trail for report versioning (addendum/amendment/correction)
+const reportVersionsRoutes = require('./report-versions');
+router.use('/api/report-versions', reportVersionsRoutes);
+
+// Terminology API - RadLex and SNOMED CT code lookup
+const terminologyRoutes = require('./terminology');
+router.use('/api/terminology', terminologyRoutes);
+
+// Preliminary Workflow API - Trainee/Attending co-signature workflow
+const preliminaryWorkflowRoutes = require('./preliminary-workflow');
+router.use('/api/preliminary-workflow', preliminaryWorkflowRoutes);
+
+// Comparison Studies API - Link prior studies for comparison
+const comparisonStudiesRoutes = require('./comparison-studies');
+router.use('/api/comparison-studies', comparisonStudiesRoutes);
+
+// DICOM Technique API - Auto-populate technique from DICOM metadata
+const dicomTechniqueRoutes = require('./dicom-technique');
+router.use('/api/dicom-technique', dicomTechniqueRoutes);
+
 module.exports = router;

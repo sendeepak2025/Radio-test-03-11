@@ -21,7 +21,8 @@ import {
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
-  Edit as EditIcon
+  Edit as EditIcon,
+  AutoFixHigh as AutoPopulateIcon
 } from '@mui/icons-material';
 import { useReporting } from '../../../contexts/ReportingContext';
 import QuickPhraseButton from '../QuickPhraseButton';
@@ -30,6 +31,7 @@ import { MeasurementModule, ChecklistModule, CalculatorModule, DiagramInlineModu
 
 const ReportContentPanel: React.FC = () => {
   const { state, actions } = useReporting();
+  const [autoPopulateLoading, setAutoPopulateLoading] = React.useState(false);
   
   // ✅ TEMPLATE STRUCTURE FIX: Get field values from correct location
   // If template is used, read from state (which was initialized from sections)
@@ -68,6 +70,30 @@ const ReportContentPanel: React.FC = () => {
       ? `${currentValue}\n${phrase}` 
       : phrase;
     handleFieldChange(field, newValue);
+  };
+
+  // Auto-populate technique from DICOM metadata
+  const autoPopulateTechnique = async () => {
+    if (!state.studyInstanceUID) return;
+    
+    setAutoPopulateLoading(true);
+    try {
+      const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+      const response = await fetch(`/api/dicom-technique/${state.studyInstanceUID}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.technique) {
+          handleFieldChange('technique', data.technique);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to auto-populate technique:', error);
+    } finally {
+      setAutoPopulateLoading(false);
+    }
   };
   
   // Handle UI module data changes
@@ -248,11 +274,23 @@ const ReportContentPanel: React.FC = () => {
             <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
               Technique
             </Typography>
-            <QuickPhraseButton
-              phrases={getQuickPhrases(modality, 'technique')}
-              onInsert={(phrase) => insertPhrase('technique', phrase)}
-              label="Common Techniques"
-            />
+            <Box display="flex" gap={1}>
+              <Tooltip title="Auto-populate from DICOM metadata">
+                <IconButton
+                  size="small"
+                  color="primary"
+                  onClick={autoPopulateTechnique}
+                  disabled={autoPopulateLoading || !state.studyInstanceUID}
+                >
+                  <AutoPopulateIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <QuickPhraseButton
+                phrases={getQuickPhrases(modality, 'technique')}
+                onInsert={(phrase) => insertPhrase('technique', phrase)}
+                label="Common Techniques"
+              />
+            </Box>
           </Box>
           <TextField
             fullWidth
@@ -260,10 +298,15 @@ const ReportContentPanel: React.FC = () => {
             rows={2}
             value={getFieldValue('technique')}
             onChange={(e) => handleFieldChange('technique', e.target.value)}
-            placeholder="Describe imaging technique, contrast, protocols..."
+            placeholder="Describe imaging technique, contrast, protocols... (Click ✨ to auto-populate from DICOM)"
             variant="outlined"
             sx={{ mt: 1 }}
           />
+          {autoPopulateLoading && (
+            <Typography variant="caption" color="primary" sx={{ mt: 0.5, display: 'block' }}>
+              Loading technique from DICOM metadata...
+            </Typography>
+          )}
         </Paper>
       
       {/* Structured Findings */}

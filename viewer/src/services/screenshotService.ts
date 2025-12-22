@@ -299,7 +299,7 @@ export class ScreenshotService {
     }
 
     const link = document.createElement('a');
-    link.href = image.dataUrl;
+    link.href = `http://localhost:3010/uploads/snapshots/${image.dataUrl}`;
     link.download = filename || `medical-image-${id}.png`;
     document.body.appendChild(link);
     link.click();

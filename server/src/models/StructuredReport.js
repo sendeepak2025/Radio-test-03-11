@@ -98,6 +98,59 @@ const StructuredReportSchema = new mongoose.Schema({
   findingsText: String, // Narrative findings
   impression: String, // Summary/conclusion
   recommendations: String,
+  
+  // Comparison Studies - Links to prior reports for comparison
+  comparisonStudies: [{
+    studyInstanceUID: String,
+    studyDate: String,
+    studyDescription: String,
+    modality: String,
+    reportId: String, // Link to prior report if exists
+    comparisonNotes: String, // Notes about changes from prior study
+    selectedByUser: { type: Boolean, default: false }, // User manually selected
+    autoSuggested: { type: Boolean, default: false } // System suggested
+  }],
+  
+  // Preliminary Report Workflow - Trainee/Attending signatures
+  preliminaryWorkflow: {
+    // Trainee (Resident/Fellow) who created preliminary report
+    trainee: {
+      userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      name: String,
+      role: { type: String, enum: ['resident', 'fellow', 'medical_student', 'pa', 'np'] },
+      signedAt: Date,
+      signatureText: String,
+      signatureImageUrl: String
+    },
+    // Attending physician attestation
+    attending: {
+      userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      name: String,
+      credentials: String, // MD, DO, etc.
+      signedAt: Date,
+      signatureText: String,
+      signatureImageUrl: String,
+      attestationType: { 
+        type: String, 
+        enum: ['agree', 'agree_with_changes', 'reviewed', 'supervised'],
+        default: 'agree'
+      },
+      attestationNotes: String, // Notes about changes or supervision
+      changesRequired: { type: Boolean, default: false },
+      changesSummary: String
+    },
+    // Workflow status
+    status: {
+      type: String,
+      enum: ['pending_trainee', 'pending_attending', 'changes_requested', 'finalized'],
+      default: 'pending_trainee'
+    },
+    // Timestamps
+    traineeSubmittedAt: Date,
+    attendingReviewedAt: Date,
+    finalizedAt: Date
+  },
+  
   // Addenda and sharing/critical communication metadata
   addenda: [{ type: mongoose.Schema.Types.Mixed }],
   sharedExports: [{ type: mongoose.Schema.Types.Mixed }],

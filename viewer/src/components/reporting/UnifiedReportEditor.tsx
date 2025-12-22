@@ -4,7 +4,7 @@
  * Clean architecture with content panel + feature panels
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Paper,
@@ -27,14 +27,23 @@ import {
   SmartToy as AIIcon,
   Download as ExportIcon,
   Close as CloseIcon,
-  Visibility as PreviewIcon
+  Visibility as PreviewIcon,
+  Warning as CriticalIcon,
+  History as HistoryIcon,
+  School as TraineeIcon,
+  Compare as CompareIcon
 } from '@mui/icons-material';
 import { useReporting } from '../../contexts/ReportingContext';
+import { screenshotService } from '../../services/screenshotService';
 import ReportContentPanel from './panels/ReportContentPanel';
 import AnatomicalDiagramPanel from './panels/AnatomicalDiagramPanel';
 import VoiceDictationPanel from './panels/VoiceDictationPanel';
 import AIAssistantPanel from './panels/AIAssistantPanel';
 import ExportPanel from './panels/ExportPanel';
+import CriticalCommunicationPanel from './panels/CriticalCommunicationPanel';
+import ReportVersionsPanel from './panels/ReportVersionsPanel';
+import PreliminaryWorkflowPanel from './panels/PreliminaryWorkflowPanel';
+import ComparisonStudiesPanel from './panels/ComparisonStudiesPanel';
 import SignReportDialog, { type SignatureData } from './SignReportDialog';
 import ReportPreviewDialog from './ReportPreviewDialog';
 
@@ -51,6 +60,21 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
   });
   const [showSignDialog, setShowSignDialog] = useState(false);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
+  
+  // Load captured images from screenshotService when editor opens
+  useEffect(() => {
+    const loadCapturedImages = () => {
+      const capturedImages = screenshotService.getCapturedImages();
+      if (capturedImages.length > 0 && state.keyImages.length === 0) {
+        console.log('📸 Loading captured images from viewer:', capturedImages.length);
+        capturedImages.forEach(img => {
+          actions.addKeyImage(img);
+        });
+      }
+    };
+    
+    loadCapturedImages();
+  }, []); // Only run once on mount
   
   const handleSave = async () => {
     try {
@@ -192,7 +216,8 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
         <Paper 
           elevation={0}
           sx={{ 
-            width: 450, 
+            width: 500, 
+            minWidth: 400,
             display: 'flex', 
             flexDirection: 'column',
             bgcolor: 'background.paper'
@@ -202,32 +227,74 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
           <Tabs 
             value={state.activePanel} 
             onChange={(_, v) => actions.setActivePanel(v)}
-            variant="fullWidth"
-            sx={{ borderBottom: 1, borderColor: 'divider' }}
+            variant="scrollable"
+            scrollButtons="auto"
+            allowScrollButtonsMobile
+            sx={{ 
+              borderBottom: 1, 
+              borderColor: 'divider',
+              '& .MuiTab-root': {
+                minWidth: 'auto',
+                px: 1.5,
+                fontSize: '0.75rem'
+              }
+            }}
           >
             <Tab 
               value="anatomical" 
               icon={<AnatomicalIcon />} 
-              label="Body Diagram"
+              label="Diagram"
               iconPosition="start"
+              sx={{ minHeight: 48 }}
             />
             <Tab 
               value="voice" 
               icon={<VoiceIcon />} 
               label="Voice"
               iconPosition="start"
+              sx={{ minHeight: 48 }}
             />
             <Tab 
               value="ai" 
               icon={<AIIcon />} 
               label="AI"
               iconPosition="start"
+              sx={{ minHeight: 48 }}
+            />
+            <Tab 
+              value="critical" 
+              icon={<CriticalIcon />} 
+              label="Alert"
+              iconPosition="start"
+              sx={{ minHeight: 48 }}
+            />
+            <Tab 
+              value="versions" 
+              icon={<HistoryIcon />} 
+              label="History"
+              iconPosition="start"
+              sx={{ minHeight: 48 }}
+            />
+            <Tab 
+              value="preliminary" 
+              icon={<TraineeIcon />} 
+              label="Trainee"
+              iconPosition="start"
+              sx={{ minHeight: 48 }}
+            />
+            <Tab 
+              value="compare" 
+              icon={<CompareIcon />} 
+              label="Compare"
+              iconPosition="start"
+              sx={{ minHeight: 48 }}
             />
             <Tab 
               value="export" 
               icon={<ExportIcon />} 
               label="Export"
               iconPosition="start"
+              sx={{ minHeight: 48 }}
             />
           </Tabs>
           
@@ -236,6 +303,34 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
             {state.activePanel === 'anatomical' && <AnatomicalDiagramPanel />}
             {state.activePanel === 'voice' && <VoiceDictationPanel />}
             {state.activePanel === 'ai' && <AIAssistantPanel />}
+            {state.activePanel === 'critical' && (
+              <CriticalCommunicationPanel
+                reportId={state.reportId || ''}
+                studyInstanceUID={state.studyInstanceUID}
+                patientID={state.patientInfo.patientID}
+                patientName={state.patientInfo.patientName}
+              />
+            )}
+            {state.activePanel === 'versions' && (
+              <ReportVersionsPanel
+                reportId={state.reportId || ''}
+                reportStatus={state.reportStatus}
+              />
+            )}
+            {state.activePanel === 'preliminary' && (
+              <PreliminaryWorkflowPanel
+                reportId={state.reportId || ''}
+                reportStatus={state.reportStatus}
+              />
+            )}
+            {state.activePanel === 'compare' && (
+              <ComparisonStudiesPanel
+                reportId={state.reportId || ''}
+                studyInstanceUID={state.studyInstanceUID}
+                patientID={state.patientInfo.patientID}
+                currentModality={state.patientInfo.modality}
+              />
+            )}
             {state.activePanel === 'export' && <ExportPanel />}
           </Box>
         </Paper>

@@ -97,7 +97,7 @@ export interface ReportState {
   analysisId?: string;
   
   // UI state
-  activePanel: 'content' | 'anatomical' | 'voice' | 'ai' | 'export';
+  activePanel: 'content' | 'anatomical' | 'voice' | 'ai' | 'critical' | 'versions' | 'preliminary' | 'compare' | 'export';
   hasUnsavedChanges: boolean;
   lastSaved?: Date;
   

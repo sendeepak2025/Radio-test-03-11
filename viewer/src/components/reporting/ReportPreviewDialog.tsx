@@ -1,9 +1,9 @@
 /**
  * Report Preview Dialog
- * Full report preview before signing or exporting
+ * Full report preview with hospital branding before signing or exporting
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -18,16 +18,32 @@ import {
   Chip,
   List,
   ListItem,
-  ListItemText
+  ListItemText,
+  CircularProgress,
+  Alert
 } from '@mui/material';
 import {
   Visibility as PreviewIcon,
   Print as PrintIcon,
   Download as DownloadIcon,
   Close as CloseIcon,
-  CheckCircle
+  CheckCircle,
+  LocalHospital as HospitalIcon
 } from '@mui/icons-material';
 import { ScreenshotService } from '../../services/screenshotService';
+
+interface HospitalBranding {
+  name: string;
+  logoUrl?: string;
+  address?: {
+    street?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+  };
+  contactPhone?: string;
+  contactEmail?: string;
+}
 
 interface ReportPreviewDialogProps {
   open: boolean;
@@ -69,6 +85,44 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
   canvasRef
 }) => {
   const [canvasSnapshot, setCanvasSnapshot] = React.useState<string | null>(null);
+  const [hospitalBranding, setHospitalBranding] = useState<HospitalBranding | null>(null);
+  const [loadingBranding, setLoadingBranding] = useState(false);
+  
+  // Load hospital branding when dialog opens
+  useEffect(() => {
+    if (open) {
+      loadHospitalBranding();
+    }
+  }, [open]);
+  
+  const loadHospitalBranding = async () => {
+    try {
+      setLoadingBranding(true);
+      const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+      const response = await fetch('/api/hospital-settings/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        // API returns data.hospital for hospital info
+        if (data.success && data.data?.hospital) {
+          const hospital = data.data.hospital;
+          setHospitalBranding({
+            name: hospital.name,
+            logoUrl: hospital.logoUrl,
+            address: hospital.address,
+            contactPhone: hospital.contactPhone,
+            contactEmail: hospital.contactEmail
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load hospital branding:', error);
+    } finally {
+      setLoadingBranding(false);
+    }
+  };
   
   // Capture canvas snapshot when dialog opens
   React.useEffect(() => {
@@ -84,6 +138,41 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
   
   const handlePrint = () => {
     window.print();
+  };
+  
+  const handleDownloadPDF = async () => {
+    if (!reportData.reportId) return;
+    
+    try {
+      const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+      const response = await fetch(`/api/reports/${reportData.reportId}/pdf`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `report-${reportData.reportId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }
+    } catch (error) {
+      console.error('Failed to download PDF:', error);
+    }
+  };
+  
+  const formatAddress = (address?: HospitalBranding['address']) => {
+    if (!address) return null;
+    const parts = [];
+    if (address.street) parts.push(address.street);
+    if (address.city) parts.push(address.city);
+    if (address.state) parts.push(address.state);
+    if (address.zipCode) parts.push(address.zipCode);
+    return parts.length > 0 ? parts.join(', ') : null;
   };
   
   return (
@@ -112,13 +201,60 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
       
       <DialogContent>
         <Paper elevation={0} sx={{ p: 3, border: 1, borderColor: 'divider' }}>
-          {/* Header */}
+          {/* Hospital Header with Branding */}
           <Box sx={{ mb: 3, textAlign: 'center' }}>
-            <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold' }}>
-              Medical Imaging Report
-            </Typography>
+            {loadingBranding ? (
+              <CircularProgress size={24} />
+            ) : hospitalBranding ? (
+              <Box>
+                {/* Hospital Logo */}
+                {hospitalBranding.logoUrl && (
+                  <Box sx={{ mb: 1 }}>
+                    <img 
+                      src={hospitalBranding.logoUrl} 
+                      alt={hospitalBranding.name}
+                      style={{ maxHeight: 60, maxWidth: 200 }}
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  </Box>
+                )}
+                
+                {/* Hospital Name */}
+                <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                  {hospitalBranding.name}
+                </Typography>
+                
+                <Typography variant="body2" color="text.secondary">
+                  Radiology Department
+                </Typography>
+                
+                {/* Address */}
+                {formatAddress(hospitalBranding.address) && (
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    {formatAddress(hospitalBranding.address)}
+                  </Typography>
+                )}
+                
+                {/* Contact Info */}
+                {(hospitalBranding.contactPhone || hospitalBranding.contactEmail) && (
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    {hospitalBranding.contactPhone && `Tel: ${hospitalBranding.contactPhone}`}
+                    {hospitalBranding.contactPhone && hospitalBranding.contactEmail && ' | '}
+                    {hospitalBranding.contactEmail && `Email: ${hospitalBranding.contactEmail}`}
+                  </Typography>
+                )}
+              </Box>
+            ) : (
+              <Box>
+                <HospitalIcon sx={{ fontSize: 40, color: 'primary.main', mb: 1 }} />
+                <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold' }}>
+                  Medical Imaging Report
+                </Typography>
+              </Box>
+            )}
+            
             {reportData.reportId && (
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
                 Report ID: {reportData.reportId}
               </Typography>
             )}
@@ -275,6 +411,42 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
           
           {/* UI Module Results */}
           {reportData.templateId && reportData.sections && (() => {
+            // Helper function to decode HTML entities
+            const decodeHtmlEntities = (str: string): string => {
+              if (!str || typeof str !== 'string') return str;
+              return str
+                .replace(/&quot;/g, '"')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&#x2F;/g, '/')
+                .replace(/&#39;/g, "'")
+                .replace(/&apos;/g, "'");
+            };
+            
+            // Helper function to format module name nicely
+            const formatModuleName = (moduleId: string): string => {
+              const nameMap: Record<string, string> = {
+                'birads_calculator': 'BI-RADS Assessment',
+                'birads_us_calculator': 'BI-RADS Ultrasound Assessment',
+                'birads_mammo_calculator': 'BI-RADS Mammography Assessment',
+                'lung_rads_calculator': 'Lung-RADS Assessment',
+                'li_rads_calculator': 'LI-RADS Assessment',
+                'tirads_calculator': 'TI-RADS Thyroid Assessment',
+                'cad_rads_calculator': 'CAD-RADS Assessment',
+                'aspects_calculator': 'ASPECTS Score',
+                'nodule_measurements': 'Nodule Measurements',
+                'lesion_measurements': 'Lesion Measurements'
+              };
+              
+              if (nameMap[moduleId]) return nameMap[moduleId];
+              
+              // Generic formatting
+              return moduleId
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, l => l.toUpperCase());
+            };
+            
             // Get template's UI module IDs if available
             const templateModuleIds = reportData.templateUiModules?.map((m: any) => `uiModule_${m.id}`) || [];
             
@@ -296,11 +468,13 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
                   </Typography>
                   {uiModules.map(([key, value]) => {
                     const moduleId = key.replace('uiModule_', '');
-                    const moduleName = moduleId.replace(/_/g, ' ').toUpperCase();
+                    const moduleName = formatModuleName(moduleId);
                     
                     let parsedData;
                     try {
-                      parsedData = JSON.parse(value as string);
+                      // Decode HTML entities before parsing JSON
+                      const decodedValue = decodeHtmlEntities(String(value));
+                      parsedData = JSON.parse(decodedValue);
                     } catch {
                       parsedData = value;
                     }
@@ -363,11 +537,82 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
                           </Typography>
                         )}
                         
-                        {/* Generic fallback */}
-                        {!moduleId.includes('birads') && !moduleId.includes('measurement') && !moduleId.includes('checklist') && !moduleId.includes('diagram') && (
-                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                            {typeof parsedData === 'object' ? JSON.stringify(parsedData, null, 2) : String(parsedData)}
-                          </Typography>
+                        {/* RADS calculators (Lung-RADS, LI-RADS, TI-RADS, CAD-RADS, etc.) */}
+                        {(moduleId.includes('rads') || moduleId.includes('tirads') || moduleId.includes('aspects')) && 
+                         !moduleId.includes('birads') && parsedData && (
+                          <Box>
+                            {parsedData.category !== undefined && (
+                              <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                Category: {parsedData.category}
+                              </Typography>
+                            )}
+                            {parsedData.score !== undefined && (
+                              <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                Score: {parsedData.score}
+                              </Typography>
+                            )}
+                            {parsedData.recommendation && (
+                              <Typography variant="body2" color="text.secondary">
+                                {parsedData.recommendation}
+                              </Typography>
+                            )}
+                            {parsedData.selections && typeof parsedData.selections === 'object' && (
+                              <Box sx={{ mt: 1 }}>
+                                <Typography variant="caption" sx={{ fontWeight: 'bold' }}>Findings:</Typography>
+                                {Object.entries(parsedData.selections).map(([key, val]: [string, any]) => {
+                                  if (!val || val === 'none' || val === '') return null;
+                                  const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                  return (
+                                    <Typography key={key} variant="caption" display="block">
+                                      • {label}: {String(val)}
+                                    </Typography>
+                                  );
+                                })}
+                              </Box>
+                            )}
+                          </Box>
+                        )}
+                        
+                        {/* Generic fallback - format as human-readable */}
+                        {!moduleId.includes('birads') && !moduleId.includes('rads') && !moduleId.includes('tirads') && 
+                         !moduleId.includes('aspects') && !moduleId.includes('measurement') && 
+                         !moduleId.includes('checklist') && !moduleId.includes('diagram') && !moduleId.includes('nodule') && (
+                          <Box>
+                            {typeof parsedData === 'object' && parsedData !== null ? (
+                              Object.entries(parsedData).map(([key, val]: [string, any]) => {
+                                // Skip internal fields
+                                if (key.startsWith('_') || key === 'id' || key === 'timestamp') return null;
+                                
+                                const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                let displayValue: string;
+                                
+                                if (val === null || val === undefined) {
+                                  displayValue = 'N/A';
+                                } else if (typeof val === 'boolean') {
+                                  displayValue = val ? 'Yes' : 'No';
+                                } else if (Array.isArray(val)) {
+                                  displayValue = val.length === 0 ? 'None' : val.join(', ');
+                                } else if (typeof val === 'object') {
+                                  displayValue = JSON.stringify(val);
+                                } else {
+                                  displayValue = String(val);
+                                }
+                                
+                                // Skip empty values
+                                if (displayValue === 'N/A' || displayValue === 'None' || displayValue === '') return null;
+                                
+                                return (
+                                  <Typography key={key} variant="body2">
+                                    • {label}: {displayValue}
+                                  </Typography>
+                                );
+                              })
+                            ) : (
+                              <Typography variant="body2">
+                                {String(parsedData)}
+                              </Typography>
+                            )}
+                          </Box>
                         )}
                       </Box>
                     );
@@ -640,6 +885,15 @@ const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
         <Button onClick={handlePrint} startIcon={<PrintIcon />}>
           Print
         </Button>
+        {reportData.reportId && (
+          <Button 
+            onClick={handleDownloadPDF} 
+            startIcon={<DownloadIcon />}
+            color="primary"
+          >
+            Download PDF
+          </Button>
+        )}
         <Button onClick={onClose} variant="contained">
           Close
         </Button>

@@ -45,7 +45,8 @@ export const CapturedImagesGallery: React.FC<CapturedImagesGalleryProps> = ({
       setImages(screenshotService.getCapturedImages())
     }
   }, [open])
-
+  
+  console.log(images)
   const handleDelete = (id: string) => {
     screenshotService.removeImage(id)
     setImages(screenshotService.getCapturedImages())
@@ -101,7 +102,7 @@ export const CapturedImagesGallery: React.FC<CapturedImagesGalleryProps> = ({
                   <CardMedia
                     component="img"
                     height="200"
-                    image={image.dataUrl}
+                    image={`http://localhost:3010/uploads/snapshots/${image.dataUrl}`}
                     alt={image.caption}
                     sx={{ objectFit: 'contain', bgcolor: 'black' }}
                   />

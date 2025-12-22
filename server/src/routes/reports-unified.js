@@ -1828,7 +1828,11 @@ router.get('/:reportId/export', async (req, res) => {
     // Handle different export formats
     switch (format) {
       case 'pdf':
-        const pdfBuffer = await generateReportPDF(report);
+        // Get hospital ID for branding
+        const hospitalId = await resolveHospitalId(req);
+        console.log("HOSPITAL ID for PDF export:", hospitalId);
+        
+        const pdfBuffer = await generateReportPDF(report, hospitalId);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="report-${reportId}.pdf"`);
         return res.send(pdfBuffer);
@@ -1927,6 +1931,10 @@ router.post('/:reportId/export/pdf', async (req, res) => {
       });
     }
     
+    // Get hospital ID for branding
+    const hospitalId = await resolveHospitalId(req);
+    console.log("HOSPITAL ID for PDF:", hospitalId);
+    
     // ✅ DEBUG: Log report data to see what's available
     console.log('📋 Report data for PDF:');
     console.log('  - patientName:', report.patientName);
@@ -1938,7 +1946,7 @@ router.post('/:reportId/export/pdf', async (req, res) => {
     console.log('  - clinicalHistory:', report.clinicalHistory ? `${report.clinicalHistory.substring(0, 50)}...` : 'EMPTY');
     console.log('  - sections.clinicalHistory:', report.sections?.clinicalHistory ? 'EXISTS' : 'EMPTY');
 
-    const pdfBuffer = await generateReportPDF(report);
+    const pdfBuffer = await generateReportPDF(report, hospitalId);
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="report-${reportId}.pdf"`);
@@ -2421,7 +2429,7 @@ router.post('/:reportId/validate-sign', async (req, res) => {
 
 /**
  * Generate PDF from report with hospital info and signature
- * ✅ PDF IMPROVEMENTS: BI-RADS box, critical findings, spine tables, smart page breaks
+ * ✅ PDF IMPROVEMENTS: Professional hospital branding, BI-RADS box, critical findings, spine tables, smart page breaks
  */
 
 
@@ -2429,7 +2437,11 @@ router.post('/:reportId/validate-sign', async (req, res) => {
 async function generateReportPDF(report, hospitalId) {
     try {
       const PDFDocument = require('pdfkit'); 
-        const doc = new PDFDocument({ margin: 50 });
+        const doc = new PDFDocument({ 
+            margin: 50,
+            size: 'LETTER',
+            bufferPages: true
+        });
         const chunks = [];
 
         let hospitalSettingData = null;
@@ -2438,22 +2450,26 @@ async function generateReportPDF(report, hospitalId) {
         // FETCH HOSPITAL SETTINGS
         // ----------------------------
         if (hospitalId) {
-            // FIX: Ensure you are awaiting the HospitalSetting.findOne call
             hospitalSettingData = await HospitalSetting.findOne({
                 hospitalId: hospitalId,
             }).lean();
-
-            console.log("HOSPITAL SETTINGS DATA:", hospitalSettingData);
+            console.log("✅ HOSPITAL SETTINGS LOADED:", hospitalSettingData?.name);
         } else {
             console.log("⚠️ No hospitalId provided to generateReportPDF. Attempting fallback.");
+            // Try to get from report
+            if (report.hospitalId) {
+                hospitalSettingData = await HospitalSetting.findOne({
+                    hospitalId: report.hospitalId,
+                }).lean();
+            }
         }
 
         doc.on('data', chunk => chunks.push(chunk));
         doc.on('end', () => {});
 
-        // Get hospital information (Fallback or if report.hospitalId is different)
+        // Get hospital information (Fallback)
         let hospital = null;
-        if (report.hospitalId) {
+        if (report.hospitalId && !hospitalSettingData) {
             hospital = await Hospital.findOne({ hospitalId: report.hospitalId });
         }
         
@@ -2496,6 +2512,7 @@ async function generateReportPDF(report, hospitalId) {
             || '';
         
         // ===== HELPER: Smart page break =====
+        const pageWidth = doc.page.width - 100; // Account for margins
         const checkNewPage = (spaceNeeded = 50) => {
             const pageHeight = doc.page.height;
             const bottomMargin = 80;
@@ -2506,101 +2523,90 @@ async function generateReportPDF(report, hospitalId) {
             return false;
         };
 
-        // ===== HEADER WITH HOSPITAL INFO (UPDATED) =====
-        const pageWidth = doc.page.width - 100; // Account for margins
-        
-        // Use hospitalSettingData for header information, fallback to 'hospital'
+        // ===== PROFESSIONAL HOSPITAL HEADER =====
         const hospitalData = hospitalSettingData || hospital; 
-        const textX = (hospitalData && hospitalData.logoUrl) ? 140 : 50; // Align text next to logo or at margin
+        const hospitalName = hospitalData?.name || 'Medical Imaging Center';
+        let headerY = 40;
+        let logoLoaded = false;
         
         // Hospital Logo (if available)
-       // ----------------------------
-// HOSPITAL LOGO LOADER (Final)
-// ----------------------------
-if (hospitalData?.logoUrl) {
-    try {
-        let logoBuffer = null;
-        const logoUrl = hospitalData.logoUrl;
+        if (hospitalData?.logoUrl) {
+            try {
+                let logoBuffer = null;
+                const logoUrl = hospitalData.logoUrl;
+                console.log("🔍 Logo URL:", logoUrl);
 
-        console.log("🔍 Logo URL:", logoUrl);
+                if (logoUrl.startsWith("http://") || logoUrl.startsWith("https://")) {
+                    const response = await axios.get(logoUrl, {
+                        responseType: "arraybuffer",
+                        headers: { "User-Agent": "Mozilla/5.0" },
+                        timeout: 5000
+                    });
+                    logoBuffer = Buffer.from(response.data);
+                } else if (logoUrl.startsWith("data:image")) {
+                    const base64Data = logoUrl.split(",")[1];
+                    logoBuffer = Buffer.from(base64Data, "base64");
+                } else if (logoUrl.startsWith("/uploads/")) {
+                    const serverRoot = path.join(__dirname, "../../");
+                    const fullPath = path.join(serverRoot, logoUrl);
+                    if (fs.existsSync(fullPath)) {
+                        logoBuffer = fs.readFileSync(fullPath);
+                    }
+                }
 
-        // CASE 1 → Full HTTP URL (your case)
-        if (logoUrl.startsWith("http://") || logoUrl.startsWith("https://")) {
-            console.log("🌐 Fetching hospital logo from URL...");
-
-            const response = await axios.get(logoUrl, {
-                responseType: "arraybuffer",
-                headers: { "User-Agent": "Mozilla/5.0" }
-            });
-
-            logoBuffer = Buffer.from(response.data);
-        }
-
-        // CASE 2 → Base64 image
-        else if (logoUrl.startsWith("data:image")) {
-            const base64Data = logoUrl.split(",")[1];
-            logoBuffer = Buffer.from(base64Data, "base64");
-        }
-
-        // CASE 3 → Local /uploads/ path
-        else if (logoUrl.startsWith("/uploads/")) {
-            const serverRoot = path.join(__dirname, "../../");
-            const fullPath = path.join(serverRoot, logoUrl);
-
-            if (fs.existsSync(fullPath)) {
-                logoBuffer = fs.readFileSync(fullPath);
+                if (logoBuffer) {
+                    doc.image(logoBuffer, 50, headerY, { width: 70, height: 70 });
+                    logoLoaded = true;
+                    console.log("✅ Hospital Logo Rendered");
+                }
+            } catch (err) {
+                console.warn("❌ Failed to load hospital logo:", err.message);
             }
         }
 
-        // Render logo if buffer created
-        if (logoBuffer) {
-            doc.image(logoBuffer, 50, 45, { width: 80 });
-            console.log("✅ Hospital Logo Rendered");
-        } else {
-            console.warn("⚠ No logo buffer created. Logo skipped.");
-        }
-
-    } catch (err) {
-        console.warn("❌ Failed to load hospital logo:", err.message);
-    }
-}
-
-
-        // Hospital Name and Address
-        doc.fontSize(16).font('Helvetica-Bold');
-        doc.text(hospitalData?.name || 'Medical Center', textX, 50);
+        // Hospital Name and Info - Professional Layout
+        const textStartX = logoLoaded ? 130 : 50;
+        const textWidth = logoLoaded ? pageWidth - 80 : pageWidth;
         
-        doc.fontSize(9).font('Helvetica');
+        // Hospital Name - Large and Bold
+        doc.fontSize(18).font('Helvetica-Bold').fillColor('#1a237e');
+        doc.text(hospitalName, textStartX, headerY, { width: textWidth });
+        
+        // Department
+        doc.fontSize(11).font('Helvetica').fillColor('#424242');
+        doc.text('Department of Radiology', textStartX, headerY + 22, { width: textWidth });
+        
+        // Address
         const addressData = hospitalData?.address || {};
-        if (addressData) {
-            const addr = addressData;
-            const addressLine = [addr.street, addr.city, addr.state, addr.zipCode, addr.country]
-                .filter(Boolean).join(', ');
-                
-            if (addressLine) {
-                doc.text(addressLine, textX, 70);
-            }
+        const addressParts = [addressData.street, addressData.city, addressData.state, addressData.zipCode, addressData.country].filter(Boolean);
+        if (addressParts.length > 0) {
+            doc.fontSize(9).fillColor('#616161');
+            doc.text(addressParts.join(', '), textStartX, headerY + 38, { width: textWidth });
         }
         
         // Contact Info
-        if (hospitalData?.contactPhone) {
-            doc.text(`Phone: ${hospitalData.contactPhone}`, textX, 85);
-        }
-        if (hospitalData?.contactEmail) {
-            doc.text(`Email: ${hospitalData.contactEmail}`, textX, 97);
+        const contactParts = [];
+        if (hospitalData?.contactPhone) contactParts.push(`Tel: ${hospitalData.contactPhone}`);
+        if (hospitalData?.contactEmail) contactParts.push(`Email: ${hospitalData.contactEmail}`);
+        if (contactParts.length > 0) {
+            doc.fontSize(9).fillColor('#616161');
+            doc.text(contactParts.join('  |  '), textStartX, headerY + 52, { width: textWidth });
         }
 
-        // Horizontal line
-        doc.moveTo(50, 120).lineTo(pageWidth + 50, 120).stroke();
-        doc.moveDown(2);
-
+        // Header Divider Line
+        const dividerY = Math.max(headerY + 75, logoLoaded ? headerY + 80 : headerY + 70);
+        doc.moveTo(50, dividerY).lineTo(doc.page.width - 50, dividerY).strokeColor('#1a237e').lineWidth(2).stroke();
+        
+        doc.y = dividerY + 15;
+        
         // ===== REPORT TITLE =====
-        doc.fontSize(20).font('Helvetica-Bold').text('RADIOLOGY REPORT', { align: 'center' });
-        doc.moveDown();
+        doc.fontSize(16).font('Helvetica-Bold').fillColor('#1a237e');
+        doc.text('RADIOLOGY REPORT', 50, doc.y, { align: 'center', width: pageWidth });
+        doc.moveDown(0.8);
 
         // ✅ CRITICAL FINDINGS ALERT BOX (if present)
         if (report.criticalFindings && report.criticalFindings.length > 0) {
-            checkNewPage(120);
+            safeCheckNewPage(120);
             const alertY = doc.y;
             
             // Red background box
@@ -2630,46 +2636,90 @@ if (hospitalData?.logoUrl) {
             doc.moveDown();
         }
 
-        // ===== PATIENT & STUDY INFO =====
-        checkNewPage(80);
-        doc.fontSize(10).font('Helvetica');
-        const infoY = doc.y;
+        // ===== PATIENT & STUDY INFO - Professional Table Layout =====
+        safeCheckNewPage(100);
         
-        // Left column
-        doc.text(`Report ID: ${report.reportId}`, 50, infoY);
-        doc.text(`Patient: ${patientName}`, 50, infoY + 15);
-        doc.text(`Patient ID: ${patientID}`, 50, infoY + 30);
-        doc.text(`Modality: ${report.modality}`, 50, infoY + 45);
+        // Patient Info Header
+        doc.fontSize(11).font('Helvetica-Bold').fillColor('#1a237e');
+        doc.text('PATIENT INFORMATION', 50, doc.y);
+        doc.moveDown(0.3);
         
-        // Right column
-        doc.text(`Date: ${new Date(report.reportDate).toLocaleDateString()}`, 320, infoY);
-        doc.text(`Study UID: ${report.studyInstanceUID.substring(0, 30)}...`, 320, infoY + 15);
-        doc.text(`Status: ${report.reportStatus.toUpperCase()}`, 320, infoY + 30);
-        doc.text(`Radiologist: ${radiologistName}`, 320, infoY + 45);
+        // Patient Info Box
+        const patientBoxY = doc.y;
+        doc.rect(50, patientBoxY, pageWidth, 55).fillAndStroke('#f5f5f5', '#e0e0e0');
         
-        doc.moveDown(4);
+        doc.fontSize(9).font('Helvetica').fillColor('#000000');
+        const col1X = 60;
+        const col2X = 200;
+        const col3X = 340;
+        const col4X = 480;
+        
+        // Row 1
+        doc.font('Helvetica-Bold').text('Patient Name:', col1X, patientBoxY + 8);
+        doc.font('Helvetica').text(patientName, col2X, patientBoxY + 8);
+        doc.font('Helvetica-Bold').text('Patient ID:', col3X, patientBoxY + 8);
+        doc.font('Helvetica').text(patientID, col4X, patientBoxY + 8);
+        
+        // Row 2
+        doc.font('Helvetica-Bold').text('Modality:', col1X, patientBoxY + 23);
+        doc.font('Helvetica').text(report.modality || 'N/A', col2X, patientBoxY + 23);
+        doc.font('Helvetica-Bold').text('Study Date:', col3X, patientBoxY + 23);
+        doc.font('Helvetica').text(new Date(report.reportDate || report.studyDate).toLocaleDateString(), col4X, patientBoxY + 23);
+        
+        // Row 3
+        doc.font('Helvetica-Bold').text('Radiologist:', col1X, patientBoxY + 38);
+        doc.font('Helvetica').text(radiologistName, col2X, patientBoxY + 38);
+        doc.font('Helvetica-Bold').text('Status:', col3X, patientBoxY + 38);
+        const statusColor = report.reportStatus === 'final' ? '#2e7d32' : '#f57c00';
+        doc.fillColor(statusColor).font('Helvetica-Bold').text(report.reportStatus.toUpperCase(), col4X, patientBoxY + 38);
+        
+        doc.fillColor('#000000');
+        doc.y = patientBoxY + 65;
+        doc.moveDown(0.5);
+
+        // ===== REPORT SECTIONS =====
+        
+        // Helper function for section headers
+        const addSectionHeader = (title) => {
+            doc.fontSize(11).font('Helvetica-Bold').fillColor('#1a237e');
+            doc.text(title, 50, doc.y);
+            doc.moveTo(50, doc.y + 2).lineTo(50 + doc.widthOfString(title), doc.y + 2).strokeColor('#1a237e').lineWidth(1).stroke();
+            doc.moveDown(0.4);
+            doc.fillColor('#000000').font('Helvetica').fontSize(10);
+        };
+        
+        // Improved checkNewPage - only add page if really needed
+        const safeCheckNewPage = (spaceNeeded = 50) => {
+            const pageHeight = doc.page.height;
+            const bottomMargin = 100; // Leave room for footer
+            if (doc.y + spaceNeeded > pageHeight - bottomMargin) {
+                doc.addPage();
+                doc.y = 50; // Reset to top margin
+                return true;
+            }
+            return false;
+        };
 
         // ===== CLINICAL HISTORY =====
-        if (clinicalHistory) {
-            checkNewPage(60);
-            doc.fontSize(12).font('Helvetica-Bold').text('CLINICAL HISTORY', { underline: true });
-            doc.fontSize(10).font('Helvetica').text(clinicalHistory, { align: 'justify' });
-            doc.moveDown();
+        if (clinicalHistory && clinicalHistory.trim()) {
+            safesafeCheckNewPage(60);
+            addSectionHeader('CLINICAL HISTORY');
+            doc.text(clinicalHistory, 50, doc.y, { align: 'justify', width: pageWidth });
+            doc.moveDown(0.8);
         }
 
         // ===== TECHNIQUE =====
-        if (technique) {
-            checkNewPage(60);
-            doc.fontSize(12).font('Helvetica-Bold').text('TECHNIQUE', { underline: true });
-            doc.fontSize(10).font('Helvetica').text(technique, { align: 'justify' });
-            doc.moveDown();
+        if (technique && technique.trim()) {
+            safesafeCheckNewPage(60);
+            addSectionHeader('TECHNIQUE');
+            doc.text(technique, 50, doc.y, { align: 'justify', width: pageWidth });
+            doc.moveDown(0.8);
         }
 
         // ===== FINDINGS =====
-        if (findingsText) {
-            checkNewPage(100); 
-            doc.fontSize(12).font('Helvetica-Bold').text('FINDINGS', { underline: true });
-            doc.moveDown(0.5);
+        if (findingsText && findingsText.trim()) {
+            safesafeCheckNewPage(80); 
+            addSectionHeader('FINDINGS');
             
             // ✅ SPINE LEVEL TABLES: Parse and format spine findings
             const isSpineReport = report.templateId && (
@@ -2692,7 +2742,7 @@ if (hospitalData?.logoUrl) {
                 
                 if (levels.length > 0) {
                     // Render as table
-                    checkNewPage(levels.length * 25 + 40);
+                    safeCheckNewPage(levels.length * 25 + 40);
                     
                     const tableTop = doc.y;
                     const rowHeight = 25;
@@ -2749,20 +2799,24 @@ if (hospitalData?.logoUrl) {
 
         // ===== MEASUREMENTS =====
         if (report.measurements && report.measurements.length > 0) {
-            checkNewPage(80);
-            doc.fontSize(12).font('Helvetica-Bold').text('MEASUREMENTS', { underline: true });
-            doc.fontSize(10).font('Helvetica');
+            safeCheckNewPage(80);
+            addSectionHeader('MEASUREMENTS');
             report.measurements.forEach(m => {
-                doc.text(`• ${m.type}: ${m.value} ${m.unit}`);
+                doc.text(`• ${m.type}: ${m.value} ${m.unit}`, 50, doc.y);
             });
-            doc.moveDown();
+            doc.moveDown(1);
         }
 
-        // ===== IMPRESSION =====
+        // ===== IMPRESSION (Highlighted) =====
         if (impression) {
-            checkNewPage(100); 
-            doc.fontSize(12).font('Helvetica-Bold').text('IMPRESSION', { underline: true });
-            doc.moveDown(0.5);
+            safeCheckNewPage(100);
+            
+            // Impression box with highlight
+            const impressionBoxY = doc.y;
+            doc.rect(50, impressionBoxY, pageWidth, 20).fillAndStroke('#e3f2fd', '#1a237e');
+            doc.fontSize(11).font('Helvetica-Bold').fillColor('#1a237e');
+            doc.text('IMPRESSION', 60, impressionBoxY + 5);
+            doc.y = impressionBoxY + 25;
             
             // ✅ BI-RADS HIGHLIGHT BOX
             const isMammography = report.templateId && report.templateId.includes('MAMMO');
@@ -2773,7 +2827,7 @@ if (hospitalData?.logoUrl) {
                 
                 if (match) {
                     const category = match[1];
-                    checkNewPage(80);
+                    safeCheckNewPage(80);
                     
                     let boxColor, textColor, categoryText, recommendation;
                     switch (category) {
@@ -2828,16 +2882,17 @@ if (hospitalData?.logoUrl) {
             }
             
             // Render impression text
-            doc.fontSize(10).font('Helvetica').text(impression, { align: 'justify' });
-            doc.moveDown();
+            doc.fontSize(10).font('Helvetica').fillColor('#000000');
+            doc.text(impression, 50, doc.y, { align: 'justify', width: pageWidth });
+            doc.moveDown(1);
         }
 
         // ===== RECOMMENDATIONS =====
         if (recommendations) {
-            checkNewPage(60);
-            doc.fontSize(12).font('Helvetica-Bold').text('RECOMMENDATIONS', { underline: true });
-            doc.fontSize(10).font('Helvetica').text(recommendations, { align: 'justify' });
-            doc.moveDown();
+            safeCheckNewPage(60);
+            addSectionHeader('RECOMMENDATIONS');
+            doc.text(recommendations, 50, doc.y, { align: 'justify', width: pageWidth });
+            doc.moveDown(1);
         }
 
         // ===== ASSESSMENT TOOLS RESULTS =====
@@ -2845,32 +2900,84 @@ if (hospitalData?.logoUrl) {
                                   'technique', 'impression', 'recommendations', 'Findings', 'Technique', 
                                   'Impression', 'Recommendations'];
         
+        // Helper function to decode HTML entities
+        const decodeHtmlEntities = (str) => {
+            if (!str || typeof str !== 'string') return str;
+            return str
+                .replace(/&quot;/g, '"')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&#x2F;/g, '/')
+                .replace(/&#39;/g, "'")
+                .replace(/&apos;/g, "'");
+        };
+        
+        // Helper function to format module name nicely
+        const formatModuleName = (moduleId) => {
+            const nameMap = {
+                'birads_calculator': 'BI-RADS Assessment',
+                'birads_us_calculator': 'BI-RADS Ultrasound Assessment',
+                'birads_mammo_calculator': 'BI-RADS Mammography Assessment',
+                'lung_rads_calculator': 'Lung-RADS Assessment',
+                'li_rads_calculator': 'LI-RADS Assessment',
+                'tirads_calculator': 'TI-RADS Thyroid Assessment',
+                'cad_rads_calculator': 'CAD-RADS Assessment',
+                'aspects_calculator': 'ASPECTS Score',
+                'nodule_measurements': 'Nodule Measurements',
+                'lesion_measurements': 'Lesion Measurements',
+                'uiModule_birads_calculator': 'BI-RADS Assessment',
+                'uiModule_birads_us_calculator': 'BI-RADS Ultrasound Assessment',
+                'uiModule_lung_rads_calculator': 'Lung-RADS Assessment',
+                'uiModule_li_rads_calculator': 'LI-RADS Assessment',
+                'uiModule_tirads_calculator': 'TI-RADS Thyroid Assessment'
+            };
+            
+            if (nameMap[moduleId]) return nameMap[moduleId];
+            
+            // Generic formatting - remove uiModule_ prefix and format
+            return moduleId
+                .replace(/^uiModule_/, '')
+                .replace(/_/g, ' ')
+                .split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+                .join(' ');
+        };
+        
         if (report.sections && typeof report.sections === 'object') {
             const customSections = Object.entries(report.sections)
                 .filter(([key]) => !standardSections.includes(key))
                 .filter(([_, value]) => value && (typeof value === 'string' ? value.trim().length > 0 : true));
             
             if (customSections.length > 0) {
-                checkNewPage(80);
-                doc.fontSize(12).font('Helvetica-Bold').text('ASSESSMENT TOOLS RESULTS', { underline: true });
-                doc.moveDown(0.5);
+                safeCheckNewPage(80);
+                
+                // Assessment Tools Header with box
+                const assessmentHeaderY = doc.y;
+                doc.rect(50, assessmentHeaderY, pageWidth, 20).fillAndStroke('#fff3e0', '#ff9800');
+                doc.fontSize(11).font('Helvetica-Bold').fillColor('#e65100');
+                doc.text('ASSESSMENT TOOLS RESULTS', 60, assessmentHeaderY + 5);
+                doc.y = assessmentHeaderY + 28;
+                doc.fillColor('#000000');
                 
                 customSections.forEach(([key, value]) => {
-                    // Format section title (convert snake_case to Title Case)
-                    const title = key.replace(/_/g, ' ')
-                        .split(' ')
-                        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-                        .join(' ');
+                    // Format section title using the helper
+                    const title = formatModuleName(key);
                     
-                    doc.fontSize(11).font('Helvetica-Bold').text(`${title}:`, { continued: false });
-                    doc.moveDown(0.3);
+                    // Module title with bullet
+                    doc.fontSize(10).font('Helvetica-Bold').fillColor('#1a237e');
+                    doc.text(`▸ ${title}`, 55, doc.y);
+                    doc.moveDown(0.2);
+                    doc.fillColor('#000000').font('Helvetica').fontSize(9);
                     
-                    // ✅ FIX: Smart formatting based on data type
+                    // ✅ FIX: Decode HTML entities before parsing JSON
                     let formattedValue = '';
                     let parsedValue = value;
                     if (typeof value === 'string') {
                         try {
-                            parsedValue = JSON.parse(value);
+                            // Decode HTML entities first, then parse JSON
+                            const decodedValue = decodeHtmlEntities(value);
+                            parsedValue = JSON.parse(decodedValue);
                         } catch (e) {
                             parsedValue = value;
                         }
@@ -2897,142 +3004,192 @@ if (hospitalData?.logoUrl) {
                             return `  • ${item}`;
                         }).join('\n');
                     } else if (typeof parsedValue === 'object' && parsedValue !== null) {
-                        formattedValue = Object.entries(parsedValue)
-                            .filter(([k, v]) => v !== null && v !== undefined && v !== '')
-                            .map(([k, v]) => {
-                                const label = k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim();
-                                const capitalizedLabel = label.charAt(0).toUpperCase() + label.slice(1);
-                                
-                                if (typeof v === 'object' && v !== null) {
-                                    if (Array.isArray(v)) {
-                                        return `${capitalizedLabel}: ${v.join(', ')}`;
+                        // Special handling for RADS calculators
+                        if (parsedValue.category !== undefined || parsedValue.score !== undefined) {
+                            const lines = [];
+                            if (parsedValue.category !== undefined) lines.push(`Category: ${parsedValue.category}`);
+                            if (parsedValue.score !== undefined) lines.push(`Score: ${parsedValue.score}`);
+                            if (parsedValue.recommendation) lines.push(`Recommendation: ${parsedValue.recommendation}`);
+                            
+                            // Handle selections/findings
+                            if (parsedValue.selections && typeof parsedValue.selections === 'object') {
+                                const selectionLines = Object.entries(parsedValue.selections)
+                                    .filter(([k, v]) => v && v !== 'none' && v !== '')
+                                    .map(([k, v]) => {
+                                        const label = k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                        return `  • ${label}: ${v}`;
+                                    });
+                                if (selectionLines.length > 0) {
+                                    lines.push('Findings:');
+                                    lines.push(...selectionLines);
+                                }
+                            }
+                            
+                            formattedValue = lines.join('\n');
+                        } else {
+                            formattedValue = Object.entries(parsedValue)
+                                .filter(([k, v]) => v !== null && v !== undefined && v !== '')
+                                .map(([k, v]) => {
+                                    const label = k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim();
+                                    const capitalizedLabel = label.charAt(0).toUpperCase() + label.slice(1);
+                                    
+                                    if (typeof v === 'object' && v !== null) {
+                                        if (Array.isArray(v)) {
+                                            return `  • ${capitalizedLabel}: ${v.join(', ')}`;
+                                        }
+                                        const nestedEntries = Object.entries(v)
+                                            .filter(([nk, nv]) => nv !== null && nv !== undefined && nv !== '')
+                                            .map(([nk, nv]) => `${nk}: ${nv}`)
+                                            .join(', ');
+                                        return `  • ${capitalizedLabel}: ${nestedEntries}`;
                                     }
-                                    const nestedEntries = Object.entries(v)
-                                        .filter(([nk, nv]) => nv !== null && nv !== undefined && nv !== '')
-                                        .map(([nk, nv]) => `${nk}: ${nv}`)
-                                        .join(', ');
-                                    return `${capitalizedLabel}: ${nestedEntries}`;
-                                }
-                                
-                                if (typeof v === 'boolean') {
-                                    return `${capitalizedLabel}: ${v ? 'Yes' : 'No'}`;
-                                }
-                                
-                                return `${capitalizedLabel}: ${v}`;
-                            })
-                            .join('\n');
+                                    
+                                    if (typeof v === 'boolean') {
+                                        return `  • ${capitalizedLabel}: ${v ? 'Yes' : 'No'}`;
+                                    }
+                                    
+                                    return `  • ${capitalizedLabel}: ${v}`;
+                                })
+                                .join('\n');
+                        }
                     } else {
                         formattedValue = String(parsedValue);
                     }
                     
-                    doc.fontSize(10).font('Helvetica').text(formattedValue, { align: 'left', lineGap: 2 });
-                    doc.moveDown(0.5);
+                    doc.text(formattedValue, 65, doc.y, { align: 'left', lineGap: 2, width: pageWidth - 20 });
+                    doc.moveDown(0.8);
                 });
                 
-                doc.moveDown();
+                doc.moveDown(0.5);
             }
         }
 
        // ===== KEY IMAGES =====
 if (report.keyImages && report.keyImages.length > 0) {
-  checkNewPage(100);
-  doc.fontSize(12).font('Helvetica-Bold').text('KEY IMAGES', { underline: true });
-  doc.moveDown();
-
-  const path = require('path');
-  const fs = require('fs');
-  const axios = require('axios');
-
+  // Only add key images section if there are valid images
+  let hasValidImages = false;
+  
   for (let i = 0; i < report.keyImages.length; i++) {
     const img = report.keyImages[i];
-
-    if (!img.dataUrl) continue;
-
-    try {
-      checkNewPage(220);
-
-      const imgY = doc.y;
-      let imgBuffer;
-
-      // CASE 1: Base64 data URL
-      if (img.dataUrl.startsWith("data:image")) {
-        const base64Data = img.dataUrl.split(",")[1];
-        imgBuffer = Buffer.from(base64Data, "base64");
-      }
-
-      // CASE 2: Full URL (fetch from server)
-      else if (img.dataUrl.startsWith("http://") || img.dataUrl.startsWith("https://")) {
-        console.log("🌐 Fetching image from URL:", img.dataUrl);
-
-        const response = await axios.get(img.dataUrl, { responseType: "arraybuffer" });
-        imgBuffer = Buffer.from(response.data);
-      }
-
-      // CASE 3: Server path: /uploads/snapshots/filename.png
-      else if (img.dataUrl.startsWith("/uploads/")) {
-        const serverRoot = path.join(__dirname, "../../"); 
-        const fullPath = path.join(serverRoot, img.dataUrl);
-
-        console.log("🗂 Resolving server path:", fullPath);
-
-        if (!fs.existsSync(fullPath)) {
-          console.warn("❌ Image path does not exist:", fullPath);
-          continue;
-        }
-
-        imgBuffer = fs.readFileSync(fullPath);
-      }
-
-      // CASE 4: Only filename (common case)
-      else {
-        const finalPath = path.join(__dirname, "../../uploads/snapshots/", img.dataUrl);
-
-        console.log("📁 Resolving filename to:", finalPath);
-
-        if (!fs.existsSync(finalPath)) {
-          console.warn("❌ File not found:", finalPath);
-          continue;
-        }
-
-        imgBuffer = fs.readFileSync(finalPath);
-      }
-
-      // Render image
-      doc.image(imgBuffer, 50, imgY, {
-        fit: [400, 300],
-        align: "center",
-      });
-
-      // Caption
-      doc.moveDown(12);
-      doc.fontSize(9).font("Helvetica").fillColor("#666666");
-      doc.text(
-        `Image ${i + 1} of ${report.keyImages.length}${img.caption ? `: ${img.caption}` : ""}`,
-        50,
-        doc.y,
-        { align: "center" }
-      );
-
-      doc.fillColor("#000000");
-      doc.moveDown(2);
-    } catch (err) {
-      console.warn(`❌ Failed to render key image ${i + 1}:`, err.message);
-
-      // Fallback text
-      doc.fontSize(9).font("Helvetica-Oblique").fillColor("#999999");
-      doc.text(`[Image ${i + 1} could not be loaded]`, { align: "center" });
-      doc.fillColor("#000000");
-      doc.moveDown();
+    if (img.dataUrl) {
+      hasValidImages = true;
+      break;
     }
   }
+  
+  if (hasValidImages) {
+    safeCheckNewPage(150);
+    addSectionHeader('KEY IMAGES');
 
-  doc.moveDown();
+    for (let i = 0; i < report.keyImages.length; i++) {
+      const img = report.keyImages[i];
+
+      if (!img.dataUrl) continue;
+
+      try {
+        // Check if we need a new page for this image
+        if (doc.y > doc.page.height - 350) {
+          doc.addPage();
+        }
+
+        const imgY = doc.y;
+        let imgBuffer = null;
+
+        // CASE 1: Base64 data URL
+        if (img.dataUrl.startsWith("data:image")) {
+          const base64Data = img.dataUrl.split(",")[1];
+          if (base64Data && base64Data.length > 100) {
+            imgBuffer = Buffer.from(base64Data, "base64");
+          }
+        }
+
+        // CASE 2: Full URL (fetch from server)
+        else if (img.dataUrl.startsWith("http://") || img.dataUrl.startsWith("https://")) {
+          console.log("🌐 Fetching image from URL:", img.dataUrl);
+          try {
+            const response = await axios.get(img.dataUrl, { 
+              responseType: "arraybuffer",
+              timeout: 5000 
+            });
+            imgBuffer = Buffer.from(response.data);
+          } catch (fetchErr) {
+            console.warn("Failed to fetch image:", fetchErr.message);
+          }
+        }
+
+        // CASE 3: Server path: /uploads/snapshots/filename.png
+        else if (img.dataUrl.startsWith("/uploads/")) {
+          const serverRoot = path.join(__dirname, "../../"); 
+          const fullPath = path.join(serverRoot, img.dataUrl);
+
+          if (fs.existsSync(fullPath)) {
+            imgBuffer = fs.readFileSync(fullPath);
+          } else {
+            console.warn("❌ Image path does not exist:", fullPath);
+          }
+        }
+
+        // CASE 4: Only filename (common case)
+        else if (img.dataUrl.length > 5) {
+          const finalPath = path.join(__dirname, "../../uploads/snapshots/", img.dataUrl);
+
+          if (fs.existsSync(finalPath)) {
+            imgBuffer = fs.readFileSync(finalPath);
+          } else {
+            console.warn("❌ File not found:", finalPath);
+          }
+        }
+
+        // Render image if buffer exists
+        if (imgBuffer && imgBuffer.length > 100) {
+          doc.image(imgBuffer, 50, imgY, {
+            fit: [350, 250],
+            align: "center",
+          });
+
+          // Move to after image
+          doc.y = imgY + 260;
+          
+          // Caption
+          doc.fontSize(9).font("Helvetica").fillColor("#666666");
+          doc.text(
+            `Image ${i + 1} of ${report.keyImages.length}${img.caption ? `: ${img.caption}` : ""}`,
+            50,
+            doc.y,
+            { align: "center", width: pageWidth }
+          );
+
+          doc.fillColor("#000000");
+          doc.moveDown(1);
+        }
+      } catch (err) {
+        console.warn(`❌ Failed to render key image ${i + 1}:`, err.message);
+      }
+    }
+  }
 }
+
+        // ===== ANATOMICAL MARKINGS =====
+        if (report.anatomicalMarkings && report.anatomicalMarkings.length > 0) {
+            safeCheckNewPage(80);
+            addSectionHeader('ANATOMICAL MARKINGS');
+            
+            doc.fontSize(9).font('Helvetica');
+            report.anatomicalMarkings.forEach((marking, idx) => {
+                const markingType = marking.type || 'Point';
+                const location = marking.anatomicalLocation || marking.location || 'Unspecified';
+                const view = marking.view || '';
+                const coords = marking.coordinates ? `(${Math.round(marking.coordinates.x)}, ${Math.round(marking.coordinates.y)})` : '';
+                
+                doc.text(`${idx + 1}. ${markingType.toUpperCase()}: ${location}${view ? ` - ${view}` : ''}${coords ? ` ${coords}` : ''}`, 55, doc.y);
+            });
+            doc.moveDown(0.8);
+        }
 
         // ===== SIGNATURE SECTION =====
         if (report.signedAt) {
-            checkNewPage(120); 
-            doc.moveDown(2);
+            safeCheckNewPage(120); 
+            doc.moveDown(1);
             
             // Signature box
             const sigBoxY = doc.y;
@@ -3121,15 +3278,50 @@ if (report.keyImages && report.keyImages.length > 0) {
             doc.switchToPage(range.start + range.count - 1);
         }
 
-        // ===== FOOTER =====
-        doc.fontSize(8).font('Helvetica').text(
-            report.reportStatus === 'final' 
-                ? 'This report is electronically signed and legally binding.'
-                : 'DRAFT REPORT - Not for clinical use. Pending radiologist signature.',
-            50,
-            doc.page.height - 50,
-            { align: 'center' }
-        );
+        // ===== PROFESSIONAL FOOTER ON ALL PAGES =====
+        const totalPages = doc.bufferedPageRange();
+        for (let i = totalPages.start; i < totalPages.start + totalPages.count; i++) {
+            doc.switchToPage(i);
+            
+            const footerY = doc.page.height - 60;
+            
+            // Footer divider line
+            doc.moveTo(50, footerY).lineTo(doc.page.width - 50, footerY).strokeColor('#e0e0e0').lineWidth(1).stroke();
+            
+            // Hospital name in footer
+            doc.fontSize(8).font('Helvetica-Bold').fillColor('#1a237e');
+            doc.text(hospitalName, 50, footerY + 5, { align: 'center', width: pageWidth });
+            
+            // Report info
+            doc.fontSize(7).font('Helvetica').fillColor('#757575');
+            doc.text(
+                `Report ID: ${report.reportId}  |  Generated: ${new Date().toLocaleString()}  |  Page ${i - totalPages.start + 1} of ${totalPages.count}`,
+                50,
+                footerY + 18,
+                { align: 'center', width: pageWidth }
+            );
+            
+            // Confidentiality notice
+            doc.fontSize(6).fillColor('#9e9e9e');
+            doc.text(
+                'CONFIDENTIAL: This report contains protected health information (PHI). Unauthorized disclosure is prohibited by law.',
+                50,
+                footerY + 30,
+                { align: 'center', width: pageWidth }
+            );
+            
+            // Status indicator
+            if (report.reportStatus === 'final') {
+                doc.fontSize(7).fillColor('#2e7d32').font('Helvetica-Bold');
+                doc.text('✓ ELECTRONICALLY SIGNED - LEGALLY BINDING', 50, footerY + 42, { align: 'center', width: pageWidth });
+            } else {
+                doc.fontSize(7).fillColor('#f57c00').font('Helvetica-Bold');
+                doc.text('⚠ DRAFT REPORT - NOT FOR CLINICAL USE', 50, footerY + 42, { align: 'center', width: pageWidth });
+            }
+        }
+        
+        // Switch back to last page
+        doc.switchToPage(totalPages.start + totalPages.count - 1);
 
         doc.end();
 

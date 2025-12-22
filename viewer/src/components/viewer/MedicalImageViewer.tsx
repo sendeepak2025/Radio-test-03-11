@@ -78,6 +78,8 @@ interface CombinedDicomViewerProps {
   selectedSeriesUID?: string
   seriesData?: SeriesInfo[]
   onSeriesChange?: (seriesUID: string) => void
+  // Auto-hide callback for parent components
+  onCanvasActiveChange?: (isActive: boolean) => void
   isLoading?: boolean
   error?: string
 }
@@ -110,13 +112,23 @@ function drawGrid(
   vw: number,
   vh: number,
 ) {
-  if (!mmPerPixel || mmPerPixel <= 0) return
-  const gridSpacing = (10 / mmPerPixel) * scale
-  if (gridSpacing < 5) return
+  // Calculate grid spacing - use calibration if available, otherwise use fixed pixel spacing
+  let gridSpacing: number
+  if (mmPerPixel && mmPerPixel > 0) {
+    // 10mm grid spacing when calibrated
+    gridSpacing = (10 / mmPerPixel) * scale
+  } else {
+    // Default 50 pixel grid spacing when not calibrated
+    gridSpacing = 50 * scale
+  }
+  
+  // Don't draw if grid would be too dense
+  if (gridSpacing < 10) return
 
-  ctx.strokeStyle = "rgba(100, 150, 200, 0.2)"
+  ctx.strokeStyle = "rgba(100, 150, 200, 0.3)"
   ctx.lineWidth = 0.5
 
+  // Draw vertical lines
   for (let x = dx; x < dx + drawW; x += gridSpacing) {
     ctx.beginPath()
     ctx.moveTo(x, dy)
@@ -124,6 +136,7 @@ function drawGrid(
     ctx.stroke()
   }
 
+  // Draw horizontal lines
   for (let y = dy; y < dy + drawH; y += gridSpacing) {
     ctx.beginPath()
     ctx.moveTo(dx, y)
@@ -133,8 +146,6 @@ function drawGrid(
 }
 
 function drawOverlay(ctx: CanvasRenderingContext2D, info: any) {
-  ctx.fillStyle = "rgba(255, 255, 255, 0.8)"
-  ctx.font = "11px monospace"
   const lines = [
     `Frame: ${info.frame}/${info.totalFrames}`,
     `Zoom: ${(info.zoom * 100).toFixed(0)}%`,
@@ -152,10 +163,26 @@ function drawOverlay(ctx: CanvasRenderingContext2D, info: any) {
     lines.push(`Modality: ${info.modality}`)
   }
 
-  let y = 15
+  // Calculate background dimensions
+  ctx.font = "11px monospace"
+  const lineHeight = 14
+  const padding = 8
+  const maxWidth = Math.max(...lines.map(line => ctx.measureText(line).width))
+  const bgWidth = maxWidth + padding * 2
+  const bgHeight = lines.length * lineHeight + padding * 2
+
+  // Draw semi-transparent background
+  ctx.fillStyle = "rgba(0, 0, 0, 0.6)"
+  ctx.beginPath()
+  ctx.roundRect(5, 5, bgWidth, bgHeight, 4)
+  ctx.fill()
+
+  // Draw text
+  ctx.fillStyle = "rgba(255, 255, 255, 0.95)"
+  let y = 5 + padding + 10
   for (const line of lines) {
-    ctx.fillText(line, 10, y)
-    y += 12
+    ctx.fillText(line, 5 + padding, y)
+    y += lineHeight
   }
 }
 
@@ -392,6 +419,57 @@ function drawAnnotation(
         drawTypeLabel(points[0].x, points[0].y + 15)
       }
       break
+
+    case "calibration":
+      if (points.length >= 2) {
+        // Draw calibration line with special styling
+        ctx.strokeStyle = "#ff9800" // Orange for calibration
+        ctx.lineWidth = 3
+        ctx.setLineDash([5, 5])
+        
+        ctx.beginPath()
+        ctx.moveTo(points[0].x, points[0].y)
+        ctx.lineTo(points[1].x, points[1].y)
+        ctx.stroke()
+        
+        ctx.setLineDash([])
+        
+        // Draw end markers (perpendicular lines)
+        const dx = points[1].x - points[0].x
+        const dy = points[1].y - points[0].y
+        const len = Math.sqrt(dx * dx + dy * dy)
+        const perpX = (-dy / len) * 10
+        const perpY = (dx / len) * 10
+        
+        ctx.beginPath()
+        ctx.moveTo(points[0].x + perpX, points[0].y + perpY)
+        ctx.lineTo(points[0].x - perpX, points[0].y - perpY)
+        ctx.moveTo(points[1].x + perpX, points[1].y + perpY)
+        ctx.lineTo(points[1].x - perpX, points[1].y - perpY)
+        ctx.stroke()
+        
+        // Draw handles
+        ctx.fillStyle = "#ff9800"
+        ctx.fillRect(points[0].x - 4, points[0].y - 4, 8, 8)
+        ctx.fillRect(points[1].x - 4, points[1].y - 4, 8, 8)
+        
+        // Draw calibration label
+        if (ann.label) {
+          const midX = (points[0].x + points[1].x) / 2
+          const midY = (points[0].y + points[1].y) / 2
+          ctx.font = 'bold 14px Arial'
+          const metrics = ctx.measureText(ann.label)
+          ctx.fillStyle = 'rgba(255, 152, 0, 0.8)'
+          ctx.fillRect(midX - metrics.width/2 - 4, midY - 20, metrics.width + 8, 24)
+          ctx.fillStyle = '#000'
+          ctx.fillText(ann.label, midX - metrics.width/2, midY - 2)
+        }
+        
+        // Draw type label
+        ctx.fillStyle = "#ff9800"
+        drawTypeLabel(points[0].x + 5, points[0].y - 5)
+      }
+      break
   }
 }
 
@@ -567,15 +645,17 @@ function drawPreview(
       drawLiveMeasurement(radiusText, viewPoints[0].x, viewPoints[0].y - radius - 15)
     }
   } else if (type === "angle") {
-    if (viewPoints.length >= 2) {
-      // Draw first line
-      ctx.beginPath()
-      ctx.moveTo(viewPoints[0].x, viewPoints[0].y)
-      ctx.lineTo(viewPoints[1].x, viewPoints[1].y)
-      ctx.stroke()
+    if (viewPoints.length >= 1) {
+      // Draw first line (from point 0 to point 1 or cursor)
+      if (viewPoints.length >= 2) {
+        ctx.beginPath()
+        ctx.moveTo(viewPoints[0].x, viewPoints[0].y)
+        ctx.lineTo(viewPoints[1].x, viewPoints[1].y)
+        ctx.stroke()
+      }
       
       if (viewPoints.length >= 3) {
-        // Draw second line
+        // Draw second line (from point 1 to point 2)
         ctx.beginPath()
         ctx.moveTo(viewPoints[1].x, viewPoints[1].y)
         ctx.lineTo(viewPoints[2].x, viewPoints[2].y)
@@ -584,23 +664,81 @@ function drawPreview(
         // Calculate and show angle
         const v1 = { x: viewPoints[0].x - viewPoints[1].x, y: viewPoints[0].y - viewPoints[1].y }
         const v2 = { x: viewPoints[2].x - viewPoints[1].x, y: viewPoints[2].y - viewPoints[1].y }
-        const angle = Math.acos(
-          (v1.x * v2.x + v1.y * v2.y) / 
-          (Math.sqrt(v1.x * v1.x + v1.y * v1.y) * Math.sqrt(v2.x * v2.x + v2.y * v2.y))
-        )
-        const angleDeg = (angle * (180 / Math.PI)).toFixed(1)
+        const dotProduct = v1.x * v2.x + v1.y * v2.y
+        const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y)
+        const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y)
         
-        drawLiveMeasurement(`${angleDeg}°`, viewPoints[1].x + 15, viewPoints[1].y - 10)
+        if (mag1 > 0 && mag2 > 0) {
+          const cosAngle = Math.max(-1, Math.min(1, dotProduct / (mag1 * mag2)))
+          const angle = Math.acos(cosAngle)
+          const angleDeg = (angle * (180 / Math.PI)).toFixed(1)
+          
+          drawLiveMeasurement(`${angleDeg}°`, viewPoints[1].x + 15, viewPoints[1].y - 10)
+        }
+      } else if (viewPoints.length === 2) {
+        // Show instruction for next click
+        ctx.setLineDash([])
+        ctx.font = 'bold 12px Arial'
+        ctx.fillStyle = 'rgba(0, 255, 255, 0.9)'
+        ctx.fillText('Click for vertex point', viewPoints[1].x + 10, viewPoints[1].y - 10)
       }
       
       // Draw handles
       ctx.setLineDash([])
       ctx.fillStyle = "rgba(255, 255, 0, 0.9)"
+      viewPoints.forEach((p, i) => {
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2)
+        ctx.fill()
+        
+        // Label the points
+        ctx.font = 'bold 10px Arial'
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'
+        ctx.fillText(`${i + 1}`, p.x + 8, p.y - 8)
+      })
+    }
+  } else if (type === "calibration") {
+    if (viewPoints.length >= 2) {
+      // Draw calibration line with orange color
+      ctx.strokeStyle = "rgba(255, 152, 0, 0.9)"
+      ctx.lineWidth = 3
+      ctx.setLineDash([5, 5])
+      
+      ctx.beginPath()
+      ctx.moveTo(viewPoints[0].x, viewPoints[0].y)
+      ctx.lineTo(viewPoints[1].x, viewPoints[1].y)
+      ctx.stroke()
+      
+      // Draw end markers
+      ctx.setLineDash([])
+      const dx = viewPoints[1].x - viewPoints[0].x
+      const dy = viewPoints[1].y - viewPoints[0].y
+      const len = Math.sqrt(dx * dx + dy * dy)
+      if (len > 0) {
+        const perpX = (-dy / len) * 10
+        const perpY = (dx / len) * 10
+        
+        ctx.beginPath()
+        ctx.moveTo(viewPoints[0].x + perpX, viewPoints[0].y + perpY)
+        ctx.lineTo(viewPoints[0].x - perpX, viewPoints[0].y - perpY)
+        ctx.moveTo(viewPoints[1].x + perpX, viewPoints[1].y + perpY)
+        ctx.lineTo(viewPoints[1].x - perpX, viewPoints[1].y - perpY)
+        ctx.stroke()
+      }
+      
+      // Draw handles
+      ctx.fillStyle = "rgba(255, 152, 0, 0.9)"
       viewPoints.forEach(p => {
         ctx.beginPath()
         ctx.arc(p.x, p.y, 5, 0, Math.PI * 2)
         ctx.fill()
       })
+      
+      // Show pixel distance
+      const distPixels = len
+      const midX = (viewPoints[0].x + viewPoints[1].x) / 2
+      const midY = (viewPoints[0].y + viewPoints[1].y) / 2
+      drawLiveMeasurement(`${distPixels.toFixed(1)}px (calibration)`, midX + 10, midY - 10)
     }
   }
 }
@@ -648,6 +786,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   selectedSeriesUID,
   seriesData = [],
   onSeriesChange,
+  onCanvasActiveChange,
   isLoading = false,
   error,
 }) => {
@@ -681,6 +820,23 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
   const [cursorStyle, setCursorStyle] = useState<string>('default')
+  const [showMobileTools, setShowMobileTools] = useState(false)
+  const [toolsPanelCollapsed, setToolsPanelCollapsed] = useState(false)
+  
+  // Auto-hide panels when working on canvas
+  const [panelsAutoHidden, setPanelsAutoHidden] = useState(false)
+  const [isCanvasActive, setIsCanvasActive] = useState(false)
+  const autoHideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Capture modal state
+  const [showCaptureModal, setShowCaptureModal] = useState(false)
+  const [captureDataUrl, setCaptureDataUrl] = useState<string | null>(null)
+  const [captureNote, setCaptureNote] = useState("")
+  
+  // Playback state for frame navigation
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [playSpeed, setPlaySpeed] = useState(5) // frames per second
+  const playIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // Series-aware state management
   const currentSeriesUID = selectedSeriesUID || seriesInstanceUID
@@ -742,9 +898,10 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     const ctx = canvas.getContext("2d", { willReadFrequently: true })
     if (!ctx) return
 
-    const rect = containerRef.current?.getBoundingClientRect()
-    const vw = rect?.width || 0
-    const vh = rect?.height || 0
+    // Use canvas's bounding rect for accurate dimensions (not container which includes tools panel)
+    const rect = canvas.getBoundingClientRect()
+    const vw = rect.width
+    const vh = rect.height
 
     // Only resize if dimensions changed
     const needsResize = canvas.width !== Math.floor(vw * dpr) || canvas.height !== Math.floor(vh * dpr)
@@ -837,35 +994,57 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     drawRef.current = draw
   }, [draw])
 
-  // Series-aware mouse wheel navigation
+  // Series-aware mouse wheel navigation - smooth and prevents page scroll
   const handleWheel = useCallback(
     (e: WheelEvent) => {
+      // Always prevent default to stop page scrolling when over canvas
+      e.preventDefault()
+      e.stopPropagation()
+      
       if (!containerRef.current?.contains(e.target as Node)) return
 
+      // Smooth delta calculation
+      const delta = Math.sign(e.deltaY)
+
       if (e.shiftKey) {
-        e.preventDefault()
-        const newZoom = Math.max(0.1, Math.min(5, zoom - (e.deltaY > 0 ? 0.1 : -0.1)))
-        setZoom(newZoom)
+        // Zoom with shift+scroll - smoother increments
+        const zoomStep = 0.05
+        setZoom(prev => Math.max(0.1, Math.min(5, prev - delta * zoomStep)))
       } else if (e.ctrlKey) {
-        e.preventDefault()
-        const newBrightness = Math.max(0.5, Math.min(2, brightness - (e.deltaY > 0 ? 0.1 : -0.1)))
-        setBrightness(newBrightness)
+        // Brightness with ctrl+scroll
+        const brightnessStep = 0.05
+        setBrightness(prev => Math.max(0.5, Math.min(2, prev - delta * brightnessStep)))
       } else {
-        // Frame navigation within current series boundaries
-        setCurrentFrame((prev) => {
-          const next = prev + (e.deltaY > 0 ? 1 : -1)
-          // Ensure navigation stays within current series bounds
+        // Frame navigation - single frame per scroll
+        setCurrentFrame(prev => {
+          const next = prev + delta
           return Math.max(0, Math.min(totalFrames - 1, next))
         })
       }
     },
-    [zoom, brightness, totalFrames],
+    [totalFrames],
   )
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+    
+    // Use passive: false to allow preventDefault
     canvas.addEventListener("wheel", handleWheel, { passive: false })
+    
+    // Also prevent scroll on the container
+    const container = containerRef.current
+    if (container) {
+      const preventScroll = (e: WheelEvent) => {
+        e.preventDefault()
+      }
+      container.addEventListener("wheel", preventScroll, { passive: false })
+      return () => {
+        canvas.removeEventListener("wheel", handleWheel)
+        container.removeEventListener("wheel", preventScroll)
+      }
+    }
+    
     return () => canvas.removeEventListener("wheel", handleWheel)
   }, [handleWheel])
 
@@ -907,29 +1086,167 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [totalFrames])
 
+  // Playback control effect
+  useEffect(() => {
+    if (isPlaying) {
+      playIntervalRef.current = setInterval(() => {
+        setCurrentFrame(prev => {
+          const next = prev + 1
+          if (next >= totalFrames) {
+            return 0 // Loop back to start
+          }
+          return next
+        })
+      }, 1000 / playSpeed)
+    } else {
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current)
+        playIntervalRef.current = null
+      }
+    }
+    
+    return () => {
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current)
+      }
+    }
+  }, [isPlaying, playSpeed, totalFrames])
+
+  // Auto-hide panels when canvas is active
+  const handleCanvasEnter = useCallback(() => {
+    setIsCanvasActive(true)
+    onCanvasActiveChange?.(true) // Notify parent
+    // Start auto-hide timer
+    if (autoHideTimeoutRef.current) {
+      clearTimeout(autoHideTimeoutRef.current)
+    }
+    autoHideTimeoutRef.current = setTimeout(() => {
+      setPanelsAutoHidden(true)
+    }, 1500) // Hide after 1.5 seconds of canvas activity
+  }, [onCanvasActiveChange])
+
+  const handleCanvasLeave = useCallback(() => {
+    setIsCanvasActive(false)
+    onCanvasActiveChange?.(false) // Notify parent
+    // Clear auto-hide timer and show panels
+    if (autoHideTimeoutRef.current) {
+      clearTimeout(autoHideTimeoutRef.current)
+      autoHideTimeoutRef.current = null
+    }
+    setPanelsAutoHidden(false)
+  }, [onCanvasActiveChange])
+
+  // Show panels when mouse is near edges
+  const handleMouseMoveForPanels = useCallback((e: React.MouseEvent) => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const edgeThreshold = 60 // pixels from edge to trigger show
+    
+    // Check if near left, right, or top edge
+    const nearLeftEdge = x < edgeThreshold
+    const nearRightEdge = x > rect.width - edgeThreshold
+    const nearTopEdge = y < edgeThreshold
+    
+    if (nearLeftEdge || nearRightEdge || nearTopEdge) {
+      setPanelsAutoHidden(false)
+      if (autoHideTimeoutRef.current) {
+        clearTimeout(autoHideTimeoutRef.current)
+        autoHideTimeoutRef.current = null
+      }
+    }
+  }, [])
+
+  // Cleanup auto-hide timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (autoHideTimeoutRef.current) {
+        clearTimeout(autoHideTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  // Helper function to convert mouse event to image coordinates
+  const getImageCoordinates = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current
+    const container = containerRef.current
+    if (!canvas || !container) return { canvasX: 0, canvasY: 0, imageX: 0, imageY: 0 }
+    
+    // Use canvas rect for mouse position (matches the actual element being clicked)
+    const rect = canvas.getBoundingClientRect()
+    // Mouse coordinates relative to canvas element (CSS pixels)
+    const canvasX = e.clientX - rect.left
+    const canvasY = e.clientY - rect.top
+    
+    // Get current image bounds (these are in CSS pixel coordinates after ctx.scale(dpr))
+    const bounds = imageBoundsRef.current
+    
+    // Ensure we have valid bounds (draw must have been called at least once)
+    if (bounds.scale === 0) {
+      return { canvasX, canvasY, imageX: 0, imageY: 0 }
+    }
+    
+    // Convert canvas coordinates to image coordinates
+    // Formula: imageCoord = (canvasCoord - imageOffset) / zoomScale
+    const imageX = (canvasX - bounds.dx) / bounds.scale
+    const imageY = (canvasY - bounds.dy) / bounds.scale
+    
+    return { canvasX, canvasY, imageX, imageY }
+  }, [])
+
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current
       if (!canvas) return
 
       // Ensure keyboard events (Enter/Escape) are captured for angle/polygon tools
-      if (typeof (canvas as any).focus === "function") {
-        ;(canvas as any).focus()
-      }
+      canvas.focus()
 
+      const { canvasX, canvasY, imageX, imageY } = getImageCoordinates(e)
+      const bounds = imageBoundsRef.current
+
+      // Store initial position for all tools (in canvas coordinates for view tools)
+      dragOffsetRef.current = { x: canvasX, y: canvasY }
       drawingStateRef.current.isMouseDown = true
 
-      const rect = canvas.getBoundingClientRect()
-      const canvasX = e.clientX - rect.left
-      const canvasY = e.clientY - rect.top
+      // For View Tools (Pan, Zoom, W/L) - just set mouse down, movement handled in mouseMove
+      if (tool === "pan" || tool === "zoom" || tool === "wl") {
+        // Update cursor for active dragging
+        if (tool === "pan") setCursorStyle('grabbing')
+        else if (tool === "zoom") setCursorStyle('ns-resize')
+        else if (tool === "wl") setCursorStyle('move')
+        return // Don't check for annotations when using view tools
+      }
 
-      // Convert canvas coordinates to image coordinates using stored bounds
-      const bounds = imageBoundsRef.current
-      const imageX = (canvasX - bounds.dx) / bounds.scale
-      const imageY = (canvasY - bounds.dy) / bounds.scale
+      // TEXT TOOL: Single click to place text - handle immediately
+      if (tool === "text") {
+        const label = window.prompt("Enter label text")
+        if (label && label.trim()) {
+          const newAnnotation: Annotation = {
+            id: Math.random().toString(36).slice(2),
+            type: "text",
+            points: [{ x: imageX, y: imageY }],
+            label: label.trim(),
+            color: "#00e5ff",
+            thickness: 2,
+            fontSize: 16,
+            fontBold: false,
+          }
+          setAnnotations((prev) => [...prev, newAnnotation])
+        }
+        drawingStateRef.current.isMouseDown = false
+        drawRef.current?.()
+        return
+      }
 
-      // Check if clicking on annotation handle (for resizing)
-      const handleRadius = 8 / zoom // Handle size in image coordinates
+      // CALIBRATION TOOL: Draw a line, then prompt for known distance
+      // Handled like length tool but with calibration prompt on completion
+
+      // Check if clicking on annotation handle (for resizing) - only for annotation tools
+      // Handle radius in image coordinates - larger for easier clicking
+      const handleRadius = Math.max(12, 15 / bounds.scale)
       let clickedHandle = false
       
       for (const ann of annotations.filter(ann => ann && ann.id && ann.points)) {
@@ -940,7 +1257,6 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
           const dist = Math.sqrt(dx * dx + dy * dy)
           
           if (dist < handleRadius) {
-            // Clicked on a handle - enable resize mode
             setSelectedAnnotationId(ann.id)
             drawingStateRef.current.isResizing = true
             drawingStateRef.current.draggedAnnotationId = ann.id
@@ -953,45 +1269,50 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
       }
       
       if (clickedHandle) return
-      
-      // Check if clicking on existing annotation body (for moving)
-      const clickedAnn = annotations.filter(ann => ann && ann.id && ann.points).find((ann) => {
-        const bb = getAnnotationBoundingBox(ann)
-        if (!bb) return false
-        return imageX >= bb.min.x - 5 && imageX <= bb.max.x + 5 && imageY >= bb.min.y - 5 && imageY <= bb.max.y + 5
-      })
 
-      if (clickedAnn && tool === "pan") {
-        setSelectedAnnotationId(clickedAnn.id)
-        drawingStateRef.current.isDragging = true
-        drawingStateRef.current.draggedAnnotationId = clickedAnn.id
-        dragOffsetRef.current = {
-          x: imageX - clickedAnn.points[0].x,
-          y: imageY - clickedAnn.points[0].y,
+      // ANGLE TOOL: Check if we're continuing an existing angle annotation
+      if (tool === "angle" && tempAnnotationRef.current && tempAnnotationRef.current.type === "angle") {
+        // Continue adding points to existing angle - click-based
+        const points = tempAnnotationRef.current.points
+        const numPoints = points.length
+        
+        // After first click + mouseMove, we have 2 points (1 confirmed + 1 preview)
+        // Second click confirms the second point (vertex) and adds preview for third
+        if (numPoints === 2) {
+          // Confirm the second point at current position, add preview for third
+          tempAnnotationRef.current.points = [points[0], { x: imageX, y: imageY }, { x: imageX, y: imageY }]
+          drawRef.current?.()
         }
+        // After second click + mouseMove, we have 3 points (2 confirmed + 1 preview)
+        // Third click confirms the third point and completes the angle
+        else if (numPoints >= 3) {
+          // Confirm the third point and complete
+          tempAnnotationRef.current.points = [points[0], points[1], { x: imageX, y: imageY }]
+          setAnnotations((prev) => [...prev, { ...tempAnnotationRef.current! }])
+          tempAnnotationRef.current = null
+          drawingStateRef.current.isDrawing = false
+          drawRef.current?.()
+        }
+        drawingStateRef.current.isMouseDown = false
         return
       }
 
-      if (tool === "pan" || tool === "zoom" || tool === "wl") {
-        // Pan tool: prepare for dragging
-        if (tool === "pan") {
-          dragOffsetRef.current = { x: canvasX, y: canvasY }
-        }
-      } else {
-        // Annotation tools: start drawing
-        tempAnnotationRef.current = {
-          id: Math.random().toString(36).slice(2),
-          type: tool as AnnotationType,
-          points: [{ x: imageX, y: imageY }],
-          color: "#00e5ff",
-          thickness: 2,
-          fontSize: 14,
-          fontBold: false,
-        }
-        drawingStateRef.current.isDrawing = true
+      // Start new annotation
+      tempAnnotationRef.current = {
+        id: Math.random().toString(36).slice(2),
+        type: tool as AnnotationType,
+        points: [{ x: imageX, y: imageY }],
+        color: "#00e5ff",
+        thickness: 2,
+        fontSize: 14,
+        fontBold: false,
       }
+      drawingStateRef.current.isDrawing = true
+      
+      // Force immediate redraw to show the first point
+      drawRef.current?.()
     },
-    [annotations, tool, zoom, pan, dpr],
+    [annotations, tool, getImageCoordinates],
   )
 
   const mouseMoveRafRef = useRef<number | null>(null)
@@ -1000,161 +1321,128 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       if (!canvasRef.current) return
 
-      // Get coordinates immediately (before RAF)
-      const rect = canvasRef.current.getBoundingClientRect()
-      const canvasX = e.clientX - rect.left
-      const canvasY = e.clientY - rect.top
-      
-      // Convert canvas coordinates to image coordinates using stored bounds
-      const bounds = imageBoundsRef.current
-      const imageX = (canvasX - bounds.dx) / bounds.scale
-      const imageY = (canvasY - bounds.dy) / bounds.scale
+      const { canvasX, canvasY, imageX, imageY } = getImageCoordinates(e)
 
-      // Update cursor based on hover state
-      if (!drawingStateRef.current.isDrawing && !drawingStateRef.current.isDragging && !drawingStateRef.current.isResizing) {
-        const handleRadius = 8 / zoom
-        let overHandle = false
+      // ===== VIEW TOOLS - Handle immediately when mouse is down =====
+      if (drawingStateRef.current.isMouseDown && (tool === "pan" || tool === "zoom" || tool === "wl")) {
+        const dx = canvasX - dragOffsetRef.current.x
+        const dy = canvasY - dragOffsetRef.current.y
         
-        for (const ann of annotations.filter(ann => ann && ann.id && ann.points)) {
-          for (const point of ann.points) {
-            const dx = imageX - point.x
-            const dy = imageY - point.y
-            const dist = Math.sqrt(dx * dx + dy * dy)
-            
-            if (dist < handleRadius) {
-              setCursorStyle('pointer')
-              overHandle = true
-              break
-            }
-          }
-          if (overHandle) break
+        if (tool === "pan") {
+          // Pan moves the image - update pan state
+          setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }))
+        } else if (tool === "zoom") {
+          // Vertical drag: up = zoom in, down = zoom out
+          const zoomDelta = -dy * 0.005
+          setZoom((prev) => Math.max(0.1, Math.min(5, prev + zoomDelta)))
+        } else if (tool === "wl") {
+          // Horizontal = contrast, Vertical = brightness
+          setContrast((prev) => Math.max(0.5, Math.min(2, prev + dx * 0.005)))
+          setBrightness((prev) => Math.max(0.5, Math.min(2, prev - dy * 0.005)))
         }
         
-        if (!overHandle) {
-          if (tool === 'pan') setCursorStyle('move')
-          else if (tool === 'zoom') setCursorStyle('zoom-in')
-          else setCursorStyle('crosshair')
-        }
+        dragOffsetRef.current = { x: canvasX, y: canvasY }
+        return
       }
 
-      // For drawing/resizing/dragging, update immediately for real-time feedback
-      // For other operations, throttle with RAF
-      const needsImmediateUpdate = drawingStateRef.current.isDrawing || 
-                                    drawingStateRef.current.isResizing || 
-                                    drawingStateRef.current.isDragging
-      
-      if (!needsImmediateUpdate && mouseMoveRafRef.current) return
-      
-      const updateOperations = () => {
-        if (!needsImmediateUpdate) {
-          mouseMoveRafRef.current = null
-        }
+      // ===== Update cursor when not dragging =====
+      if (!drawingStateRef.current.isMouseDown) {
+        if (tool === 'pan') setCursorStyle('grab')
+        else if (tool === 'zoom') setCursorStyle('zoom-in')
+        else if (tool === 'wl') setCursorStyle('ns-resize')
+        else setCursorStyle('crosshair')
+      }
 
-      // Handle resizing (moving individual points)
+      // ===== ANNOTATION TOOLS - Handle resizing =====
       if (drawingStateRef.current.isResizing && drawingStateRef.current.draggedAnnotationId !== null) {
         const annId = drawingStateRef.current.draggedAnnotationId
         const pointIdx = drawingStateRef.current.draggedPointIndex
         
         if (pointIdx !== null) {
-          const idx = annotations.findIndex((a) => a && a.id === annId)
-          if (idx >= 0) {
-            const updatedAnnotations = [...annotations]
-            const updatedPoints = [...updatedAnnotations[idx].points]
-            updatedPoints[pointIdx] = { x: imageX, y: imageY }
-            updatedAnnotations[idx] = {
-              ...updatedAnnotations[idx],
-              points: updatedPoints,
+          setAnnotations(prev => {
+            const idx = prev.findIndex((a) => a && a.id === annId)
+            if (idx >= 0) {
+              const updated = [...prev]
+              const updatedPoints = [...updated[idx].points]
+              updatedPoints[pointIdx] = { x: imageX, y: imageY }
+              updated[idx] = { ...updated[idx], points: updatedPoints }
+              return updated
             }
-            setAnnotations(updatedAnnotations)
-            // Force redraw for real-time resize
-            drawRef.current?.()
-          }
+            return prev
+          })
         }
+        return
       }
-      // Handle dragging (moving entire annotation)
-      else if (drawingStateRef.current.isDragging && drawingStateRef.current.draggedAnnotationId) {
-        const annId = drawingStateRef.current.draggedAnnotationId
-        const idx = annotations.findIndex((a) => a && a.id === annId)
-        if (idx >= 0) {
-          const offset = dragOffsetRef.current
-          const updatedAnnotations = [...annotations]
-          const deltaX = imageX - offset.x
-          const deltaY = imageY - offset.y
-          
-          updatedAnnotations[idx] = {
-            ...updatedAnnotations[idx],
-            points: updatedAnnotations[idx].points.map((p) => ({
-              x: p.x + deltaX,
-              y: p.y + deltaY,
-            })),
-          }
-          setAnnotations(updatedAnnotations)
-          
-          // Update offset for next move
-          dragOffsetRef.current = { x: imageX, y: imageY }
-          
-          // Force redraw for real-time drag
-          drawRef.current?.()
-        }
-      } else if (drawingStateRef.current.isDrawing && tempAnnotationRef.current) {
-        // Update preview for current annotation tool
-        const updatedTemp = { ...tempAnnotationRef.current }
-        const toolType = updatedTemp.type
+
+      // ===== ANNOTATION TOOLS - Handle drawing preview =====
+      if (drawingStateRef.current.isDrawing && tempAnnotationRef.current) {
+        const toolType = tempAnnotationRef.current.type
         
-        // Special handling for angle tool (needs 3 points)
+        // Create updated points array
+        const currentPoints = [...tempAnnotationRef.current.points]
+        
         if (toolType === "angle") {
-          if (updatedTemp.points.length === 1) {
-            // First point set, preview second point
-            updatedTemp.points.push({ x: imageX, y: imageY })
-          } else if (updatedTemp.points.length === 2) {
-            // Second point set, preview third point
-            updatedTemp.points[1] = { x: imageX, y: imageY }
-          } else if (updatedTemp.points.length === 3) {
-            // Third point preview (after second click)
-            updatedTemp.points[2] = { x: imageX, y: imageY }
+          // Angle: update the preview point position
+          // The preview point is always the last point in the array
+          // We only update it, never add new points in mouseMove
+          const numPoints = currentPoints.length
+          
+          if (numPoints >= 2) {
+            // Update the last point as preview
+            currentPoints[numPoints - 1] = { x: imageX, y: imageY }
           }
-        }
-        // Special handling for polygon (multiple points)
-        else if (toolType === "polygon") {
-          if (updatedTemp.points.length === 1) {
-            updatedTemp.points.push({ x: imageX, y: imageY })
-          } else {
-            updatedTemp.points[updatedTemp.points.length - 1] = { x: imageX, y: imageY }
+          // If only 1 point, we need to add a preview point
+          else if (numPoints === 1) {
+            currentPoints.push({ x: imageX, y: imageY })
           }
-        }
-        // Default handling for other tools (2 points)
-        else {
-          if (updatedTemp.points.length === 1) {
-            updatedTemp.points.push({ x: imageX, y: imageY })
+        } else if (toolType === "polygon") {
+          // Polygon: update last point as preview
+          if (currentPoints.length === 1) {
+            currentPoints.push({ x: imageX, y: imageY })
           } else {
-            updatedTemp.points[updatedTemp.points.length - 1] = { x: imageX, y: imageY }
+            currentPoints[currentPoints.length - 1] = { x: imageX, y: imageY }
+          }
+        } else if (toolType === "text") {
+          // Text doesn't need preview - it's single click
+          return
+        } else {
+          // All other tools: 2 points (start and end)
+          if (currentPoints.length === 1) {
+            currentPoints.push({ x: imageX, y: imageY })
+          } else {
+            currentPoints[1] = { x: imageX, y: imageY }
           }
         }
         
-        tempAnnotationRef.current = updatedTemp
-        // Force redraw for real-time preview
+        tempAnnotationRef.current = {
+          ...tempAnnotationRef.current,
+          points: currentPoints,
+        }
+        
+        // Force redraw to show preview
         drawRef.current?.()
-      } else if (tool === "pan" && drawingStateRef.current.isMouseDown) {
-        const dx = canvasX - dragOffsetRef.current.x
-        const dy = canvasY - dragOffsetRef.current.y
-        setPan((prev) => ({ x: prev.x + dx, y: prev.y + dy }))
-        dragOffsetRef.current = { x: canvasX, y: canvasY }
-      }
-      }
-      
-      // Execute immediately for drawing/resizing/dragging, or schedule with RAF
-      if (needsImmediateUpdate) {
-        updateOperations()
-      } else {
-        mouseMoveRafRef.current = requestAnimationFrame(updateOperations)
       }
     },
-    [annotations, tool, zoom, pan, dpr, selectedAnnotationId],
+    [tool, getImageCoordinates],
   )
 
   const handleCanvasMouseUp = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current
+      
+      // Reset mouse down state
       drawingStateRef.current.isMouseDown = false
+
+      // Reset cursor for view tools
+      if (tool === 'pan') setCursorStyle('grab')
+      else if (tool === 'zoom') setCursorStyle('zoom-in')
+      else if (tool === 'wl') setCursorStyle('ns-resize')
+      else setCursorStyle('crosshair')
+
+      // For view tools, just reset - no further action needed
+      if (tool === "pan" || tool === "zoom" || tool === "wl") {
+        return
+      }
 
       // Clean up resize state
       if (drawingStateRef.current.isResizing) {
@@ -1164,84 +1452,101 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         return
       }
 
-      // Clean up drag state
-      if (drawingStateRef.current.isDragging) {
-        drawingStateRef.current.isDragging = false
-        drawingStateRef.current.draggedAnnotationId = null
-        return
-      }
+      // Handle annotation completion
+      if (drawingStateRef.current.isDrawing && tempAnnotationRef.current && canvas) {
+        const { imageX, imageY } = getImageCoordinates(e)
 
-      if (drawingStateRef.current.isDrawing && tempAnnotationRef.current) {
-        const rect = canvasRef.current?.getBoundingClientRect()
-        if (!rect) return
-
-        const canvasX = e.clientX - rect.left
-        const canvasY = e.clientY - rect.top
-
-        // Convert canvas coordinates to image coordinates using stored bounds
-        const bounds = imageBoundsRef.current
-        const imageX = (canvasX - bounds.dx) / bounds.scale
-        const imageY = (canvasY - bounds.dy) / bounds.scale
-
-        let isComplete = false
         const t = tempAnnotationRef.current.type
+        let isComplete = false
 
         if (t === "polygon") {
-          // Commit the current preview point and start a new preview point
-          if (tempAnnotationRef.current.points.length === 1) {
-            tempAnnotationRef.current.points.push({ x: imageX, y: imageY })
+          // Polygon: add point on each click, complete with Enter key
+          const points = [...tempAnnotationRef.current.points]
+          if (points.length === 1) {
+            points.push({ x: imageX, y: imageY })
           } else {
-            tempAnnotationRef.current.points[tempAnnotationRef.current.points.length - 1] = { x: imageX, y: imageY }
-            tempAnnotationRef.current.points.push({ x: imageX, y: imageY })
+            // Update last point and add new preview point
+            points[points.length - 1] = { x: imageX, y: imageY }
+            points.push({ x: imageX, y: imageY })
           }
-          isComplete = false
+          tempAnnotationRef.current.points = points
+          isComplete = false // Polygon needs Enter to complete
         } else if (t === "angle") {
-          // Angle needs exactly 3 clicks
-          if (tempAnnotationRef.current.points.length === 1) {
-            // First click done, add second point
-            tempAnnotationRef.current.points.push({ x: imageX, y: imageY })
-            isComplete = false
-          } else if (tempAnnotationRef.current.points.length === 2) {
-            // Second click done, update it and add third point for preview
-            tempAnnotationRef.current.points[1] = { x: imageX, y: imageY }
-            tempAnnotationRef.current.points.push({ x: imageX, y: imageY })
-            isComplete = false
-          } else if (tempAnnotationRef.current.points.length === 3) {
-            // Third click done, finalize
-            tempAnnotationRef.current.points[2] = { x: imageX, y: imageY }
-            isComplete = true
-          } else {
-            isComplete = true
-          }
+          // Angle: handled entirely in mouseDown with clicks
+          // mouseUp just resets mouse state, doesn't complete annotation
+          // Don't set isComplete - angle completion is handled in mouseDown
+          return
         } else if (t === "text") {
-          const label = window.prompt("Enter label text")
-          if (label && label.trim()) {
-            tempAnnotationRef.current.label = label.trim()
-            isComplete = true
+          // Text is handled in mouseDown, should not reach here
+          tempAnnotationRef.current = null
+          drawingStateRef.current.isDrawing = false
+          return
+        } else if (t === "calibration") {
+          // Calibration: draw a line, then prompt for known distance
+          const points = [...tempAnnotationRef.current.points]
+          if (points.length === 1) {
+            points.push({ x: imageX, y: imageY })
           } else {
-            // Cancel text annotation if no label
+            points[1] = { x: imageX, y: imageY }
+          }
+          tempAnnotationRef.current.points = points
+          
+          // Calculate pixel distance
+          const dx = points[1].x - points[0].x
+          const dy = points[1].y - points[0].y
+          const pixelDistance = Math.sqrt(dx * dx + dy * dy)
+          
+          // Prompt for known distance in mm
+          const knownDistanceStr = window.prompt(
+            `Enter the known distance in millimeters (mm) for this line:\n\nPixel length: ${pixelDistance.toFixed(1)} pixels`,
+            "10"
+          )
+          
+          if (knownDistanceStr && !isNaN(parseFloat(knownDistanceStr))) {
+            const knownDistance = parseFloat(knownDistanceStr)
+            if (knownDistance > 0) {
+              // Calculate mm per pixel
+              const newMmPerPixel = knownDistance / pixelDistance
+              setMmPerPixel(newMmPerPixel)
+              
+              // Store the calibration as an annotation for reference
+              tempAnnotationRef.current.measurement = knownDistance
+              tempAnnotationRef.current.label = `Calibration: ${knownDistance.toFixed(1)}mm`
+              isComplete = true
+            } else {
+              tempAnnotationRef.current = null
+              drawingStateRef.current.isDrawing = false
+              return
+            }
+          } else {
             tempAnnotationRef.current = null
             drawingStateRef.current.isDrawing = false
             return
           }
         } else {
-          // line/length/arrow/rect/circle/calibration: commit second point and finish
-          if (tempAnnotationRef.current.points.length === 1) {
-            tempAnnotationRef.current.points.push({ x: imageX, y: imageY })
+          // All other tools (length, line, arrow, rect, circle): 2 points
+          const points = [...tempAnnotationRef.current.points]
+          if (points.length === 1) {
+            points.push({ x: imageX, y: imageY })
           } else {
-            tempAnnotationRef.current.points[tempAnnotationRef.current.points.length - 1] = { x: imageX, y: imageY }
+            points[1] = { x: imageX, y: imageY }
           }
+          tempAnnotationRef.current.points = points
           isComplete = true
         }
 
         if (isComplete && tempAnnotationRef.current) {
-          setAnnotations((prev) => [...prev, tempAnnotationRef.current])
+          // Add completed annotation to list
+          setAnnotations((prev) => [...prev, { ...tempAnnotationRef.current! }])
           tempAnnotationRef.current = null
           drawingStateRef.current.isDrawing = false
         }
+        
+        // Force redraw
+        drawRef.current?.()
       }
     },
-    [dpr, zoom, pan, selectedAnnotationId],
+    [tool, getImageCoordinates],
   )
 
   const handleCanvasKeyDown = useCallback(
@@ -1258,7 +1563,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
             tempAnnotationRef.current.points.pop()
           }
         }
-        setAnnotations((prev) => [...prev, tempAnnotationRef.current])
+        setAnnotations((prev) => [...prev, tempAnnotationRef.current!])
         tempAnnotationRef.current = null
         drawingStateRef.current.isDrawing = false
         e.preventDefault()
@@ -1306,20 +1611,48 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     contrast,
     showOverlay,
     showGrid,
+    mmPerPixel,
     annotations,
     selectedAnnotationId,
+    draw, // Add draw to dependencies to ensure it's called when draw function changes
   ])
 
-  // Capture current canvas as PNG and save via screenshotService
+  // Capture current canvas as PNG - shows modal with options
   const handleCapture = useCallback(async () => {
     const canvas = canvasRef.current
     if (!canvas) return
+    
     const dataUrl = screenshotService.captureCanvas(canvas, {
       includeAIOverlay: true,
     })
+    
+    setCaptureDataUrl(dataUrl)
+    setCaptureNote("")
+    setShowCaptureModal(true)
+  }, [])
+
+  // Save capture to system (download)
+  const handleSaveToSystem = useCallback(() => {
+    if (!captureDataUrl) return
+    
     const safe = (s?: string) => (s ? s.replace(/[^a-zA-Z0-9_-]/g, "") : "series")
-    const fileName = `capture_${safe(studyInstanceUID)}_${safe(seriesInstanceUID)}_${currentFrame + 1}.png`
-    await screenshotService.saveCapturedImage(dataUrl, `Key image ${currentFrame + 1}`, {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const fileName = `capture_${safe(studyInstanceUID)}_frame${currentFrame + 1}_${timestamp}.png`
+    
+    const a = document.createElement("a")
+    a.href = captureDataUrl
+    a.download = fileName
+    a.click()
+    
+    setShowCaptureModal(false)
+    setCaptureDataUrl(null)
+  }, [captureDataUrl, studyInstanceUID, currentFrame])
+
+  // Save capture to gallery and optionally create report
+  const handleSaveToGallery = useCallback(async (createReport: boolean = false) => {
+    if (!captureDataUrl) return
+    
+    await screenshotService.saveCapturedImage(captureDataUrl, captureNote || `Key image ${currentFrame + 1}`, {
       studyUID: studyInstanceUID,
       seriesUID: seriesInstanceUID,
       instanceUID: seriesInstanceUID,
@@ -1329,11 +1662,25 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
       hasAIOverlay: false,
       hasAnnotations: annotations.length > 0,
     })
-    const a = document.createElement("a")
-    a.href = dataUrl
-    a.download = fileName
-    a.click()
-  }, [studyInstanceUID, seriesInstanceUID, currentFrame, zoom, brightness, contrast])
+    
+    setShowCaptureModal(false)
+    setCaptureDataUrl(null)
+    
+    if (createReport) {
+      // Navigate to report page with captured image
+      const params = new URLSearchParams({
+        studyUID: studyInstanceUID,
+        seriesUID: seriesInstanceUID || '',
+        frameIndex: String(currentFrame + 1),
+        capturedImage: 'true',
+        note: captureNote || '',
+      })
+      window.open(`/app/reporting?${params.toString()}`, '_blank')
+    } else {
+      // Show gallery
+      setShowCapturedImages(true)
+    }
+  }, [captureDataUrl, captureNote, studyInstanceUID, seriesInstanceUID, currentFrame, zoom, annotations.length])
 
   // Show loading state
   if (isLoading) {
@@ -1360,174 +1707,505 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   }
 
   return (
-    <div ref={containerRef} className="w-full h-full flex bg-slate-900 relative">
+    <div 
+      ref={containerRef} 
+      className="w-full h-full flex bg-slate-900 relative overflow-hidden" 
+      style={{ touchAction: 'none' }}
+      onMouseMove={handleMouseMoveForPanels}
+    >
+      {/* Capture Modal */}
+      {showCaptureModal && captureDataUrl && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-800 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden border border-slate-700">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-fuchsia-600 rounded-lg">
+                  <Camera size={20} className="text-white" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-white">Image Captured</h3>
+                  <p className="text-xs text-slate-400">Frame {currentFrame + 1} • {new Date().toLocaleTimeString()}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowCaptureModal(false)
+                  setCaptureDataUrl(null)
+                }}
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            {/* Preview Image */}
+            <div className="p-4 bg-slate-900">
+              <img 
+                src={captureDataUrl} 
+                alt="Captured frame" 
+                className="w-full h-auto max-h-64 object-contain rounded-lg border border-slate-700"
+              />
+            </div>
+            
+            {/* Note Input */}
+            <div className="p-4 border-t border-slate-700">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Add Note (optional)
+              </label>
+              <textarea
+                value={captureNote}
+                onChange={(e) => setCaptureNote(e.target.value)}
+                placeholder="Enter a description for this capture..."
+                className="w-full px-3 py-2 text-sm rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                style={{
+                  backgroundColor: '#334155',
+                  border: '1px solid #475569',
+                }}
+                rows={2}
+              />
+            </div>
+            
+            {/* Action Buttons */}
+            <div className="p-4 border-t border-slate-700 space-y-3">
+              {/* Primary Actions */}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => handleSaveToGallery(true)}
+                  className="flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition font-medium"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Create Report
+                </button>
+                <button
+                  onClick={handleSaveToSystem}
+                  className="flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition font-medium"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Save to Computer
+                </button>
+              </div>
+              
+              {/* Secondary Action */}
+              <button
+                onClick={() => handleSaveToGallery(false)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 hover:text-white transition"
+              >
+                <Layers size={18} />
+                Save to Gallery Only
+              </button>
+            </div>
+            
+            {/* Info Footer */}
+            <div className="px-4 py-3 bg-slate-900/50 border-t border-slate-700">
+              <p className="text-xs text-slate-500 text-center">
+                {annotations.length > 0 && (
+                  <span className="text-amber-400">✓ {annotations.length} annotation(s) included • </span>
+                )}
+                Study: {studyInstanceUID?.slice(-8) || 'N/A'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCapturedImages && (
         <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm">
           <CapturedImagesGallery open={true} onClose={() => setShowCapturedImages(false)} />
         </div>
       )}
-      {/* Canvas */}
-      <canvas
-        ref={canvasRef}
-        style={{ cursor: cursorStyle }}
-        className="flex-1"
-        onMouseDown={handleCanvasMouseDown}
-        onMouseMove={handleCanvasMouseMove}
-        onMouseUp={handleCanvasMouseUp}
-        onKeyDown={handleCanvasKeyDown}
-        tabIndex={0}
-      />
+      
+      {/* Mobile Tools Toggle Button - Only visible on small screens */}
+      <button
+        onClick={() => setShowMobileTools(!showMobileTools)}
+        className={`md:hidden fixed top-20 right-4 z-40 p-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all ${panelsAutoHidden ? 'opacity-30 hover:opacity-100' : ''}`}
+        title={showMobileTools ? "Hide Tools" : "Show Tools"}
+      >
+        {showMobileTools ? (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        ) : (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+          </svg>
+        )}
+      </button>
+      
+      {/* Canvas Container - Fixed size, no scroll */}
+      <div 
+        className="flex-1 h-full relative overflow-hidden" 
+        style={{ minWidth: 0 }}
+        onMouseEnter={handleCanvasEnter}
+        onMouseLeave={handleCanvasLeave}
+      >
+        <canvas
+          ref={canvasRef}
+          style={{ 
+            cursor: cursorStyle,
+            display: 'block',
+            width: '100%',
+            height: '100%',
+          }}
+          onMouseDown={handleCanvasMouseDown}
+          onMouseMove={handleCanvasMouseMove}
+          onMouseUp={handleCanvasMouseUp}
+          onKeyDown={handleCanvasKeyDown}
+          tabIndex={0}
+        />
+        
+        {/* Show panels hint when auto-hidden */}
+        {panelsAutoHidden && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/60 text-white/60 text-xs rounded-full backdrop-blur-sm pointer-events-none transition-opacity">
+            Move mouse to edges to show panels
+          </div>
+        )}
+      </div>
 
-      <div className="absolute top-14 right-0 w-72 bg-slate-800 border-l border-slate-700 flex flex-col max-h-[calc(100vh-3.5rem)] overflow-hidden shadow-lg">
-        {/* Toolbar - Fixed Section */}
-        <div className="border-b border-slate-700 p-3 space-y-2 flex-shrink-0 overflow-y-auto max-h-96">
-          {/* Navigation */}
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-400">Frame</label>
-            <input
-              type="range"
-              min="0"
-              max={totalFrames - 1}
-              value={currentFrame}
-              onChange={(e) => setCurrentFrame(Number.parseInt(e.target.value))}
-              className="w-full h-1 bg-slate-600 rounded cursor-pointer"
-            />
-            <div className="text-xs text-slate-400 text-center">
-              {currentFrame + 1} / {totalFrames}
+      {/* Desktop Tools Panel Toggle - Fixed position when collapsed */}
+      {(toolsPanelCollapsed || panelsAutoHidden) && !toolsPanelCollapsed && (
+        <button
+          onClick={() => setPanelsAutoHidden(false)}
+          className="hidden md:flex fixed right-0 top-1/2 -translate-y-1/2 z-40 p-2 bg-blue-600/80 text-white rounded-l-lg shadow-lg hover:bg-blue-700 transition-all items-center gap-1 opacity-50 hover:opacity-100"
+          title="Show Tools Panel"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7" />
+          </svg>
+        </button>
+      )}
+      
+      {toolsPanelCollapsed && !panelsAutoHidden && (
+        <button
+          onClick={() => setToolsPanelCollapsed(false)}
+          className="hidden md:flex fixed right-0 top-1/2 -translate-y-1/2 z-40 p-2 bg-blue-600 text-white rounded-l-lg shadow-lg hover:bg-blue-700 transition-all items-center gap-1"
+          title="Show Tools Panel"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7" />
+          </svg>
+        </button>
+      )}
+
+      {/* Tools Panel - Responsive: hidden on mobile by default, slide in when toggled */}
+      <div 
+        className={`
+          bg-slate-800 border-l border-slate-700 flex flex-col h-full shadow-lg flex-shrink-0
+          transition-all duration-300 ease-in-out
+          md:relative
+          fixed top-0 right-0 z-30
+          ${toolsPanelCollapsed || panelsAutoHidden ? 'md:w-0 md:overflow-hidden md:opacity-0' : 'w-72 md:opacity-100'}
+          ${showMobileTools ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}
+          max-md:h-screen max-md:pt-16 max-md:w-72
+          hover:md:opacity-100 hover:md:w-72
+        `}
+        onMouseEnter={() => {
+          setPanelsAutoHidden(false)
+          if (autoHideTimeoutRef.current) {
+            clearTimeout(autoHideTimeoutRef.current)
+            autoHideTimeoutRef.current = null
+          }
+        }}
+        onWheel={(e) => e.stopPropagation()}
+      >
+        {/* Panel Header with Collapse Button */}
+        <div className="flex items-center justify-between p-3 bg-slate-900 border-b border-slate-700">
+          <span className="text-sm font-semibold text-white">Tools</span>
+          <button
+            onClick={() => setToolsPanelCollapsed(true)}
+            className="hidden md:flex p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+            title="Collapse Tools Panel"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Toolbar - Scrollable Section - scroll works here, not on canvas */}
+        <div 
+          className="flex-1 overflow-y-auto p-3 space-y-4 overscroll-contain"
+          style={{ scrollBehavior: 'smooth' }}
+          onWheel={(e) => {
+            // Allow scroll in this panel, stop propagation to prevent canvas scroll
+            e.stopPropagation()
+          }}
+        >
+          
+          {/* ===== FRAME NAVIGATION SECTION ===== */}
+          <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+            <div className="flex items-center gap-2 mb-3">
+              <Layers size={16} className="text-blue-400" />
+              <span className="text-sm font-semibold text-white">Frame Navigation</span>
+            </div>
+            
+            {/* Frame Slider */}
+            <div className="space-y-2">
+              <input
+                type="range"
+                min="0"
+                max={totalFrames - 1}
+                value={currentFrame}
+                onChange={(e) => setCurrentFrame(Number.parseInt(e.target.value))}
+                className="w-full h-2 bg-slate-600 rounded cursor-pointer accent-blue-500"
+              />
+              <div className="text-center">
+                <span className="text-lg font-bold text-white">{currentFrame + 1}</span>
+                <span className="text-slate-400 text-sm"> / {totalFrames}</span>
+              </div>
               {currentSeriesData && (
-                <div className="text-xs text-slate-500 mt-1">
+                <div className="text-xs text-slate-500 text-center">
                   Series {currentSeriesData.seriesNumber}: {currentSeriesData.modality}
                 </div>
               )}
             </div>
-          </div>
-
-          {/* Tools */}
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-400">View Tools</label>
-            <div className="grid grid-cols-2 gap-1">
-              {[
-                { id: "pan", icon: Move, label: "Pan" },
-                { id: "zoom", icon: ZoomIn, label: "Zoom" },
-                { id: "wl", icon: Sun, label: "W/L" },
-              ].map(({ id, icon: Icon, label }) => (
+            
+            {/* Playback Controls */}
+            <div className="flex items-center justify-center gap-1 mt-3">
+              <button
+                onClick={() => setCurrentFrame(0)}
+                className="p-2 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white transition"
+                title="First Frame"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+                </svg>
+              </button>
+              <button
+                onClick={() => setCurrentFrame(prev => Math.max(0, prev - 1))}
+                className="p-2 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white transition"
+                title="Previous Frame"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z"/>
+                </svg>
+              </button>
+              <button
+                onClick={() => setIsPlaying(prev => !prev)}
+                className={`p-3 rounded-full transition ${
+                  isPlaying 
+                    ? 'bg-red-600 text-white hover:bg-red-700' 
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                }`}
+                title={isPlaying ? "Pause" : "Play"}
+              >
+                {isPlaying ? (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z"/>
+                  </svg>
+                )}
+              </button>
+              <button
+                onClick={() => setCurrentFrame(prev => Math.min(totalFrames - 1, prev + 1))}
+                className="p-2 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white transition"
+                title="Next Frame"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/>
+                </svg>
+              </button>
+              <button
+                onClick={() => setCurrentFrame(totalFrames - 1)}
+                className="p-2 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white transition"
+                title="Last Frame"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+                </svg>
+              </button>
+            </div>
+            
+            {/* Speed Control */}
+            <div className="flex items-center justify-center gap-2 mt-2">
+              <span className="text-xs text-slate-400">Speed:</span>
+              {[2, 5, 10, 15].map(speed => (
                 <button
-                  key={id}
-                  onClick={() => setTool(id as Tool)}
-                  title={label}
-                  className={`p-2 rounded transition ${
-                    tool === id ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                  key={speed}
+                  onClick={() => setPlaySpeed(speed)}
+                  className={`px-2 py-1 text-xs rounded transition ${
+                    playSpeed === speed 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
                   }`}
                 >
-                  <Icon size={16} />
+                  {speed}fps
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Sliders */}
-          <div className="space-y-2">
-            <div>
-              <label className="text-xs font-semibold text-slate-400">Zoom: {(zoom * 100).toFixed(0)}%</label>
-              <input
-                type="range"
-                min="0.1"
-                max="5"
-                step="0.1"
-                value={zoom}
-                onChange={(e) => setZoom(Number.parseFloat(e.target.value))}
-                className="w-full h-1 bg-slate-600 rounded"
-              />
+          {/* ===== VIEW TOOLS SECTION ===== */}
+       
+          {/* ===== IMAGE ADJUSTMENTS SECTION ===== */}
+          <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+            <div className="flex items-center gap-2 mb-3">
+              <Sun size={16} className="text-yellow-400" />
+              <span className="text-sm font-semibold text-white">Image Adjustments</span>
             </div>
-            <div>
-              <label className="text-xs font-semibold text-slate-400">Brightness</label>
-              <input
-                type="range"
-                min="0.5"
-                max="2"
-                step="0.1"
-                value={brightness}
-                onChange={(e) => setBrightness(Number.parseFloat(e.target.value))}
-                className="w-full h-1 bg-slate-600 rounded"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-slate-400">Contrast</label>
-              <input
-                type="range"
-                min="0.5"
-                max="2"
-                step="0.1"
-                value={contrast}
-                onChange={(e) => setContrast(Number.parseFloat(e.target.value))}
-                className="w-full h-1 bg-slate-600 rounded"
-              />
+            <div className="space-y-3">
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-slate-400">Zoom</span>
+                  <span className="text-white font-medium">{(zoom * 100).toFixed(0)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="5"
+                  step="0.1"
+                  value={zoom}
+                  onChange={(e) => setZoom(Number.parseFloat(e.target.value))}
+                  className="w-full h-2 bg-slate-600 rounded accent-blue-500"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-slate-400">Brightness</span>
+                  <span className="text-white font-medium">{(brightness * 100).toFixed(0)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2"
+                  step="0.1"
+                  value={brightness}
+                  onChange={(e) => setBrightness(Number.parseFloat(e.target.value))}
+                  className="w-full h-2 bg-slate-600 rounded accent-yellow-500"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-slate-400">Contrast</span>
+                  <span className="text-white font-medium">{(contrast * 100).toFixed(0)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2"
+                  step="0.1"
+                  value={contrast}
+                  onChange={(e) => setContrast(Number.parseFloat(e.target.value))}
+                  className="w-full h-2 bg-slate-600 rounded accent-purple-500"
+                />
+              </div>
+              
+              {/* Reset Button */}
+              <button
+                onClick={() => {
+                  setZoom(1)
+                  setBrightness(1)
+                  setContrast(1)
+                  setPan({ x: 0, y: 0 })
+                }}
+                className="w-full py-2 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition flex items-center justify-center gap-2"
+              >
+                <RotateCcw size={14} />
+                Reset View
+              </button>
             </div>
           </div>
 
-          {/* Calibration */}
-          <div>
-            <label className="text-xs font-semibold text-slate-400">Scale (mm/px)</label>
-            <input
-              type="number"
-              value={mmPerPixel?.toFixed(3) || ""}
-              onChange={(e) => setMmPerPixel(Number.parseFloat(e.target.value) || null)}
-              placeholder="0.0"
-              className="w-full px-2 py-1 text-sm bg-slate-700 border border-slate-600 rounded text-white placeholder-slate-500"
-            />
+          {/* ===== DISPLAY OPTIONS ===== */}
+          <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+            <div className="flex items-center gap-2 mb-3">
+              <Eye size={16} className="text-cyan-400" />
+              <span className="text-sm font-semibold text-white">Display Options</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setShowOverlay(prev => !prev)}
+                className={`flex flex-col items-center gap-1 p-3 rounded-lg transition ${
+                  showOverlay ? "bg-cyan-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                <Eye size={18} />
+                <span className="text-xs">Overlay</span>
+              </button>
+              <button
+                onClick={() => setShowGrid(prev => !prev)}
+                className={`flex flex-col items-center gap-1 p-3 rounded-lg transition ${
+                  showGrid ? "bg-cyan-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                <GridIcon size={18} />
+                <span className="text-xs">Grid</span>
+              </button>
+              <button
+                onClick={handleCapture}
+                className="flex flex-col items-center gap-1 p-3 rounded-lg bg-slate-700 text-slate-300 hover:bg-fuchsia-600 hover:text-white transition"
+              >
+                <Camera size={18} />
+                <span className="text-xs">Capture</span>
+              </button>
+              <button
+                onClick={() => setShowCapturedImages(true)}
+                className="flex flex-col items-center gap-1 p-3 rounded-lg bg-slate-700 text-slate-300 hover:bg-fuchsia-600 hover:text-white transition"
+              >
+                <Layers size={18} />
+                <span className="text-xs">Gallery</span>
+              </button>
+            </div>
+            
+            {/* Calibration */}
+            <div className="mt-3">
+              <div className="flex items-center gap-2 mb-1">
+                <label className="text-xs text-slate-400">Scale Calibration (mm/px)</label>
+                <div className="group relative">
+                  <svg className="w-4 h-4 text-slate-500 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-slate-900 text-xs text-slate-300 rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none w-48 z-50 border border-slate-700">
+                    Enter the pixel-to-millimeter ratio for accurate measurements. Use the Calibrate tool to set this automatically.
+                  </div>
+                </div>
+              </div>
+              <input
+                type="number"
+                step="0.001"
+                value={mmPerPixel?.toFixed(3) || ""}
+                onChange={(e) => setMmPerPixel(Number.parseFloat(e.target.value) || null)}
+                placeholder="e.g., 0.264"
+                className="w-full px-3 py-2 text-sm rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style={{
+                  backgroundColor: '#334155',
+                  border: '1px solid #475569',
+                  color: '#fff',
+                }}
+              />
+              {mmPerPixel && (
+                <p className="text-xs text-green-400 mt-1">✓ Calibrated: {mmPerPixel.toFixed(3)} mm/px</p>
+              )}
+            </div>
           </div>
 
-          {/* Toggles */}
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowOverlay(!showOverlay)}
-              title="Toggle overlay"
-              className={`p-2 rounded flex-1 transition ${
-                showOverlay ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300"
-              }`}
-            >
-              <Eye size={16} className="mx-auto" />
-            </button>
-            <button
-              onClick={() => setShowGrid(!showGrid)}
-              title="Toggle grid"
-              className={`p-2 rounded flex-1 transition ${
-                showGrid ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300"
-              }`}
-            >
-              <GridIcon size={16} className="mx-auto" />
-            </button>
-            <button
-              className="p-2 rounded flex-1 transition bg-white/5 text-white/80 hover:bg-white/10"
-              onClick={handleCapture}
-              title="Capture for Report"
-            >
-              <Camera className="w-4 h-4 mx-auto text-fuchsia-300" />
-            </button>
-            <button
-              className="p-2 rounded flex-1 transition bg-white/5 text-white/80 hover:bg-white/10"
-              onClick={() => setShowCapturedImages(true)}
-              title="Open Captured Images"
-            >
-              <Layers className="w-4 h-4 mx-auto text-fuchsia-300" />
-            </button>
-          </div>
-
-          {/* Annotation Tools */}
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-slate-400">Annotations</label>
-            <div className="grid grid-cols-3 gap-1">
+          {/* ===== ANNOTATION TOOLS SECTION ===== */}
+          <div className="bg-gradient-to-br from-amber-900/30 to-orange-900/30 rounded-lg p-3 border border-amber-700/50">
+            <div className="flex items-center gap-2 mb-3">
+              <Ruler size={16} className="text-amber-400" />
+              <span className="text-sm font-semibold text-white">Annotation Tools</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
               {[
-                { id: "length", icon: Ruler },
-                { id: "angle", icon: Compass },
-                { id: "line", icon: Minus },
-                { id: "arrow", icon: ArrowRight },
-                { id: "rect", icon: Square },
-                { id: "circle", icon: CircleIcon },
-                { id: "polygon", icon: Layers },
-                { id: "text", icon: TypeIcon },
-                { id: "calibration", icon: Gauge },
-              ].map(({ id, icon: Icon }) => (
+                { id: "length", icon: Ruler, label: "Length" },
+                { id: "angle", icon: Compass, label: "Angle" },
+                { id: "line", icon: Minus, label: "Line" },
+                { id: "arrow", icon: ArrowRight, label: "Arrow" },
+                { id: "rect", icon: Square, label: "Rect" },
+                { id: "circle", icon: CircleIcon, label: "Circle" },
+                { id: "polygon", icon: Layers, label: "Polygon" },
+                { id: "text", icon: TypeIcon, label: "Text" },
+                { id: "calibration", icon: Gauge, label: "Calibrate" },
+              ].map(({ id, icon: Icon, label }) => (
                 <button
                   key={id}
                   onClick={() => {
@@ -1535,22 +2213,47 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
                     tempAnnotationRef.current = null
                     setSelectedAnnotationId(null)
                   }}
-                  className={`p-2 rounded transition ${
-                    tool === id ? "bg-amber-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                  className={`flex flex-col items-center gap-1 p-2 rounded-lg transition ${
+                    tool === id 
+                      ? "bg-amber-600 text-white shadow-lg shadow-amber-600/30" 
+                      : "bg-slate-700/80 text-slate-300 hover:bg-amber-700/50 hover:text-white"
                   }`}
                 >
-                  <Icon size={16} className="mx-auto" />
+                  <Icon size={18} />
+                  <span className="text-[10px] font-medium">{label}</span>
                 </button>
               ))}
             </div>
+            
+            {/* Clear All Annotations */}
+            {annotations.length > 0 && (
+              <button
+                onClick={() => {
+                  setAnnotations([])
+                  setSelectedAnnotationId(null)
+                }}
+                className="w-full mt-3 py-2 text-xs bg-red-900/50 text-red-300 rounded-lg hover:bg-red-800/50 transition flex items-center justify-center gap-2 border border-red-700/50"
+              >
+                <Trash2 size={14} />
+                Clear All ({annotations.length})
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Annotations List - Scrollable */}
-        <div className="flex-1 overflow-y-auto border-t border-slate-700 p-3 space-y-2">
-          <label className="text-xs font-semibold text-slate-400">Annotations ({annotations.length})</label>
+        {/* ===== ANNOTATIONS LIST - Fixed at Bottom ===== */}
+        <div className="border-t border-slate-700 p-3 bg-slate-800 max-h-48 overflow-y-auto">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-slate-400">Annotations ({annotations.length})</span>
+          </div>
           {annotations.length === 0 ? (
-            <div className="text-xs text-slate-500 text-center py-4">No annotations</div>
+            <div className="text-center py-6 px-4">
+              <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-slate-700/50 flex items-center justify-center">
+                <Ruler size={24} className="text-slate-500" />
+              </div>
+              <p className="text-sm text-slate-400 font-medium mb-1">No annotations yet</p>
+              <p className="text-xs text-slate-500">Click annotation tools above to add measurements, shapes, or text</p>
+            </div>
           ) : (
             annotations.filter(ann => ann && ann.id).map((ann) => (
               <div
@@ -1591,6 +2294,14 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
           )}
         </div>
       </div>
+      
+      {/* Mobile overlay backdrop */}
+      {showMobileTools && (
+        <div 
+          className="md:hidden fixed inset-0 bg-black/50 z-20"
+          onClick={() => setShowMobileTools(false)}
+        />
+      )}
     </div>
   )
 }

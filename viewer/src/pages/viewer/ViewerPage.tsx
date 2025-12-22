@@ -86,6 +86,7 @@ const ViewerPage: React.FC = () => {
   const { setCurrentStudy, addToHistory } = useWorkflow()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [seriesCollapsed, setSeriesCollapsed] = useState(false)
   const [studyData, setStudyData] = useState<any>({
     studyInstanceUID: '',
     studyDate: '',
@@ -111,11 +112,27 @@ const ViewerPage: React.FC = () => {
   const [viewerType, setViewerType] = useState<'legacy' | 'cornerstone3d' | '3d' | 'ohif'>('legacy')
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showToolbar, setShowToolbar] = useState(true)
+  const [headerAutoHidden, setHeaderAutoHidden] = useState(false)
   const [selectedSeries, setSelectedSeries] = useState<any>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentFrame, setCurrentFrame] = useState(0)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
   const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const headerAutoHideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Auto-hide header when mouse is not near top
+  const handleMouseMoveForHeader = (e: React.MouseEvent) => {
+    const y = e.clientY
+    const threshold = 80 // pixels from top to show header
+    
+    if (y < threshold) {
+      setHeaderAutoHidden(false)
+      if (headerAutoHideTimeoutRef.current) {
+        clearTimeout(headerAutoHideTimeoutRef.current)
+        headerAutoHideTimeoutRef.current = null
+      }
+    }
+  }
 
   // OHIF integration with availability check
   const openInOHIF = async () => {
@@ -433,11 +450,12 @@ const ViewerPage: React.FC = () => {
         bgcolor: '#000',
         display: 'flex',
         flexDirection: 'column',
-        overflowX: 'hidden',
-        overflowY: 'auto',
-      }}>
-        {/* Modern Header */}
-        <Fade in={showToolbar}>
+        overflow: 'hidden', // Prevent page scroll - viewer handles its own scroll
+      }}
+      onMouseMove={handleMouseMoveForHeader}
+      >
+        {/* Modern Header - Auto-hides when working on image */}
+        <Fade in={showToolbar && !headerAutoHidden}>
           <Box
             sx={{
               position: 'relative',
@@ -445,6 +463,14 @@ const ViewerPage: React.FC = () => {
               backdropFilter: 'blur(20px)',
               bgcolor: alpha('#000', 0.8),
               borderBottom: `1px solid ${alpha('#fff', 0.1)}`,
+              transition: 'all 0.3s ease-in-out',
+            }}
+            onMouseEnter={() => {
+              setHeaderAutoHidden(false)
+              if (headerAutoHideTimeoutRef.current) {
+                clearTimeout(headerAutoHideTimeoutRef.current)
+                headerAutoHideTimeoutRef.current = null
+              }
             }}
           >
             <Box sx={{ 
@@ -612,41 +638,39 @@ const ViewerPage: React.FC = () => {
               </Stack>
 
               {/* Right Section - Actions */}
-              <Stack direction="row" spacing={1}>
-                {/* NEW: Create Report Button - Prominent */}
+              <Stack direction="row" spacing={1} alignItems="center">
+                {/* Report Button - Single prominent button */}
                 {studyData?.studyInstanceUID && (
-                  <Tooltip title="Create New Report">
-                    <Button
-                      variant="contained"
-                      color="primary"
-                      size="small"
-                      startIcon={<Description />}
-                      onClick={() => {
-                        const params = new URLSearchParams({
-                          studyUID: studyData.studyInstanceUID,
-                          patientID: studyData.patientID || 'Unknown',
-                          patientName: studyData.patientName || 'Unknown Patient',
-                          modality: studyData.modality || 'CT',
-                          studyDescription: studyData.studyDescription || ''
-                        });
-                        navigate(`/app/reporting?${params.toString()}`);
-                      }}
-                      sx={{
-                        textTransform: 'none',
-                        fontWeight: 600,
-                        px: 2,
-                        bgcolor: theme.palette.primary.main,
-                        '&:hover': {
-                          bgcolor: theme.palette.primary.dark,
-                        },
-                      }}
-                    >
-                      Create Report
-                    </Button>
-                  </Tooltip>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    size="small"
+                    startIcon={<Description />}
+                    onClick={() => {
+                      const params = new URLSearchParams({
+                        studyUID: studyData.studyInstanceUID,
+                        patientID: studyData.patientID || 'Unknown',
+                        patientName: studyData.patientName || 'Unknown Patient',
+                        modality: studyData.modality || 'CT',
+                        studyDescription: studyData.studyDescription || ''
+                      });
+                      navigate(`/app/reporting?${params.toString()}`);
+                    }}
+                    sx={{
+                      textTransform: 'none',
+                      fontWeight: 600,
+                      px: 2,
+                      bgcolor: theme.palette.primary.main,
+                      '&:hover': {
+                        bgcolor: theme.palette.primary.dark,
+                      },
+                    }}
+                  >
+                    Report
+                  </Button>
                 )}
                 
-                {/* View Existing Report Button */}
+                {/* View Existing Report - Only shows if report exists */}
                 {studyData?.studyInstanceUID && (
                   <ViewReportButton
                     studyInstanceUID={studyData.studyInstanceUID}
@@ -708,41 +732,70 @@ const ViewerPage: React.FC = () => {
           flex: 1, 
           display: 'flex',
           position: 'relative',
-          overflowX: 'hidden',
-          overflowY: 'auto',
+          overflow: 'hidden', // Prevent scroll conflicts
+          minHeight: 0, // Important for flex children to shrink
         }}>
           {/* Viewer Area with Tabs */}
           <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-            {/* Modern Tab Navigation */}
-            <Box sx={{ 
-              borderBottom: `1px solid ${alpha('#fff', 0.1)}`,
-              bgcolor: alpha('#000', 0.5),
-              backdropFilter: 'blur(10px)',
-            }}>
-              <Tabs 
-                value={activeTab} 
-                onChange={(_, newValue) => setActiveTab(newValue)}
-                sx={{
-                  '& .MuiTab-root': {
-                    color: alpha('#fff', 0.6),
-                    textTransform: 'none',
-                    fontWeight: 600,
-                    '&.Mui-selected': {
-                      color: 'white',
-                    },
-                  },
-                  '& .MuiTabs-indicator': {
-                    bgcolor: theme.palette.primary.main,
-                  },
-                }}
+            {/* Modern Tab Navigation - Also auto-hides */}
+            <Fade in={!headerAutoHidden}>
+              <Box sx={{ 
+                borderBottom: `1px solid ${alpha('#fff', 0.1)}`,
+                bgcolor: alpha('#000', 0.5),
+                backdropFilter: 'blur(10px)',
+                transition: 'all 0.3s ease-in-out',
+              }}
+              onMouseEnter={() => {
+                setHeaderAutoHidden(false)
+                if (headerAutoHideTimeoutRef.current) {
+                  clearTimeout(headerAutoHideTimeoutRef.current)
+                  headerAutoHideTimeoutRef.current = null
+                }
+              }}
               >
-                <Tab label="Image Viewer" />
-               <Tab label="AI Analysis (Coming Soon)" />
-<Tab label="Similar Cases (Coming Soon)" />
-
+                <Tabs 
+                  value={activeTab} 
+                  onChange={(_, newValue) => {
+                    // Only allow switching to enabled tabs (0 and 3)
+                    if (newValue === 0 || newValue === 3) {
+                      setActiveTab(newValue)
+                    }
+                  }}
+                  sx={{
+                    '& .MuiTab-root': {
+                      color: alpha('#fff', 0.6),
+                      textTransform: 'none',
+                      fontWeight: 600,
+                      '&.Mui-selected': {
+                        color: 'white',
+                      },
+                      '&.Mui-disabled': {
+                        color: alpha('#fff', 0.3),
+                        cursor: 'not-allowed',
+                      },
+                    },
+                    '& .MuiTabs-indicator': {
+                      bgcolor: theme.palette.primary.main,
+                    },
+                  }}
+                >
+                  <Tab label="Image Viewer" />
+                  <Tab 
+                    label="AI Analysis" 
+                    disabled 
+                    icon={<Chip label="Soon" size="small" sx={{ ml: 1, height: 18, fontSize: '0.65rem', bgcolor: alpha('#fff', 0.1) }} />}
+                    iconPosition="end"
+                  />
+                  <Tab 
+                    label="Similar Cases" 
+                  disabled 
+                  icon={<Chip label="Soon" size="small" sx={{ ml: 1, height: 18, fontSize: '0.65rem', bgcolor: alpha('#fff', 0.1) }} />}
+                  iconPosition="end"
+                />
                 <Tab label="Structured Reporting" />
               </Tabs>
-            </Box>
+              </Box>
+            </Fade>
 
             {/* Tab Content */}
             <Box sx={{ flex: 1, position: 'relative' }}>
@@ -766,12 +819,8 @@ const ViewerPage: React.FC = () => {
                       currentFrame={currentFrame}
                       totalFrames={selectedSeries?.numberOfInstances || 1}
                       studyInstanceUID={studyData?.studyInstanceUID}
-                      onPlay={handlePlay}
-                      onPause={handlePause}
-                      onNext={handleNext}
-                      onPrevious={handlePrevious}
-                      onFrameChange={handleFrameChange}
-                      isPlaying={isPlaying}
+                      isCollapsed={seriesCollapsed}
+                      onToggleCollapse={() => setSeriesCollapsed(!seriesCollapsed)}
                     />
 
                     {/* Viewer */}
@@ -820,6 +869,20 @@ const ViewerPage: React.FC = () => {
                             sopInstanceUIDs={selectedSeries?.instances?.map((instance: any) => instance.sopInstanceUID) || []}
                             isLoading={isLoading}
                             error={error || undefined}
+                            onCanvasActiveChange={(isActive) => {
+                              // Auto-hide header when canvas is active
+                              if (isActive) {
+                                headerAutoHideTimeoutRef.current = setTimeout(() => {
+                                  setHeaderAutoHidden(true)
+                                }, 1500)
+                              } else {
+                                if (headerAutoHideTimeoutRef.current) {
+                                  clearTimeout(headerAutoHideTimeoutRef.current)
+                                  headerAutoHideTimeoutRef.current = null
+                                }
+                                setHeaderAutoHidden(false)
+                              }
+                            }}
                           />
                         </SmartModalityViewer>
                       )}
