@@ -20,8 +20,6 @@ import {
   Trash2,
   RotateCcw,
   Camera,
-  Play,
-  Pause,
 } from "lucide-react"
 import { screenshotService } from "../../services/screenshotService"
 import CapturedImagesGallery from "./CapturedImagesGallery"
@@ -670,8 +668,6 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
 
   // State
   const [currentFrame, setCurrentFrame] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [playSpeed, setPlaySpeed] = useState(30) // FPS
   const [tool, setTool] = useState<Tool>("pan")
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -880,30 +876,6 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     }
   }, [currentSeriesUID])
 
-  // Auto-play functionality
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null
-    
-    if (isPlaying && totalFrames > 1) {
-      intervalId = setInterval(() => {
-        setCurrentFrame(prev => {
-          const next = prev + 1
-          if (next >= totalFrames) {
-            // Loop back to start
-            return 0
-          }
-          return next
-        })
-      }, 1000 / playSpeed) // Convert FPS to milliseconds
-    }
-    
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId)
-      }
-    }
-  }, [isPlaying, playSpeed, totalFrames])
-
   // Add keyboard navigation support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -927,12 +899,6 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         case 'End':
           e.preventDefault()
           setCurrentFrame(totalFrames - 1)
-          break
-        case ' ': // Spacebar for play/pause
-          e.preventDefault()
-          if (totalFrames > 1) {
-            setIsPlaying(prev => !prev)
-          }
           break
       }
     }
@@ -1412,7 +1378,6 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         tabIndex={0}
       />
 
-      {/* Right Sidebar - Tools */}
       <div className="absolute top-14 right-0 w-72 bg-slate-800 border-l border-slate-700 flex flex-col max-h-[calc(100vh-3.5rem)] overflow-hidden shadow-lg">
         {/* Toolbar - Fixed Section */}
         <div className="border-b border-slate-700 p-3 space-y-2 flex-shrink-0 overflow-y-auto max-h-96">
@@ -1435,70 +1400,6 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
                 </div>
               )}
             </div>
-            
-            {/* Play Controls */}
-            {totalFrames > 1 && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-center gap-1">
-                  <button
-                    onClick={() => setCurrentFrame(prev => Math.max(0, prev - 1))}
-                    disabled={currentFrame === 0}
-                    title="Previous Frame"
-                    className="p-1.5 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                  >
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                  
-                  <button
-                    onClick={() => setIsPlaying(prev => !prev)}
-                    title={isPlaying ? "Pause" : "Play"}
-                    className={`p-1.5 rounded transition ${
-                      isPlaying 
-                        ? 'bg-red-600 text-white hover:bg-red-700' 
-                        : 'bg-blue-600 text-white hover:bg-blue-700'
-                    }`}
-                  >
-                    {isPlaying ? (
-                      <Pause size={16} />
-                    ) : (
-                      <Play size={16} />
-                    )}
-                  </button>
-                  
-                  <button
-                    onClick={() => setCurrentFrame(prev => Math.min(totalFrames - 1, prev + 1))}
-                    disabled={currentFrame === totalFrames - 1}
-                    title="Next Frame"
-                    className="p-1.5 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                  >
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                </div>
-                
-                {/* Speed Control */}
-                <div className="flex items-center justify-center gap-1">
-                  <span className="text-xs text-slate-400">Speed:</span>
-                  {[10, 15, 30, 60].map((speed) => (
-                    <button
-                      key={speed}
-                      onClick={() => setPlaySpeed(speed)}
-                      className={`px-2 py-1 text-xs rounded transition ${
-                        playSpeed === speed
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                      }`}
-                      title={`${speed} FPS`}
-                    >
-                      {speed}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Tools */}
@@ -1721,9 +1622,6 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
 
   const frameCacheRef = useRef<Map<string, ImageBitmap>>(new Map())
   const [frames, setFrames] = useState({ axial: 0, sagittal: 0, coronal: 0 })
-  const [isPlaying, setIsPlaying] = useState({ axial: false, sagittal: false, coronal: false })
-  const [playSpeed, setPlaySpeed] = useState(30) // FPS
-  const playIntervalRef = useRef<{ axial?: NodeJS.Timeout, sagittal?: NodeJS.Timeout, coronal?: NodeJS.Timeout }>({})
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [brightness, setBrightness] = useState(1)
@@ -1902,44 +1800,6 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
     }
     drawAll()
   }, [frames, drawMPRView, zoom, brightness, contrast, annotations, selectedAnnotationId]) // Added dependencies
-
-  // MPR Play functionality
-  useEffect(() => {
-    const views = ['axial', 'sagittal', 'coronal'] as const
-    
-    views.forEach(view => {
-      if (isPlaying[view]) {
-        playIntervalRef.current[view] = setInterval(() => {
-          setFrames(prev => ({
-            ...prev,
-            [view]: (prev[view] + 1) % totalFrames
-          }))
-        }, 1000 / playSpeed)
-      } else {
-        if (playIntervalRef.current[view]) {
-          clearInterval(playIntervalRef.current[view])
-          playIntervalRef.current[view] = undefined
-        }
-      }
-    })
-
-    return () => {
-      views.forEach(view => {
-        if (playIntervalRef.current[view]) {
-          clearInterval(playIntervalRef.current[view])
-          playIntervalRef.current[view] = undefined
-        }
-      })
-    }
-  }, [isPlaying, playSpeed, totalFrames])
-
-  // Toggle play for specific view
-  const togglePlay = useCallback((view: 'axial' | 'sagittal' | 'coronal') => {
-    setIsPlaying(prev => ({
-      ...prev,
-      [view]: !prev[view]
-    }))
-  }, [])
 
   // Helper to get image coordinates from canvas coordinates, considering zoom and transform
   const getImageCoords = useCallback(
@@ -2171,18 +2031,17 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
   )
 
   return (
-    <div className="w-full h-full flex flex-col bg-slate-900 overflow-hidden">
-      {/* MPR Grid - Absolutely fixed height container */}
-      <div className="grid grid-cols-2 gap-1 p-1" style={{ height: 'calc(100vh - 120px)' }}>
+    <div className="w-full h-full flex flex-col gap-4 bg-slate-900 p-4">
+      {/* MPR Grid */}
+      <div className="grid grid-cols-2 gap-4 flex-1 min-h-0">
         {/* Axial View */}
-        <div className="flex flex-col h-full">
-          <div className="flex-1 bg-black rounded border-2 border-blue-500 flex items-center justify-center overflow-hidden" style={{ minHeight: '200px', maxHeight: 'calc(50vh - 80px)' }}>
+        <div className="flex flex-col gap-2">
+          <div className="h-full bg-black rounded border-2 border-blue-500 flex items-center justify-center overflow-hidden">
             <canvas
               ref={(el) => {
                 if (el) mprCanvasesRef.current.axial = el
               }}
-              className="max-w-full max-h-full object-contain"
-              style={{ cursor: "crosshair" }}
+              style={{ maxWidth: "100%", maxHeight: "100%", cursor: "crosshair" }}
               onWheel={(e) => {
                 e.preventDefault()
                 const delta = e.deltaY > 0 ? -1 : 1
@@ -2197,40 +2056,28 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
               onKeyDown={(e) => handleCanvasKeyDown(e)}
             />
           </div>
-          <div className="flex items-center gap-1 bg-slate-800 p-1 rounded text-xs flex-shrink-0" style={{ height: '32px' }}>
-            <button
-              onClick={() => togglePlay('axial')}
-              className={`p-1 rounded transition ${
-                isPlaying.axial 
-                  ? 'bg-red-600 text-white hover:bg-red-700' 
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
-              }`}
-              title={isPlaying.axial ? "Pause Axial" : "Play Axial"}
-            >
-              {isPlaying.axial ? <Pause size={12} /> : <Play size={12} />}
-            </button>
-            <span className="text-slate-300 min-w-[40px]">Axial:</span>
+          <div className="flex items-center gap-2 bg-slate-800 p-2 rounded">
+            <span className="text-xs text-slate-300">Axial:</span>
             <input
               type="range"
               min="0"
               max={totalFrames - 1}
               value={frames.axial}
               onChange={(e) => setFrames((prev) => ({ ...prev, axial: Number.parseInt(e.target.value) }))}
-              className="flex-1 h-1"
+              className="flex-1"
             />
-            <span className="text-slate-300 min-w-[24px] text-right">{frames.axial + 1}</span>
+            <span className="text-xs text-slate-300">{frames.axial + 1}</span>
           </div>
         </div>
 
         {/* Sagittal View */}
-        <div className="flex flex-col h-full">
-          <div className="flex-1 bg-black rounded border-2 border-green-500 flex items-center justify-center overflow-hidden" style={{ minHeight: '200px', maxHeight: 'calc(50vh - 80px)' }}>
+        <div className="flex flex-col gap-2">
+          <div className="h-full bg-black rounded border-2 border-green-500 flex items-center justify-center overflow-hidden">
             <canvas
               ref={(el) => {
                 if (el) mprCanvasesRef.current.sagittal = el
               }}
-              className="max-w-full max-h-full object-contain"
-              style={{ cursor: "crosshair" }}
+              style={{ maxWidth: "100%", maxHeight: "100%", cursor: "crosshair" }}
               onWheel={(e) => {
                 e.preventDefault()
                 const delta = e.deltaY > 0 ? -1 : 1
@@ -2245,40 +2092,28 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
               onKeyDown={(e) => handleCanvasKeyDown(e)}
             />
           </div>
-          <div className="flex items-center gap-1 bg-slate-800 p-1 rounded text-xs flex-shrink-0" style={{ height: '32px' }}>
-            <button
-              onClick={() => togglePlay('sagittal')}
-              className={`p-1 rounded transition ${
-                isPlaying.sagittal 
-                  ? 'bg-red-600 text-white hover:bg-red-700' 
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
-              }`}
-              title={isPlaying.sagittal ? "Pause Sagittal" : "Play Sagittal"}
-            >
-              {isPlaying.sagittal ? <Pause size={12} /> : <Play size={12} />}
-            </button>
-            <span className="text-slate-300 min-w-[50px]">Sagittal:</span>
+          <div className="flex items-center gap-2 bg-slate-800 p-2 rounded">
+            <span className="text-xs text-slate-300">Sagittal:</span>
             <input
               type="range"
               min="0"
               max={totalFrames - 1}
               value={frames.sagittal}
               onChange={(e) => setFrames((prev) => ({ ...prev, sagittal: Number.parseInt(e.target.value) }))}
-              className="flex-1 h-1"
+              className="flex-1"
             />
-            <span className="text-slate-300 min-w-[24px] text-right">{frames.sagittal + 1}</span>
+            <span className="text-xs text-slate-300">{frames.sagittal + 1}</span>
           </div>
         </div>
 
         {/* Coronal View */}
-        <div className="flex flex-col h-full">
-          <div className="flex-1 bg-black rounded border-2 border-red-500 flex items-center justify-center overflow-hidden" style={{ minHeight: '200px', maxHeight: 'calc(50vh - 80px)' }}>
+        <div className="flex flex-col gap-2">
+          <div className="h-full bg-black rounded border-2 border-yellow-500 flex items-center justify-center overflow-hidden">
             <canvas
               ref={(el) => {
                 if (el) mprCanvasesRef.current.coronal = el
               }}
-              className="max-w-full max-h-full object-contain"
-              style={{ cursor: "crosshair" }}
+              style={{ maxWidth: "100%", maxHeight: "100%", cursor: "crosshair" }}
               onWheel={(e) => {
                 e.preventDefault()
                 const delta = e.deltaY > 0 ? -1 : 1
@@ -2293,48 +2128,26 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
               onKeyDown={(e) => handleCanvasKeyDown(e)}
             />
           </div>
-          <div className="flex items-center gap-1 bg-slate-800 p-1 rounded text-xs flex-shrink-0" style={{ height: '32px' }}>
-            <button
-              onClick={() => togglePlay('coronal')}
-              className={`p-1 rounded transition ${
-                isPlaying.coronal 
-                  ? 'bg-red-600 text-white hover:bg-red-700' 
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
-              }`}
-              title={isPlaying.coronal ? "Pause Coronal" : "Play Coronal"}
-            >
-              {isPlaying.coronal ? <Pause size={12} /> : <Play size={12} />}
-            </button>
-            <span className="text-slate-300 min-w-[45px]">Coronal:</span>
+          <div className="flex items-center gap-2 bg-slate-800 p-2 rounded">
+            <span className="text-xs text-slate-300">Coronal:</span>
             <input
               type="range"
               min="0"
               max={totalFrames - 1}
               value={frames.coronal}
               onChange={(e) => setFrames((prev) => ({ ...prev, coronal: Number.parseInt(e.target.value) }))}
-              className="flex-1 h-1"
+              className="flex-1"
             />
-            <span className="text-slate-300 min-w-[24px] text-right">{frames.coronal + 1}</span>
+            <span className="text-xs text-slate-300">{frames.coronal + 1}</span>
           </div>
         </div>
 
-        {/* 3D/Volume View Placeholder */}
-        <div className="flex flex-col h-full">
-          <div className="flex-1 bg-black rounded border-2 border-purple-500 flex items-center justify-center overflow-hidden" style={{ minHeight: '200px', maxHeight: 'calc(50vh - 80px)' }}>
-            <div className="text-center text-slate-400">
-              <div className="w-12 h-12 mx-auto mb-2 bg-slate-700 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-              </div>
-              <p className="text-xs font-medium">3D Volume</p>
-              <p className="text-xs text-slate-500">Coming Soon</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1 bg-slate-800 p-1 rounded text-xs flex-shrink-0" style={{ height: '32px' }}>
-            <span className="text-slate-300 min-w-[60px]">3D Volume</span>
-            <div className="flex-1 bg-slate-600 h-1 rounded"></div>
-            <span className="text-slate-300 min-w-[24px] text-right">N/A</span>
+        {/* 3D View Placeholder */}
+        <div className="bg-black rounded border-2 border-purple-500 flex items-center justify-center">
+          <div className="text-center">
+            <Layers size={32} className="mx-auto mb-2 text-slate-500" />
+            <p className="text-slate-400 text-sm">3D Volume Rendering</p>
+            <p className="text-slate-500 text-xs mt-1">Coming soon with advanced optimization</p>
           </div>
         </div>
       </div>
@@ -2376,19 +2189,6 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
             onChange={(e) => setZoom(Number.parseFloat(e.target.value))}
             className="w-24"
           />
-        </label>
-        <label className="flex items-center gap-2 text-sm text-slate-300">
-          <span>Speed:</span>
-          <select
-            value={playSpeed}
-            onChange={(e) => setPlaySpeed(Number.parseInt(e.target.value))}
-            className="bg-slate-700 text-slate-300 rounded px-2 py-1 text-sm"
-          >
-            <option value={10}>10 FPS</option>
-            <option value={15}>15 FPS</option>
-            <option value={30}>30 FPS</option>
-            <option value={60}>60 FPS</option>
-          </select>
         </label>
         <button
           onClick={() => {
