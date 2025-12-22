@@ -2,7 +2,7 @@
 
 ## Your Situation
 
-- **Orthanc Server**: Running on AWS at `54.160.225.145:8042`
+- **Orthanc Server**: Running on AWS at `35.172.184.138:8042`
 - **Problem**: OHIF can't connect because CORS headers are missing
 - **Solution**: Add 5 lines to Orthanc config file on AWS server
 
@@ -21,7 +21,7 @@
 1. In the search bar at top, type: **EC2**
 2. Click on **EC2** (Virtual Servers in the Cloud)
 3. In the left sidebar, click **Instances**
-4. Look for an instance with IP: **54.160.225.145**
+4. Look for an instance with IP: **35.172.184.138**
 5. Click the checkbox next to it
 
 ### Step 3: Connect to Instance
@@ -170,7 +170,7 @@ cd Desktop
 Replace `my-key.pem` with YOUR key filename:
 
 ```powershell
-ssh -i my-key.pem ubuntu@54.160.225.145
+ssh -i my-key.pem ubuntu@35.172.184.138
 ```
 
 **If you get an error about permissions:**
@@ -199,7 +199,7 @@ If you don't have access to AWS:
 
 ### What to Tell Them:
 
-"Hi, I need to add CORS headers to the Orthanc configuration on the AWS server at 54.160.225.145.
+"Hi, I need to add CORS headers to the Orthanc configuration on the AWS server at 35.172.184.138.
 
 Please add these lines to `/etc/orthanc/orthanc.json` right after the line with `"HttpDescribeErrors" : true,`:
 

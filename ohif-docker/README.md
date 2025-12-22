@@ -41,5 +41,5 @@ docker-compose restart
 ```
 
 ## Connected to AWS Orthanc
-- Server: 54.160.225.145:8043
+- Server: 35.172.184.138:8043
 - No authentication required

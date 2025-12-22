@@ -115,11 +115,11 @@ const ViewerPage: React.FC = () => {
 
   // OHIF integration with availability check
   const openInOHIF = async () => {
-    const ohifUrl = `http://54.160.225.145:3000/viewer?StudyInstanceUIDs=${studyInstanceUID}`
+    const ohifUrl = `http://35.172.184.138:3000/viewer?StudyInstanceUIDs=${studyInstanceUID}`
     
     // Try to check if OHIF is running
     try {
-      const response = await fetch('http://54.160.225.145:3000', { method: 'HEAD', mode: 'no-cors' })
+      const response = await fetch('http://35.172.184.138:3000', { method: 'HEAD', mode: 'no-cors' })
       window.open(ohifUrl, '_blank')
     } catch (error) {
       // OHIF might not be running, but still try to open it
@@ -167,17 +167,24 @@ const ViewerPage: React.FC = () => {
           ])
           
           console.log('Study data loaded successfully:', result)
-          setStudyData(result?.data)
+          console.log('Series data:', result?.data?.series)
           
-          // Update workflow context
+          // Set study data FIRST before any other operations
           if (result?.data) {
-            setCurrentStudy({
-              studyInstanceUID: result.data.studyInstanceUID,
-              patientName: result.data.patientName || '',
-              modality: result.data.modality || '',
-              studyDate: result.data.studyDate || ''
-            })
-            addToHistory('viewer')
+            setStudyData(result.data)
+            
+            // Update workflow context (wrapped in try-catch to prevent fallback)
+            try {
+              setCurrentStudy({
+                studyInstanceUID: result.data.studyInstanceUID,
+                patientName: result.data.patientName || '',
+                modality: result.data.modality || '',
+                studyDate: result.data.studyDate || ''
+              })
+              addToHistory('viewer')
+            } catch (workflowErr) {
+              console.warn('Workflow context update failed (non-critical):', workflowErr)
+            }
           }
           
           // Skip FHIR loading for now to avoid errors
@@ -190,37 +197,45 @@ const ViewerPage: React.FC = () => {
         }
         
       } catch (err) {
-        console.error('Error loading study data, using fallback:', err)
-        setError(null) // Clear error since we're using fallback
+        console.error('Error loading study data:', err)
         
-        // Fallback to demo data for development
-        const fallbackData = {
-          studyInstanceUID: studyInstanceUID || '1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6',
-          studyDate: '19950922',
-          studyTime: '121803',
-          patientName: 'Rubo^DEMO',
-          patientID: 'DEMO001',
-          modality: 'XA',
-          studyDescription: 'X-Ray Angiography Study',
-          series: [
-            {
-              seriesInstanceUID: '1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.8',
-              seriesNumber: 1,
-              modality: 'XA',
-              seriesDescription: 'Angiography Series',
-              numberOfInstances: 96,
-              instances: [
-                {
-                  sopInstanceUID: '1.3.12.2.1107.5.4.3.321890.19960124.162922.29.0',
-                  instanceNumber: 1
-                }
-              ]
-            }
-          ]
+        // Only use fallback if we don't already have valid study data
+        if (!studyData || !studyData.series || studyData.series.length === 0) {
+          console.log('No valid study data found, using fallback')
+          setError(null) // Clear error since we're using fallback
+          
+          // Fallback to demo data for development
+          const fallbackData = {
+            studyInstanceUID: studyInstanceUID || '1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.6',
+            studyDate: '19950922',
+            studyTime: '121803',
+            patientName: 'Rubo^DEMO',
+            patientID: 'DEMO001',
+            modality: 'XA',
+            studyDescription: 'X-Ray Angiography Study',
+            series: [
+              {
+                seriesInstanceUID: '1.3.12.2.1107.5.4.3.123456789012345.19950922.121803.8',
+                seriesNumber: 1,
+                modality: 'XA',
+                seriesDescription: 'Angiography Series',
+                numberOfInstances: 96,
+                instances: [
+                  {
+                    sopInstanceUID: '1.3.12.2.1107.5.4.3.321890.19960124.162922.29.0',
+                    instanceNumber: 1
+                  }
+                ]
+              }
+            ]
+          }
+          
+          console.log('Using fallback demo data:', fallbackData)
+          console.log('Fallback series data:', fallbackData.series)
+          setStudyData(fallbackData)
+        } else {
+          console.log('Valid study data already exists, not using fallback')
         }
-        
-        console.log('Using fallback demo data:', fallbackData)
-        setStudyData(fallbackData)
       } finally {
         setIsLoading(false)
       }
@@ -229,11 +244,40 @@ const ViewerPage: React.FC = () => {
     loadStudyData()
   }, [studyInstanceUID])
 
+  // Debug study data changes
+  useEffect(() => {
+    console.log('StudyData changed:', {
+      studyInstanceUID: studyData?.studyInstanceUID,
+      seriesCount: studyData?.series?.length,
+      series: studyData?.series?.map(s => ({
+        uid: s.seriesInstanceUID,
+        number: s.seriesNumber,
+        description: s.seriesDescription,
+        instances: s.numberOfInstances
+      }))
+    })
+  }, [studyData])
+
+  // Debug selected series changes
+  useEffect(() => {
+    console.log('SelectedSeries changed:', {
+      uid: selectedSeries?.seriesInstanceUID,
+      number: selectedSeries?.seriesNumber,
+      description: selectedSeries?.seriesDescription,
+      instances: selectedSeries?.numberOfInstances
+    })
+  }, [selectedSeries])
+
+  // Set initial selected series
   useEffect(() => {
     if (studyData?.series?.[0]) {
-      setSelectedSeries(studyData.series[0])
+      // Only set initial series if we don't have one or if the study changed
+      if (!selectedSeries || selectedSeries.seriesInstanceUID !== studyData.series[0].seriesInstanceUID) {
+        console.log('Setting initial selected series:', studyData.series[0])
+        setSelectedSeries(studyData.series[0])
+      }
     }
-  }, [studyData])
+  }, [studyData?.studyInstanceUID, studyData?.series]) // Remove selectedSeries from dependencies to prevent loops
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -647,19 +691,23 @@ const ViewerPage: React.FC = () => {
               <TabPanel value={activeTab} index={0}>
                 {studyData ? (
                   <Box sx={{ display: 'flex', height: '100%' }}>
-                    {/* Series Selector Sidebar */}
-                    {studyData.series && studyData.series.length > 1 && (
-                      <SeriesSelector
-                        series={studyData.series}
-                        selectedSeriesUID={selectedSeries?.seriesInstanceUID || studyData.series[0]?.seriesInstanceUID}
-                        onSeriesSelect={(seriesUID) => {
-                          const series = studyData.series.find((s: any) => s.seriesInstanceUID === seriesUID)
-                          if (series) {
-                            setSelectedSeries(series)
-                          }
-                        }}
-                      />
-                    )}
+                    {/* Series Selector Sidebar - Always show for debugging */}
+                    <SeriesSelector
+                      series={studyData?.series || []}
+                      selectedSeriesUID={selectedSeries?.seriesInstanceUID || studyData?.series?.[0]?.seriesInstanceUID || ''}
+                      onSeriesSelect={(seriesUID) => {
+                        console.log('Series selected:', seriesUID)
+                        const series = studyData?.series?.find((s: any) => s.seriesInstanceUID === seriesUID)
+                        if (series) {
+                          console.log('Setting selected series:', series)
+                          setSelectedSeries(series)
+                        } else {
+                          console.warn('Series not found:', seriesUID, 'Available series:', studyData?.series)
+                        }
+                      }}
+                      currentFrame={0} // TODO: Get from MedicalImageViewer
+                      totalFrames={selectedSeries?.numberOfInstances || 1}
+                    />
 
                     {/* Viewer */}
                     <Box sx={{ flex: 1, height: '100%' }}>

@@ -540,7 +540,7 @@ DELETE /api/telemetry/cleanup (admin only)
 # Required environment variables:
 # server/.env
 MONGODB_URI=mongodb+srv://...
-ORTHANC_URL=http://54.160.225.145:8042
+ORTHANC_URL=http://35.172.184.138:8042
 ORTHANC_USERNAME=orthanc
 ORTHANC_PASSWORD=***
 GEMINI_API_KEY=*** (REQUIRED for AI features)
@@ -556,7 +556,7 @@ TWILIO_ACCOUNT_SID=*** (for SMS notifications)
 ### Server Ports
 - **Backend:** http://localhost:8001
 - **Frontend:** http://localhost:3010
-- **Orthanc PACS:** http://54.160.225.145:8042
+- **Orthanc PACS:** http://35.172.184.138:8042
 
 ### Database
 - **Provider:** MongoDB Atlas

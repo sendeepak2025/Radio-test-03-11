@@ -147,7 +147,7 @@ const ConnectionManager: React.FC = () => {
       name: 'Our Cloud Storage',
       description: 'Connect to our secure cloud PACS storage',
       icon: '🌟',
-      pacsIp: '54.160.225.145',
+      pacsIp: '35.172.184.138',
       pacsPort: 4242,
       pacsAet: 'ORTHANC'
     },
@@ -295,7 +295,7 @@ const ConnectionManager: React.FC = () => {
       '192.168.0.100',
       '10.0.0.50',
       '10.0.0.100',
-      '54.160.225.145'
+      '35.172.184.138'
     ];
 
     const detected: DetectedServer[] = [];
@@ -619,10 +619,10 @@ TYPE=DICOM_STORAGE`;
                   <div>
                     <p className="text-sm font-semibold text-gray-600 mb-1">PACS Server IP:</p>
                     <div className="flex items-center gap-2">
-                      <code className="text-lg font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded">54.160.225.145</code>
+                      <code className="text-lg font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded">35.172.184.138</code>
                       <button
                         onClick={() => {
-                          navigator.clipboard.writeText('54.160.225.145');
+                          navigator.clipboard.writeText('35.172.184.138');
                         }}
                         className="p-1 hover:bg-gray-100 rounded"
                       >
@@ -718,7 +718,7 @@ TYPE=DICOM_STORAGE`;
                   </h4>
                   <p className="text-sm text-emerald-800 mb-3 font-semibold">RECOMMENDED</p>
                   <ul className="text-xs text-emerald-700 space-y-1">
-                    <li>✓ Pre-configured (54.160.225.145)</li>
+                    <li>✓ Pre-configured (35.172.184.138)</li>
                     <li>✓ No setup required</li>
                     <li>✓ Access from anywhere</li>
                     <li>✓ Click "Our Cloud Storage" preset</li>
@@ -971,7 +971,7 @@ Visit: ${window.location.origin}/app/connection-manager`;
                         <Server className="w-4 h-4 text-emerald-600" />
                         <div>
                           <span className="font-semibold text-gray-700">Server:</span>
-                          <span className="ml-1 text-gray-900 font-mono">54.160.225.145</span>
+                          <span className="ml-1 text-gray-900 font-mono">35.172.184.138</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">

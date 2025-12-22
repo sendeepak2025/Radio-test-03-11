@@ -15,9 +15,9 @@ window.config = {
       configuration: {
         friendlyName: 'AWS Orthanc Server',
         name: 'Orthanc',
-        wadoUriRoot: 'http://54.160.225.145:8043/wado',
-        qidoRoot: 'http://54.160.225.145:8043/dicom-web',
-        wadoRoot: 'http://54.160.225.145:8043/dicom-web',
+        wadoUriRoot: 'http://35.172.184.138:8043/wado',
+        qidoRoot: 'http://35.172.184.138:8043/dicom-web',
+        wadoRoot: 'http://35.172.184.138:8043/dicom-web',
         qidoSupportsIncludeField: true,
         supportsReject: true,
         imageRendering: 'wadors',

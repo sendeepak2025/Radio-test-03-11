@@ -54,11 +54,32 @@ interface Annotation {
   labelPosition?: Point // For draggable labels
 }
 
+interface SeriesInfo {
+  seriesInstanceUID: string
+  seriesNumber: number
+  seriesDescription: string
+  modality: string
+  numberOfInstances: number
+  instances: InstanceInfo[]
+}
+
+interface InstanceInfo {
+  sopInstanceUID: string
+  instanceNumber: number
+  orthancInstanceId?: string
+}
+
 interface CombinedDicomViewerProps {
   studyInstanceUID: string
   seriesInstanceUID?: string
   sopInstanceUIDs?: string[]
   dicomWebBaseUrl?: string
+  // New series-aware props
+  selectedSeriesUID?: string
+  seriesData?: SeriesInfo[]
+  onSeriesChange?: (seriesUID: string) => void
+  isLoading?: boolean
+  error?: string
 }
 
 // ======================== HELPER FUNCTIONS ========================
@@ -119,6 +140,17 @@ function drawOverlay(ctx: CanvasRenderingContext2D, info: any) {
     `Zoom: ${(info.zoom * 100).toFixed(0)}%`,
     `Study: ${info.studyInstanceUID?.slice(-8) || "N/A"}`,
   ]
+
+  // Add series-specific information if available
+  if (info.seriesDescription) {
+    lines.push(`Series: ${info.seriesDescription}`)
+  }
+  if (info.seriesNumber) {
+    lines.push(`Series #: ${info.seriesNumber}`)
+  }
+  if (info.modality) {
+    lines.push(`Modality: ${info.modality}`)
+  }
 
   let y = 15
   for (const line of lines) {
@@ -613,10 +645,15 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   seriesInstanceUID,
   sopInstanceUIDs = [],
   dicomWebBaseUrl = "/api/dicom",
+  selectedSeriesUID,
+  seriesData = [],
+  onSeriesChange,
+  isLoading = false,
+  error,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const frameCacheRef = useRef<Map<number, ImageBitmap>>(new Map())
+  const frameCacheRef = useRef<Map<string, ImageBitmap>>(new Map())
   const drawingStateRef = useRef({ 
     isDrawing: false, 
     isDragging: false, 
@@ -645,17 +682,25 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
   const [cursorStyle, setCursorStyle] = useState<string>('default')
 
-  const totalFrames = sopInstanceUIDs.length || 1
+  // Series-aware state management
+  const currentSeriesUID = selectedSeriesUID || seriesInstanceUID
+  const currentSeriesData = seriesData.find(s => s.seriesInstanceUID === currentSeriesUID) || 
+    (seriesData.length > 0 ? seriesData[0] : null)
+  
+  // Calculate total frames based on current series
+  const totalFrames = currentSeriesData?.numberOfInstances || sopInstanceUIDs.length || 1
 
-  // Load frame with caching
+  // Series-aware frame loading with caching
   const loadFrame = useCallback(
     async (frameIndex: number) => {
-      if (frameCacheRef.current.has(frameIndex)) {
-        return frameCacheRef.current.get(frameIndex)
+      const cacheKey = `${currentSeriesUID}-${frameIndex}`
+      if (frameCacheRef.current.has(cacheKey)) {
+        return frameCacheRef.current.get(cacheKey)
       }
 
-      const frameUrl = seriesInstanceUID
-        ? `${dicomWebBaseUrl}/studies/${studyInstanceUID}/series/${seriesInstanceUID}/frames/${frameIndex}`
+      // Use series-specific endpoint when available
+      const frameUrl = currentSeriesUID
+        ? `${dicomWebBaseUrl}/studies/${studyInstanceUID}/series/${currentSeriesUID}/frames/${frameIndex}`
         : `${dicomWebBaseUrl}/studies/${studyInstanceUID}/frames/${frameIndex}`
 
       try {
@@ -663,14 +708,16 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
         const blob = await response.blob()
         const bitmap = await createImageBitmap(blob)
-        frameCacheRef.current.set(frameIndex, bitmap)
+        
+        // Cache with series-specific key
+        frameCacheRef.current.set(cacheKey, bitmap)
         return bitmap
       } catch (err) {
-        console.error("[v0] Frame load error:", err)
+        console.error("[Series-aware] Frame load error:", err)
         return null
       }
     },
-    [dicomWebBaseUrl, studyInstanceUID, seriesInstanceUID],
+    [dicomWebBaseUrl, studyInstanceUID, currentSeriesUID],
   )
 
   // Draw function - stored in ref to avoid dependency issues
@@ -734,17 +781,21 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
       drawGrid(ctx, dx, dy, drawW, drawH, mmPerPixel, scale, vw, vh)
     }
 
-    // Overlay info
+    // Series-aware overlay info
     if (showOverlay) {
       drawOverlay(ctx, {
         studyInstanceUID,
-        seriesInstanceUID,
+        seriesInstanceUID: currentSeriesUID,
         frame: currentFrame + 1,
         totalFrames,
         zoom: scale,
         mmPerPixel: mmPerPixel,
         vw,
         vh,
+        // Series-specific information
+        seriesDescription: currentSeriesData?.seriesDescription,
+        seriesNumber: currentSeriesData?.seriesNumber,
+        modality: currentSeriesData?.modality,
       })
     }
 
@@ -786,7 +837,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     drawRef.current = draw
   }, [draw])
 
-  // Mouse wheel for frame navigation and zoom/brightness
+  // Series-aware mouse wheel navigation
   const handleWheel = useCallback(
     (e: WheelEvent) => {
       if (!containerRef.current?.contains(e.target as Node)) return
@@ -800,9 +851,10 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         const newBrightness = Math.max(0.5, Math.min(2, brightness - (e.deltaY > 0 ? 0.1 : -0.1)))
         setBrightness(newBrightness)
       } else {
-        // Frame navigation
+        // Frame navigation within current series boundaries
         setCurrentFrame((prev) => {
           const next = prev + (e.deltaY > 0 ? 1 : -1)
+          // Ensure navigation stays within current series bounds
           return Math.max(0, Math.min(totalFrames - 1, next))
         })
       }
@@ -816,6 +868,44 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     canvas.addEventListener("wheel", handleWheel, { passive: false })
     return () => canvas.removeEventListener("wheel", handleWheel)
   }, [handleWheel])
+
+  // Reset frame position when series changes
+  useEffect(() => {
+    if (currentSeriesUID) {
+      setCurrentFrame(0) // Reset to first frame of new series
+    }
+  }, [currentSeriesUID])
+
+  // Add keyboard navigation support
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!containerRef.current?.contains(document.activeElement)) return
+
+      switch (e.key) {
+        case 'ArrowLeft':
+        case 'ArrowUp':
+          e.preventDefault()
+          setCurrentFrame(prev => Math.max(0, prev - 1))
+          break
+        case 'ArrowRight':
+        case 'ArrowDown':
+          e.preventDefault()
+          setCurrentFrame(prev => Math.min(totalFrames - 1, prev + 1))
+          break
+        case 'Home':
+          e.preventDefault()
+          setCurrentFrame(0)
+          break
+        case 'End':
+          e.preventDefault()
+          setCurrentFrame(totalFrames - 1)
+          break
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [totalFrames])
 
   const handleCanvasMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1245,6 +1335,30 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     a.click()
   }, [studyInstanceUID, seriesInstanceUID, currentFrame, zoom, brightness, contrast])
 
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-slate-900">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-slate-400">Loading series...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-slate-900">
+        <div className="text-center">
+          <p className="text-red-400 mb-2">Error loading series</p>
+          <p className="text-slate-500 text-sm">{error}</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div ref={containerRef} className="w-full h-full flex bg-slate-900 relative">
       {showCapturedImages && (
@@ -1280,6 +1394,11 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
             />
             <div className="text-xs text-slate-400 text-center">
               {currentFrame + 1} / {totalFrames}
+              {currentSeriesData && (
+                <div className="text-xs text-slate-500 mt-1">
+                  Series {currentSeriesData.seriesNumber}: {currentSeriesData.modality}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1485,6 +1604,11 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
   seriesInstanceUID,
   sopInstanceUIDs = [],
   dicomWebBaseUrl = "/api/dicom",
+  selectedSeriesUID,
+  seriesData = [],
+  onSeriesChange,
+  isLoading = false,
+  error,
 }) => {
   const mprCanvasesRef = useRef<{
     axial: HTMLCanvasElement | null
@@ -1496,14 +1620,20 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
     coronal: null,
   })
 
-  const frameCacheRef = useRef<Map<number, ImageBitmap>>(new Map())
+  const frameCacheRef = useRef<Map<string, ImageBitmap>>(new Map())
   const [frames, setFrames] = useState({ axial: 0, sagittal: 0, coronal: 0 })
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [brightness, setBrightness] = useState(1)
   const [contrast, setContrast] = useState(1)
   const [tool, setTool] = useState<Tool>("pan") // Added tool state
-  const totalFrames = sopInstanceUIDs.length || 1
+  
+  // Series-aware state management for MPR
+  const currentSeriesUID = selectedSeriesUID || seriesInstanceUID
+  const currentSeriesData = seriesData.find(s => s.seriesInstanceUID === currentSeriesUID) || 
+    (seriesData.length > 0 ? seriesData[0] : null)
+  
+  const totalFrames = currentSeriesData?.numberOfInstances || sopInstanceUIDs.length || 1
 
   // State for drawing annotations on MPR
   const [annotations, setAnnotations] = useState<Annotation[]>([])
@@ -1519,32 +1649,34 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
   })
   const tempAnnotationRef = useRef<Annotation | null>(null)
 
-  // Load frame with caching
+  // Series-aware frame loading with caching for MPR
   const loadFrame = useCallback(
     async (frameIndex: number) => {
-      if (frameCacheRef.current.has(frameIndex)) {
-        return frameCacheRef.current.get(frameIndex)
+      const cacheKey = `${currentSeriesUID}-${frameIndex}`
+      if (frameCacheRef.current.has(cacheKey)) {
+        return frameCacheRef.current.get(cacheKey)
       }
 
-      // Use a more robust URL construction, falling back if seriesInstanceUID is not provided
-      const frameUrl = seriesInstanceUID
-        ? `${dicomWebBaseUrl}/studies/${studyInstanceUID}/series/${seriesInstanceUID}/frames/${frameIndex}`
+      // Use series-specific endpoint when available
+      const frameUrl = currentSeriesUID
+        ? `${dicomWebBaseUrl}/studies/${studyInstanceUID}/series/${currentSeriesUID}/frames/${frameIndex}`
         : `${dicomWebBaseUrl}/studies/${studyInstanceUID}/frames/${frameIndex}`
 
       try {
-        // Add a timeout to the fetch request
         const response = await fetch(frameUrl, { signal: AbortSignal.timeout(10000) })
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
         const blob = await response.blob()
         const bitmap = await createImageBitmap(blob)
-        frameCacheRef.current.set(frameIndex, bitmap)
+        
+        // Cache with series-specific key
+        frameCacheRef.current.set(cacheKey, bitmap)
         return bitmap
       } catch (err) {
-        console.error("[v0] Frame load error:", err)
+        console.error("[MPR Series-aware] Frame load error:", err)
         return null
       }
     },
-    [dicomWebBaseUrl, studyInstanceUID, seriesInstanceUID],
+    [dicomWebBaseUrl, studyInstanceUID, currentSeriesUID],
   )
 
   // Draw MPR view

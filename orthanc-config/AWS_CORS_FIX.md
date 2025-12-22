@@ -2,7 +2,7 @@
 
 ## Summary
 
-Your Orthanc is running on AWS at: `http://54.160.225.145:8042`
+Your Orthanc is running on AWS at: `http://35.172.184.138:8042`
 
 I've updated OHIF to point to this AWS server, but you need to add CORS headers to the AWS Orthanc configuration.
 
@@ -12,7 +12,7 @@ I've updated OHIF to point to this AWS server, but you need to add CORS headers 
 
 **Option A - SSH:**
 ```bash
-ssh -i your-key.pem ubuntu@54.160.225.145
+ssh -i your-key.pem ubuntu@35.172.184.138
 ```
 
 **Option B - AWS Console:**
@@ -97,7 +97,7 @@ From your local machine, test if CORS is working:
 ```powershell
 # In PowerShell on your local machine:
 $cred = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("orthanc:orthanc_secure_2024"))
-$response = Invoke-WebRequest -Uri "http://54.160.225.145:8042/dicom-web/studies" -Headers @{Authorization="Basic $cred"} -Method GET -UseBasicParsing
+$response = Invoke-WebRequest -Uri "http://35.172.184.138:8042/dicom-web/studies" -Headers @{Authorization="Basic $cred"} -Method GET -UseBasicParsing
 $response.Headers['Access-Control-Allow-Origin']
 ```
 
@@ -194,7 +194,7 @@ curl http://localhost:8042/system
 
 ## What I've Already Done Locally
 
-✅ Updated OHIF config to point to: `http://54.160.225.145:8042`
+✅ Updated OHIF config to point to: `http://35.172.184.138:8042`
 ✅ Added authentication: `orthanc:orthanc_secure_2024`
 ✅ OHIF is ready to connect
 
