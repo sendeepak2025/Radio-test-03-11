@@ -294,8 +294,8 @@ async function getStudyMetadata(req, res) {
           if (!seriesMap.has(seriesUID)) {
             seriesMap.set(seriesUID, {
               seriesInstanceUID: seriesUID,
-              seriesNumber: '',
-              seriesDescription: '',
+              seriesNumber: inst.seriesNumber || '',
+              seriesDescription: inst.seriesDescription || '',
               modality: inst.modality || study.modality || 'OT',
               numberOfInstances: 0,
               instances: [],
@@ -304,16 +304,39 @@ async function getStudyMetadata(req, res) {
           }
           
           const series = seriesMap.get(seriesUID);
-          series.numberOfInstances++;
-          series.instances.push({
-            sopInstanceUID: inst.sopInstanceUID,
-            instanceNumber: inst.instanceNumber,
-            orthancInstanceId: inst.orthancInstanceId
-          });
+          
+          // Avoid duplicate instances in the same series
+          const existingInstance = series.instances.find(
+            existing => existing.sopInstanceUID === inst.sopInstanceUID
+          );
+          
+          if (!existingInstance) {
+            series.numberOfInstances++;
+            series.instances.push({
+              sopInstanceUID: inst.sopInstanceUID,
+              instanceNumber: inst.instanceNumber,
+              orthancInstanceId: inst.orthancInstanceId
+            });
+            
+            // Update series metadata from first instance if not set
+            if (!series.seriesNumber && inst.seriesNumber) {
+              series.seriesNumber = inst.seriesNumber;
+            }
+            if (!series.seriesDescription && inst.seriesDescription) {
+              series.seriesDescription = inst.seriesDescription;
+            }
+          }
         }
         
-        // Convert map to array
+        // Convert map to array - this already ensures uniqueness by seriesInstanceUID
         seriesData = Array.from(seriesMap.values());
+        
+        // Sort series by series number for consistent display
+        seriesData.sort((a, b) => {
+          const aNum = parseInt(a.seriesNumber) || 0;
+          const bNum = parseInt(b.seriesNumber) || 0;
+          return aNum - bNum;
+        });
         
         // Try to get series metadata from Orthanc for descriptions
         if (instances[0].orthancStudyId) {
@@ -396,4 +419,164 @@ async function getStudyMetadata(req, res) {
   }
 }
 
-module.exports = { getStudies, getStudy, getStudyMetadata, countFramesFromOrthanc };
+
+
+async function getSeriesThumbnail(req, res) {
+  try {
+    const { studyUid, seriesUid } = req.params;
+
+    console.log(`🖼️ Getting thumbnail for series: ${seriesUid} in study: ${studyUid}`);
+    console.log(`📍 Request URL: ${req.originalUrl}`);
+
+    // 🔹 Find first instance of this series
+    const firstInstance = await Instance.findOne({
+      studyInstanceUID: studyUid,
+      seriesInstanceUID: seriesUid
+    })
+      .sort({ instanceNumber: 1 })
+      .lean();
+
+    /**
+     * ─────────────────────────────────────────────
+     * NO INSTANCE IN SERIES → FALLBACK
+     * ─────────────────────────────────────────────
+     */
+    if (!firstInstance) {
+      console.warn(`⚠️ No instances found for series ${seriesUid} in study ${studyUid}`);
+
+      const anyInstance = await Instance.findOne({
+        studyInstanceUID: studyUid
+      })
+        .sort({ instanceNumber: 1 })
+        .lean();
+
+      if (anyInstance) {
+        console.log(`🔄 Using fallback instance: ${anyInstance.sopInstanceUID}`);
+
+        // 👉 Try Orthanc fallback
+        if (anyInstance.orthancInstanceId) {
+          try {
+            const { getUnifiedOrthancService } = require('../services/unified-orthanc-service');
+            const orthancService = getUnifiedOrthancService();
+
+            const frameBuffer = await orthancService.getFrame(
+              anyInstance.orthancInstanceId,
+              0
+            );
+
+            if (frameBuffer) {
+              console.log('✅ Retrieved fallback thumbnail from Orthanc');
+              res.set('Content-Type', 'image/jpeg');
+              res.set('Cache-Control', 'public, max-age=3600');
+              return res.send(frameBuffer);
+            }
+          } catch (err) {
+            console.warn(`⚠️ Orthanc fallback failed: ${err.message}`);
+          }
+        }
+      }
+
+      // 👉 Filesystem fallback
+      try {
+        const framesDir = path.join(BACKEND_DIR, `uploaded_frames_${studyUid}`);
+        const frameFile = path.join(framesDir, 'frame_0.png');
+
+        if (fs.existsSync(frameFile)) {
+          console.log('✅ Retrieved fallback thumbnail from filesystem');
+          res.set('Content-Type', 'image/png');
+          res.set('Cache-Control', 'public, max-age=3600');
+          return res.sendFile(frameFile);
+        }
+      } catch (err) {
+        console.warn(`⚠️ Filesystem fallback failed: ${err.message}`);
+      }
+
+      // 👉 Placeholder
+      return sendPlaceholder(res, 'IMG');
+    }
+
+    /**
+     * ─────────────────────────────────────────────
+     * INSTANCE FOUND → PRIMARY FLOW
+     * ─────────────────────────────────────────────
+     */
+    console.log(`📸 Found first instance: ${firstInstance.sopInstanceUID}`);
+
+    // 👉 Try Orthanc first
+    if (firstInstance.orthancInstanceId) {
+      try {
+        const { getUnifiedOrthancService } = require('../services/unified-orthanc-service');
+        const orthancService = getUnifiedOrthancService();
+
+        const frameBuffer = await orthancService.getFrame(
+          firstInstance.orthancInstanceId,
+          0
+        );
+
+        if (frameBuffer) {
+          console.log(`✅ Retrieved thumbnail from Orthanc for series ${seriesUid}`);
+          res.set('Content-Type', 'image/jpeg');
+          res.set('Cache-Control', 'public, max-age=3600');
+          return res.send(frameBuffer);
+        }
+      } catch (err) {
+        console.warn(`⚠️ Failed to get thumbnail from Orthanc: ${err.message}`);
+      }
+    }
+
+    // 👉 Filesystem fallback
+    try {
+      const framesDir = path.join(BACKEND_DIR, `uploaded_frames_${studyUid}`);
+      const frameFile = path.join(framesDir, 'frame_0.png');
+
+      if (fs.existsSync(frameFile)) {
+        console.log(`✅ Retrieved thumbnail from filesystem for series ${seriesUid}`);
+        res.set('Content-Type', 'image/png');
+        res.set('Cache-Control', 'public, max-age=3600');
+        return res.sendFile(frameFile);
+      }
+    } catch (err) {
+      console.warn(`⚠️ Failed to get thumbnail from filesystem: ${err.message}`);
+    }
+
+    // 👉 Final placeholder
+    console.log(`📷 Returning default placeholder for series ${seriesUid}`);
+    return sendPlaceholder(res, 'IMG');
+
+  } catch (error) {
+    console.error('❌ Error in getSeriesThumbnail:', error);
+    return sendPlaceholder(res, 'ERR', 60);
+  }
+}
+
+/**
+ * Enhanced SVG placeholder helper with professional styling
+ */
+function sendPlaceholder(res, label = 'IMG', cache = 3600) {
+  const svg = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+    <defs>
+      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#1f2937;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#374151;stop-opacity:1" />
+      </linearGradient>
+      <linearGradient id="icon" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#6b7280;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#9ca3af;stop-opacity:1" />
+      </linearGradient>
+    </defs>
+    <rect width="128" height="128" fill="url(#bg)" rx="8"/>
+    <rect x="16" y="16" width="96" height="96" fill="none" stroke="url(#icon)" stroke-width="3" rx="6"/>
+    <circle cx="40" cy="40" r="8" fill="url(#icon)"/>
+    <path d="M16 88l16-16 8 8 16-16 24 24v8H16z" fill="url(#icon)" opacity="0.8"/>
+    <text x="64" y="120" text-anchor="middle" fill="url(#icon)" font-size="12" font-family="Arial, sans-serif" font-weight="bold">${label}</text>
+  </svg>
+  `;
+
+  res.set('Content-Type', 'image/svg+xml');
+  res.set('Cache-Control', `public, max-age=${cache}`);
+  return res.send(svg);
+}
+
+
+module.exports = { getStudies, getStudy, getStudyMetadata, getSeriesThumbnail, countFramesFromOrthanc };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   Box,
   Alert,
@@ -112,6 +112,10 @@ const ViewerPage: React.FC = () => {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showToolbar, setShowToolbar] = useState(true)
   const [selectedSeries, setSelectedSeries] = useState<any>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentFrame, setCurrentFrame] = useState(0)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // OHIF integration with availability check
   const openInOHIF = async () => {
@@ -275,9 +279,63 @@ const ViewerPage: React.FC = () => {
       if (!selectedSeries || selectedSeries.seriesInstanceUID !== studyData.series[0].seriesInstanceUID) {
         console.log('Setting initial selected series:', studyData.series[0])
         setSelectedSeries(studyData.series[0])
+        setCurrentFrame(0) // Reset frame when series changes
       }
     }
   }, [studyData?.studyInstanceUID, studyData?.series]) // Remove selectedSeries from dependencies to prevent loops
+
+  // Playback control handlers
+  const handlePlay = () => {
+    if (!selectedSeries || selectedSeries.numberOfInstances <= 1) return
+    
+    setIsPlaying(true)
+    playbackIntervalRef.current = setInterval(() => {
+      setCurrentFrame(prev => {
+        const nextFrame = prev + 1
+        if (nextFrame >= selectedSeries.numberOfInstances) {
+          // Loop back to start
+          return 0
+        }
+        return nextFrame
+      })
+    }, 1000 / playbackSpeed) // Adjust speed
+  }
+
+  const handlePause = () => {
+    setIsPlaying(false)
+    if (playbackIntervalRef.current) {
+      clearInterval(playbackIntervalRef.current)
+      playbackIntervalRef.current = null
+    }
+  }
+
+  const handleNext = () => {
+    if (!selectedSeries) return
+    setCurrentFrame(prev => Math.min(prev + 1, selectedSeries.numberOfInstances - 1))
+  }
+
+  const handlePrevious = () => {
+    setCurrentFrame(prev => Math.max(prev - 1, 0))
+  }
+
+  const handleFrameChange = (frameIndex: number) => {
+    setCurrentFrame(frameIndex)
+  }
+
+  // Cleanup playback on unmount
+  useEffect(() => {
+    return () => {
+      if (playbackIntervalRef.current) {
+        clearInterval(playbackIntervalRef.current)
+      }
+    }
+  }, [])
+
+  // Pause playback when series changes
+  useEffect(() => {
+    handlePause()
+    setCurrentFrame(0)
+  }, [selectedSeries?.seriesInstanceUID])
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -705,8 +763,15 @@ const ViewerPage: React.FC = () => {
                           console.warn('Series not found:', seriesUID, 'Available series:', studyData?.series)
                         }
                       }}
-                      currentFrame={0} // TODO: Get from MedicalImageViewer
+                      currentFrame={currentFrame}
                       totalFrames={selectedSeries?.numberOfInstances || 1}
+                      studyInstanceUID={studyData?.studyInstanceUID}
+                      onPlay={handlePlay}
+                      onPause={handlePause}
+                      onNext={handleNext}
+                      onPrevious={handlePrevious}
+                      onFrameChange={handleFrameChange}
+                      isPlaying={isPlaying}
                     />
 
                     {/* Viewer */}
@@ -937,79 +1002,6 @@ const ViewerPage: React.FC = () => {
               )}
             </Box>
           </Box>
-
-          {/* Series Thumbnails Strip */}
-          {studyData?.series && studyData.series.length > 1 && (
-            <Fade in={showToolbar}>
-              <Box
-                sx={{
-                  position: 'absolute',
-                  left: 16,
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  backdropFilter: 'blur(20px)',
-                  bgcolor: alpha('#000', 0.7),
-                  border: `1px solid ${alpha('#fff', 0.1)}`,
-                  borderRadius: 2,
-                  p: 1,
-                  maxHeight: '60vh',
-                  overflow: 'auto',
-                  zIndex: 100,
-                  '&::-webkit-scrollbar': {
-                    width: 4,
-                  },
-                  '&::-webkit-scrollbar-thumb': {
-                    bgcolor: alpha('#fff', 0.3),
-                    borderRadius: 2,
-                  },
-                }}
-              >
-                <Stack spacing={1}>
-                  {studyData.series.map((series: any) => (
-                    <Tooltip key={series.seriesInstanceUID} title={series.seriesDescription} placement="right">
-                      <ButtonBase
-                        onClick={() => setSelectedSeries(series)}
-                        sx={{
-                          width: 80,
-                          height: 80,
-                          borderRadius: 1.5,
-                          border: `2px solid ${
-                            selectedSeries?.seriesInstanceUID === series.seriesInstanceUID
-                              ? theme.palette.primary.main
-                              : alpha('#fff', 0.2)
-                          }`,
-                          bgcolor: alpha('#fff', 0.05),
-                          overflow: 'hidden',
-                          transition: 'all 0.2s',
-                          '&:hover': {
-                            border: `2px solid ${theme.palette.primary.light}`,
-                            transform: 'scale(1.05)',
-                          },
-                        }}
-                      >
-                        <Box sx={{ 
-                          width: '100%', 
-                          height: '100%', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          flexDirection: 'column',
-                          p: 1,
-                        }}>
-                          <Typography variant="caption" sx={{ color: 'white', fontWeight: 600 }}>
-                            #{series.seriesNumber}
-                          </Typography>
-                          <Typography variant="caption" sx={{ color: alpha('#fff', 0.6), fontSize: '0.65rem' }}>
-                            {series.numberOfInstances} img
-                          </Typography>
-                        </Box>
-                      </ButtonBase>
-                    </Tooltip>
-                  ))}
-                </Stack>
-              </Box>
-            </Fade>
-          )}
         </Box>
       </Box>
 

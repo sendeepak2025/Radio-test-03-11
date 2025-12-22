@@ -55,6 +55,7 @@ describe('SeriesSelector', () => {
           series={[]}
           selectedSeriesUID=""
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
       expect(container.firstChild).toBeNull()
@@ -66,6 +67,7 @@ describe('SeriesSelector', () => {
           series={singleSeries}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
       expect(container.firstChild).toBeNull()
@@ -77,6 +79,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
       expect(screen.getByText('Series Collection')).toBeInTheDocument()
@@ -90,6 +93,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
     })
@@ -126,6 +130,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-2"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -140,6 +145,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -156,6 +162,7 @@ describe('SeriesSelector', () => {
           onSeriesSelect={mockOnSeriesSelect}
           currentFrame={5}
           totalFrames={25}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -172,6 +179,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -191,6 +199,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
       container = result.container
@@ -216,6 +225,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-2"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -236,6 +246,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-3"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -289,6 +300,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -310,6 +322,7 @@ describe('SeriesSelector', () => {
           series={mockSeries}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -335,6 +348,7 @@ describe('SeriesSelector', () => {
           series={seriesWithoutDescription}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 
@@ -365,6 +379,7 @@ describe('SeriesSelector', () => {
           series={seriesWithoutModality}
           selectedSeriesUID="series-1"
           onSeriesSelect={mockOnSeriesSelect}
+          studyInstanceUID="test-study-uid"
         />
       )
 

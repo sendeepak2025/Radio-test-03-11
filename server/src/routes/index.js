@@ -1,7 +1,7 @@
 const express = require('express');
 const { auditMiddleware, auditAction, auditLogger } = require('../middleware/auditMiddleware');
 const { getRoot } = require('../controllers/healthController');
-const { getStudies, getStudy, getStudyMetadata } = require('../controllers/studyController');
+const { getStudies, getStudy, getStudyMetadata, getSeriesThumbnail } = require('../controllers/studyController');
 const { getFrame } = require('../controllers/instanceController');
 const { getFrame: getFrameOrthanc, getInstanceMetadata, checkOrthancHealth } = require('../controllers/orthancInstanceController');
 const { getDICOMMigrationService } = require('../services/dicom-migration-service');
@@ -80,6 +80,9 @@ router.get('/api/dicom/studies/:studyUid',
   getStudy
 );
 router.get('/api/dicom/studies/:studyUid/metadata',  getStudyMetadata);
+
+// Series thumbnails - Get first frame of a series as thumbnail
+router.get('/api/dicom/studies/:studyUid/series/:seriesUid/thumbnail', getSeriesThumbnail);
 
 // Frames - with migration support (Protected - requires authentication)
 // New endpoint: Series-specific frames

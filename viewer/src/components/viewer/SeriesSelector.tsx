@@ -1,23 +1,4 @@
 import React, { useEffect, useRef } from 'react'
-import {
-  Box,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemText,
-  Typography,
-  Chip,
-  Paper,
-  Divider,
-  Avatar,
-  Badge,
-} from '@mui/material'
-import {
-  Image as ImageIcon,
-  CheckCircle as CheckIcon,
-  Folder as FolderIcon,
-  PlayArrow as PlayArrowIcon,
-} from '@mui/icons-material'
 
 interface Series {
   seriesInstanceUID: string
@@ -34,6 +15,7 @@ interface SeriesSelectorProps {
   onSeriesSelect: (seriesUID: string) => void
   currentFrame?: number
   totalFrames?: number
+  studyInstanceUID?: string
 }
 
 export const SeriesSelector: React.FC<SeriesSelectorProps> = React.memo(({
@@ -42,16 +24,15 @@ export const SeriesSelector: React.FC<SeriesSelectorProps> = React.memo(({
   onSeriesSelect,
   currentFrame,
   totalFrames,
+  studyInstanceUID,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Enhanced keyboard navigation support
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Only handle keyboard events when the series selector is focused or visible
       if (!containerRef.current || series.length <= 1) return
 
-      // Check if the container or any of its children are focused
       const isContainerFocused = containerRef.current.contains(document.activeElement)
       if (!isContainerFocused) return
 
@@ -82,7 +63,6 @@ export const SeriesSelector: React.FC<SeriesSelectorProps> = React.memo(({
         case 'Enter':
         case ' ':
           event.preventDefault()
-          // Re-select current series (useful for refreshing)
           onSeriesSelect(series[currentIndex].seriesInstanceUID)
           return
         default:
@@ -92,7 +72,6 @@ export const SeriesSelector: React.FC<SeriesSelectorProps> = React.memo(({
       if (newIndex !== currentIndex) {
         onSeriesSelect(series[newIndex].seriesInstanceUID)
         
-        // Scroll the selected item into view
         setTimeout(() => {
           const selectedElement = containerRef.current?.querySelector(`[data-series-index="${newIndex}"]`)
           if (selectedElement) {
@@ -102,11 +81,9 @@ export const SeriesSelector: React.FC<SeriesSelectorProps> = React.memo(({
       }
     }
 
-    // Add event listener to the container
     const container = containerRef.current
     if (container) {
       container.addEventListener('keydown', handleKeyDown)
-      // Make container focusable
       container.setAttribute('tabindex', '0')
       container.setAttribute('role', 'listbox')
       container.setAttribute('aria-label', 'Series selector')
@@ -119,7 +96,6 @@ export const SeriesSelector: React.FC<SeriesSelectorProps> = React.memo(({
     }
   }, [series, selectedSeriesUID, onSeriesSelect])
 
-  // Auto-focus container when series change
   useEffect(() => {
     if (containerRef.current && series.length > 1) {
       containerRef.current.focus()
@@ -130,308 +106,234 @@ export const SeriesSelector: React.FC<SeriesSelectorProps> = React.memo(({
     return null
   }
 
-  // Enhanced conditional display logic with debugging
+  // Debug logging
   console.log('SeriesSelector render - series count:', series.length, 'series:', series)
   console.log('SeriesSelector selectedSeriesUID:', selectedSeriesUID)
+  console.log('SeriesSelector studyInstanceUID:', studyInstanceUID)
   
-  // Show selector even for single series to help with debugging, but with different styling
+  series.forEach((s, index) => {
+    console.log(`Series ${index + 1}:`, {
+      uid: s.seriesInstanceUID,
+      number: s.seriesNumber,
+      description: s.seriesDescription,
+      modality: s.modality,
+      instances: s.numberOfInstances
+    });
+  });
+  
+  // Generate placeholder image based on modality
+  const generatePlaceholderImage = (modality: string, isSelected: boolean) => {
+    const baseColor = isSelected ? '1976d2' : '424242'
+    const accentColor = isSelected ? '1565c0' : '616161'
+    const textColor = isSelected ? 'ffffff' : 'bdbdbd'
+    
+    let iconPath = ''
+    switch (modality?.toUpperCase()) {
+      case 'CT':
+        iconPath = `%3Ccircle cx='32' cy='32' r='20' fill='none' stroke='%23${textColor}' stroke-width='2'/%3E%3Ccircle cx='32' cy='32' r='12' fill='none' stroke='%23${textColor}' stroke-width='2'/%3E%3Ccircle cx='32' cy='32' r='4' fill='%23${textColor}'/%3E`
+        break
+      case 'MR':
+      case 'MRI':
+        iconPath = `%3Cpath d='M20 20h24v24H20z' fill='none' stroke='%23${textColor}' stroke-width='2'/%3E%3Cpath d='M24 24h16v16H24z' fill='none' stroke='%23${textColor}' stroke-width='2'/%3E%3Cpath d='M28 28h8v8h-8z' fill='%23${textColor}'/%3E`
+        break
+      case 'XA':
+      case 'XR':
+        iconPath = `%3Cpath d='M16 16h32v32H16z' fill='none' stroke='%23${textColor}' stroke-width='2'/%3E%3Cpath d='M20 20l24 24M44 20L20 44' stroke='%23${textColor}' stroke-width='2'/%3E`
+        break
+      case 'US':
+        iconPath = `%3Cpath d='M16 32c0-8 7-16 16-16s16 8 16 16c0 8-7 16-16 16s-16-8-16-16z' fill='none' stroke='%23${textColor}' stroke-width='2'/%3E%3Cpath d='M24 32c0-4 4-8 8-8s8 4 8 8c0 4-4 8-8 8s-8-4-8-8z' fill='%23${textColor}'/%3E`
+        break
+      default:
+        iconPath = `%3Crect x='20' y='20' width='24' height='24' fill='none' stroke='%23${textColor}' stroke-width='2' rx='2'/%3E%3Ccircle cx='28' cy='28' r='2' fill='%23${textColor}'/%3E%3Cpath d='M20 40l6-6 3 3 6-6 9 9v4H20z' fill='%23${textColor}'/%3E`
+    }
+    
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='72' viewBox='0 0 72 72'%3E%3Crect width='72' height='72' fill='%23${baseColor}' rx='6'/%3E%3Crect x='8' y='8' width='56' height='56' fill='%23${accentColor}' rx='4'/%3E${iconPath}%3Ctext x='36' y='68' text-anchor='middle' fill='%23${textColor}' font-size='8' font-family='Arial, sans-serif' font-weight='bold'%3E${modality || 'IMG'}%3C/text%3E%3C/svg%3E`
+  }
+
   if (!series || series.length === 0) {
     return (
-      <Paper
-        sx={{
-          width: 300,
-          height: '100%',
-          overflow: 'auto',
-          bgcolor: 'grey.900',
-          borderRight: '1px solid',
-          borderColor: 'divider',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Typography variant="body2" color="text.secondary">
-          Loading series data...
-        </Typography>
-      </Paper>
+      <div className="w-80 h-full bg-gray-900 border-r border-gray-700 flex items-center justify-center">
+        <p className="text-gray-400 text-sm">Loading series data...</p>
+      </div>
     )
   }
 
   return (
-    <Paper
+    <div
       ref={containerRef}
-      elevation={3}
-      sx={{
-        width: 300, // Slightly wider to accommodate more metadata
-        height: '100%',
-        overflow: 'auto',
-        bgcolor: 'grey.900',
-        borderRight: '1px solid',
-        borderColor: 'divider',
-        outline: 'none', // Remove default focus outline
-        '&:focus': {
-          boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.5)', // Enhanced focus indicator
-        },
-        '&:focus-within': {
-          boxShadow: '0 0 0 2px rgba(25, 118, 210, 0.3)', // Focus indicator when child is focused
-        },
-      }}
+      className="w-80 h-full bg-gray-900 border-r border-gray-700 shadow-lg outline-none focus:shadow-blue-500/50 focus-within:shadow-blue-500/30"
+      style={{ maxHeight: '85vh' }}
     >
-      {/* Enhanced header with complete series count and navigation hints */}
-      <Box sx={{ p: 2, bgcolor: series.length === 1 ? 'info.main' : 'primary.main' }}>
-        <Typography variant="h6" color="white" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Badge badgeContent={series.length} color="secondary" max={99}>
-            <ImageIcon />
-          </Badge>
-          {series.length === 1 ? 'Single Series' : 'Series Collection'}
-        </Typography>
-        <Typography variant="caption" color={series.length === 1 ? 'info.light' : 'primary.light'} sx={{ mt: 0.5, display: 'block' }}>
+      {/* Header */}
+      <div className={`p-4 ${series.length === 1 ? 'bg-blue-600' : 'bg-blue-700'}`}>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="relative">
+            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <span className="absolute -top-2 -right-2 bg-pink-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+              {series.length > 99 ? '99+' : series.length}
+            </span>
+          </div>
+          <h3 className="text-white font-semibold text-lg">
+            {series.length === 1 ? 'Single Series' : 'Series Collection'}
+          </h3>
+        </div>
+        <p className={`text-sm ${series.length === 1 ? 'text-blue-200' : 'text-blue-200'} mb-1`}>
           {series.length} series {series.length > 1 ? '• Use ↑↓ keys or click to navigate' : '• Single series study'}
-        </Typography>
+        </p>
         {series.length > 1 && (
-          <Typography variant="caption" color="primary.light" sx={{ fontSize: '0.65rem', opacity: 0.8 }}>
+          <p className="text-xs text-blue-300 opacity-80">
             Press Enter to refresh • Home/End for first/last
-          </Typography>
+          </p>
         )}
-      </Box>
+      </div>
 
-      <List sx={{ p: 0 }} role="listbox">
-        {series.map((seriesItem, index) => {
-          const isSelected = seriesItem.seriesInstanceUID === selectedSeriesUID
-          const instanceCount = seriesItem.numberOfInstances || seriesItem.instances?.length || 0
-          const seriesNumber = seriesItem.seriesNumber || index + 1
+      {/* Series List with Scroll */}
+      <div className="overflow-y-auto" style={{ maxHeight: 'calc(85vh - 120px)' }}>
+        <div className="p-0" role="listbox">
+          {series.map((seriesItem, index) => {
+            const isSelected = seriesItem.seriesInstanceUID === selectedSeriesUID
+            const instanceCount = seriesItem.numberOfInstances || seriesItem.instances?.length || 0
+            const seriesNumber = seriesItem.seriesNumber || index + 1
 
-          return (
-            <React.Fragment key={seriesItem.seriesInstanceUID || index}>
-              <ListItem disablePadding>
-                <ListItemButton
-                  selected={isSelected}
-                  onClick={() => onSeriesSelect(seriesItem.seriesInstanceUID)}
-                  data-series-index={index}
-                  role="option"
-                  aria-selected={isSelected}
-                  aria-label={`Series ${seriesNumber}: ${seriesItem.seriesDescription || 'No Description'}, ${seriesItem.modality || 'Unknown modality'}, ${instanceCount} images`}
-                  sx={{
-                    py: 2.5, // Slightly more padding for better touch targets
-                    px: 2,
-                    bgcolor: isSelected ? 'primary.dark' : 'transparent',
-                    border: isSelected ? '2px solid' : '2px solid transparent',
-                    borderColor: isSelected ? 'primary.main' : 'transparent',
-                    borderRadius: 1,
-                    mx: 1,
-                    my: 0.5,
-                    transition: 'all 0.2s ease-in-out',
-                    '&:hover': {
-                      bgcolor: isSelected ? 'primary.dark' : 'grey.800',
-                      borderColor: isSelected ? 'primary.main' : 'grey.600',
-                      transform: 'translateX(4px)', // Subtle hover animation
-                    },
-                    '&.Mui-selected': {
-                      bgcolor: 'primary.dark',
-                      '&:hover': {
-                        bgcolor: 'primary.dark',
-                      },
-                    },
-                    '&:focus': {
-                      outline: '2px solid rgba(25, 118, 210, 0.5)',
-                      outlineOffset: '2px',
-                    },
-                  }}
-                >
-                  {/* Enhanced thumbnail with active indicator */}
-                  <Box
-                    sx={{
-                      mr: 2,
-                      width: 72, // Slightly larger for better visibility
-                      height: 72,
-                      bgcolor: isSelected ? 'primary.dark' : 'grey.800',
-                      borderRadius: 1.5,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      border: isSelected ? '3px solid' : '2px solid',
-                      borderColor: isSelected ? 'primary.main' : 'grey.700',
-                      overflow: 'hidden',
-                      position: 'relative',
-                      transition: 'all 0.2s ease-in-out',
-                      '&:hover': {
-                        borderColor: isSelected ? 'primary.light' : 'grey.600',
-                      },
-                    }}
+            return (
+              <div key={seriesItem.seriesInstanceUID || index}>
+                <div className="p-0">
+                  <button
+                    onClick={() => onSeriesSelect(seriesItem.seriesInstanceUID)}
+                    data-series-index={index}
+                    role="option"
+                    aria-selected={isSelected}
+                    aria-label={`Series ${seriesNumber}: ${seriesItem.seriesDescription || 'No Description'}, ${seriesItem.modality || 'Unknown modality'}, ${instanceCount} images`}
+                    className={`w-full py-4 px-4 mx-2 my-1 rounded-lg border-2 transition-all duration-200 ease-in-out transform hover:translate-x-1 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
+                      isSelected
+                        ? 'bg-blue-800 border-blue-500 text-white'
+                        : 'bg-transparent border-transparent text-gray-300 hover:bg-gray-800 hover:border-gray-600'
+                    }`}
                   >
-                    {/* Main icon with modality-specific styling */}
-                    <ImageIcon 
-                      sx={{ 
-                        fontSize: 36, 
-                        color: isSelected ? 'primary.light' : 'grey.600',
-                        transition: 'color 0.2s ease-in-out',
-                      }} 
-                    />
-                    
-                    {/* Active series indicator */}
-                    {isSelected && (
-                      <PlayArrowIcon
-                        sx={{
-                          position: 'absolute',
-                          bottom: 4,
-                          right: 4,
-                          fontSize: 16,
-                          color: 'success.main',
-                          bgcolor: 'rgba(0, 0, 0, 0.7)',
-                          borderRadius: '50%',
-                          p: 0.25,
-                        }}
-                      />
-                    )}
-                    
-                    {/* Enhanced series number badge */}
-                    <Box
-                      sx={{
-                        position: 'absolute',
-                        top: 4,
-                        right: 4,
-                        bgcolor: isSelected ? 'primary.main' : 'grey.700',
-                        color: 'white',
-                        borderRadius: '50%',
-                        width: 24,
-                        height: 24,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '0.75rem',
-                        fontWeight: 'bold',
-                        border: '2px solid',
-                        borderColor: isSelected ? 'primary.light' : 'grey.600',
-                        transition: 'all 0.2s ease-in-out',
-                      }}
-                    >
-                      {seriesNumber}
-                    </Box>
-                  </Box>
-
-                  {/* Enhanced metadata display */}
-                  <ListItemText
-                    primary={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                        <Typography 
-                          variant="subtitle1" 
-                          color="white" 
-                          fontWeight={isSelected ? 700 : 500}
-                          sx={{ 
-                            fontSize: '1rem',
-                            transition: 'font-weight 0.2s ease-in-out',
-                          }}
-                        >
-                          Series {seriesNumber}
-                        </Typography>
-                        {isSelected && (
-                          <CheckIcon 
-                            color="success" 
-                            fontSize="small" 
-                            sx={{ 
-                              animation: 'pulse 2s infinite',
-                              '@keyframes pulse': {
-                                '0%': { opacity: 1 },
-                                '50%': { opacity: 0.7 },
-                                '100%': { opacity: 1 },
-                              },
-                            }} 
-                          />
-                        )}
-                      </Box>
-                    }
-                    secondary={
-                      <Box sx={{ mt: 0.5 }}>
-                        {/* Series description with better formatting */}
-                        <Typography 
-                          variant="body2" 
-                          color={isSelected ? 'grey.300' : 'grey.400'} 
-                          sx={{ 
-                            mb: 0.75,
-                            fontWeight: isSelected ? 500 : 400,
-                            lineHeight: 1.3,
-                          }}
-                        >
-                          {seriesItem.seriesDescription || 'No Description Available'}
-                        </Typography>
-
-                        {/* Enhanced metadata chips */}
-                        <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 0.75 }}>
-                          {seriesItem.modality && (
-                            <Chip
-                              label={seriesItem.modality}
-                              size="small"
-                              sx={{
-                                bgcolor: isSelected ? 'primary.main' : 'primary.dark',
-                                color: 'white',
-                                fontSize: '0.7rem',
-                                height: 22,
-                                fontWeight: 600,
-                                border: isSelected ? '1px solid' : 'none',
-                                borderColor: 'primary.light',
-                              }}
-                            />
-                          )}
-                          <Chip
-                            label={`${instanceCount} images`}
-                            size="small"
-                            icon={<ImageIcon sx={{ fontSize: '0.8rem !important' }} />}
-                            sx={{
-                              bgcolor: isSelected ? 'grey.600' : 'grey.700',
-                              color: 'white',
-                              fontSize: '0.7rem',
-                              height: 22,
-                              '& .MuiChip-icon': {
-                                color: 'white',
-                              },
+                    <div className="flex items-start gap-4">
+                      {/* Thumbnail */}
+                      <div className={`relative w-18 h-18 rounded-xl overflow-hidden border-2 transition-all duration-200 ${
+                        isSelected ? 'border-blue-400' : 'border-gray-600'
+                      } hover:scale-105`}>
+                        {/* Real series thumbnail image */}
+                        {studyInstanceUID ? (
+                          <img
+                            src={`/api/dicom/studies/${studyInstanceUID}/series/${seriesItem.seriesInstanceUID}/thumbnail`}
+                            alt={`Series ${seriesNumber} thumbnail`}
+                            className={`w-full h-full object-cover transition-all duration-200 ${
+                              isSelected ? 'brightness-110 contrast-110' : 'brightness-90'
+                            }`}
+                            onError={(e) => {
+                              console.warn(`❌ Failed to load thumbnail for series ${seriesItem.seriesInstanceUID}`)
+                              console.warn(`❌ Thumbnail URL: /api/dicom/studies/${studyInstanceUID}/series/${seriesItem.seriesInstanceUID}/thumbnail`)
+                              const target = e.target as HTMLImageElement
+                              target.style.display = 'none'
+                              const parent = target.parentElement
+                              if (parent) {
+                                parent.style.backgroundImage = `url("${generatePlaceholderImage(seriesItem.modality || 'IMG', isSelected)}")`
+                                parent.style.backgroundSize = 'cover'
+                                parent.style.backgroundPosition = 'center'
+                                parent.style.backgroundColor = isSelected ? '#1e40af' : '#374151'
+                              }
                             }}
+                            onLoad={() => {
+                              console.log(`✅ Thumbnail loaded successfully for series ${seriesItem.seriesInstanceUID}`)
+                            }}
+                            loading="lazy"
                           />
-                        </Box>
-
-                        {/* Enhanced current frame position display for active series */}
-                        {isSelected && currentFrame !== undefined && totalFrames !== undefined && (
-                          <Box sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 1,
-                            bgcolor: 'rgba(25, 118, 210, 0.1)',
-                            borderRadius: 1,
-                            px: 1,
-                            py: 0.5,
-                            border: '1px solid rgba(25, 118, 210, 0.3)',
-                          }}>
-                            <PlayArrowIcon sx={{ fontSize: 14, color: 'primary.light' }} />
-                            <Typography 
-                              variant="caption" 
-                              color="primary.light" 
-                              sx={{ 
-                                fontWeight: 600,
-                                fontSize: '0.75rem',
-                              }}
-                            >
-                              Frame: {currentFrame + 1} / {totalFrames}
-                            </Typography>
-                          </Box>
+                        ) : (
+                          <div
+                            className="w-full h-full bg-cover bg-center flex items-center justify-center"
+                            style={{
+                              backgroundImage: `url("${generatePlaceholderImage(seriesItem.modality || 'IMG', isSelected)}")`,
+                              backgroundColor: isSelected ? '#1e40af' : '#374151',
+                            }}
+                          >
+                            <div className="text-center">
+                              <div className="text-xs text-white opacity-75">No Study ID</div>
+                            </div>
+                          </div>
                         )}
-                      </Box>
-                    }
-                  />
-                </ListItemButton>
-              </ListItem>
-              {index < series.length - 1 && (
-                <Divider 
-                  sx={{ 
-                    bgcolor: 'grey.800',
-                    mx: 2,
-                    opacity: 0.5,
-                  }} 
-                />
-              )}
-            </React.Fragment>
-          )
-        })}
-      </List>
-    </Paper>
+                        
+                        {/* Overlay */}
+                        <div className={`absolute inset-0 transition-all duration-200 ${
+                          isSelected ? 'bg-blue-600/15' : 'bg-black/10'
+                        }`} />
+                        
+                        {/* Series number badge */}
+                        <div className={`absolute top-1 left-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all duration-200 z-10 ${
+                          isSelected 
+                            ? 'bg-blue-600 text-white border-blue-300' 
+                            : 'bg-gray-700 text-white border-gray-500'
+                        }`}>
+                          {seriesNumber}
+                        </div>
+                      </div>
+
+                      {/* Metadata */}
+                      <div className="flex-1 text-left">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h4 className={`font-semibold text-base transition-all duration-200 ${
+                            isSelected ? 'text-white font-bold' : 'text-gray-200'
+                          }`}>
+                            Series {seriesNumber}
+                          </h4>
+                          {isSelected && (
+                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                          )}
+                        </div>
+
+                        <p className={`text-sm mb-2 leading-tight transition-all duration-200 ${
+                          isSelected ? 'text-gray-200 font-medium' : 'text-gray-400'
+                        }`}>
+                          {seriesItem.seriesDescription || 'No Description Available'}
+                        </p>
+
+                        {/* Chips */}
+                        <div className="flex gap-2 flex-wrap mb-2">
+                          {seriesItem.modality && (
+                            <span className={`px-2 py-1 rounded text-xs font-semibold border transition-all duration-200 ${
+                              isSelected 
+                                ? 'bg-blue-600 text-white border-blue-400' 
+                                : 'bg-blue-800 text-white border-none'
+                            }`}>
+                              {seriesItem.modality}
+                            </span>
+                          )}
+                          <span className={`px-2 py-1 rounded text-xs flex items-center gap-1 transition-all duration-200 ${
+                            isSelected ? 'bg-gray-600 text-white' : 'bg-gray-700 text-white'
+                          }`}>
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                            {instanceCount} images
+                          </span>
+                        </div>
+
+                        {/* Frame info for active series */}
+                        {isSelected && currentFrame !== undefined && totalFrames !== undefined && (
+                          <div className="flex items-center gap-2 bg-blue-600/20 border border-blue-600/30 rounded px-2 py-1">
+                            <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                            <span className="text-xs font-semibold text-blue-300">
+                              Frame: {currentFrame + 1} / {totalFrames}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                </div>
+                {index < series.length - 1 && (
+                  <div className="mx-4 border-b border-gray-800 opacity-50" />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
   )
 })
 
