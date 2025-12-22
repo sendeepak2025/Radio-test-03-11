@@ -51,6 +51,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
     // Check if we have a specific WebSocket URL in environment
     const wsUrl = import.meta.env.VITE_WS_URL;
     if (wsUrl) {
+      console.log('Using VITE_WS_URL:', wsUrl);
       return wsUrl;
     }
 
@@ -59,13 +60,16 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
     if (apiUrl) {
       // Remove /api suffix if present
       const baseUrl = apiUrl.replace(/\/api\/?$/, '');
+      console.log('Using API URL for WebSocket:', baseUrl);
       return baseUrl;
     }
 
-    // Fallback to current location
+    // Fallback to current location (production safe)
     const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
     const host = window.location.host;
-    return `${protocol}//${host}`;
+    const fallbackUrl = `${protocol}//${host}`;
+    console.log('Using fallback WebSocket URL:', fallbackUrl);
+    return fallbackUrl;
   }, []);
 
   /**
