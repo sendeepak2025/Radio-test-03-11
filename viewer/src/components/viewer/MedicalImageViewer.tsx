@@ -1713,7 +1713,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
       style={{ touchAction: 'none' }}
       onMouseMove={handleMouseMoveForPanels}
     >
-      {/* Capture Modal */}
+      {/* Capture Modal - Enhanced with Anatomical Description */}
       {showCaptureModal && captureDataUrl && (
         <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-800 rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden border border-slate-700">
@@ -1724,7 +1724,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
                   <Camera size={20} className="text-white" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-semibold text-white">Image Captured</h3>
+                  <h3 className="text-lg font-semibold text-white">Key Image Captured</h3>
                   <p className="text-xs text-slate-400">Frame {currentFrame + 1} • {new Date().toLocaleTimeString()}</p>
                 </div>
               </div>
@@ -1746,26 +1746,54 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
               <img 
                 src={captureDataUrl} 
                 alt="Captured frame" 
-                className="w-full h-auto max-h-64 object-contain rounded-lg border border-slate-700"
+                className="w-full h-auto max-h-56 object-contain rounded-lg border border-slate-700"
               />
             </div>
             
-            {/* Note Input */}
-            <div className="p-4 border-t border-slate-700">
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Add Note (optional)
-              </label>
-              <textarea
-                value={captureNote}
-                onChange={(e) => setCaptureNote(e.target.value)}
-                placeholder="Enter a description for this capture..."
-                className="w-full px-3 py-2 text-sm rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                style={{
-                  backgroundColor: '#334155',
-                  border: '1px solid #475569',
-                }}
-                rows={2}
-              />
+            {/* Anatomical Description Input - Required for Key Images */}
+            <div className="p-4 border-t border-slate-700 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  <span className="text-red-400">*</span> Anatomical Description / Figure Caption
+                </label>
+                <textarea
+                  value={captureNote}
+                  onChange={(e) => setCaptureNote(e.target.value)}
+                  placeholder="e.g., Axial CT showing infrarenal AAA measuring 4.8 cm with mural thrombus..."
+                  className="w-full px-3 py-2 text-sm rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  style={{
+                    backgroundColor: '#334155',
+                    border: '1px solid #475569',
+                  }}
+                  rows={3}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Describe the anatomical structure, findings, or measurement shown in this image
+                </p>
+              </div>
+              
+              {/* Quick Description Templates */}
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-2">Quick Templates:</label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    "Axial CT at level of",
+                    "Coronal reformat showing",
+                    "Sagittal view demonstrating",
+                    "3D VR reconstruction of",
+                    "MIP image showing",
+                    "MPR showing measurement of"
+                  ].map((template) => (
+                    <button
+                      key={template}
+                      onClick={() => setCaptureNote(prev => prev ? `${prev} ${template}` : template)}
+                      className="px-2 py-1 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition"
+                    >
+                      {template}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
             
             {/* Action Buttons */}
@@ -1774,7 +1802,12 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => handleSaveToGallery(true)}
-                  className="flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition font-medium"
+                  disabled={!captureNote.trim()}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition font-medium ${
+                    captureNote.trim() 
+                      ? 'bg-gradient-to-r from-blue-600 to-blue-700 text-white hover:from-blue-700 hover:to-blue-800' 
+                      : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  }`}
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -1795,11 +1828,22 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
               {/* Secondary Action */}
               <button
                 onClick={() => handleSaveToGallery(false)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 hover:text-white transition"
+                disabled={!captureNote.trim()}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg transition ${
+                  captureNote.trim()
+                    ? 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white'
+                    : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                }`}
               >
                 <Layers size={18} />
                 Save to Gallery Only
               </button>
+              
+              {!captureNote.trim() && (
+                <p className="text-xs text-amber-400 text-center">
+                  ⚠️ Please add an anatomical description before saving to gallery/report
+                </p>
+              )}
             </div>
             
             {/* Info Footer */}

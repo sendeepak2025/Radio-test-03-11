@@ -27,6 +27,13 @@ const fs = require('fs');
 const fsSync = require('fs'); // Sync fs for PDF generation
 const User = require("../models/User");
 const HospitalSetting = require("../models/HospitalSettings");
+const { 
+  isValidContent, 
+  normalizeStatus, 
+  detectTemplate, 
+  getScoringCategory,
+  STATUS_VALUES 
+} = require('../utils/reportTemplateSchemas');
 
 async function resolveHospitalId(req) {
   try {
@@ -2430,6 +2437,8 @@ router.post('/:reportId/validate-sign', async (req, res) => {
 
 /**
  * Generate Professional PDF Report
+ * NABH/Medico-legal compliant, Hospital-grade layout
+ * Supports all RADS scoring systems
  */
 async function generateReportPDF(report, hospitalId) {
   try {
@@ -2438,15 +2447,30 @@ async function generateReportPDF(report, hospitalId) {
     const fs = require('fs');
     const axios = require('axios');
 
+    // ============ TEMPLATE DETECTION ============
+    const templateSchema = detectTemplate(report);
+    const scoringSystem = templateSchema?.scoringSystem || null;
+    const maxPages = templateSchema?.maxPages || 2;
+
+    // ============ PDF CONFIGURATION ============
     const doc = new PDFDocument({
       margin: 40,
       size: 'A4',
       bufferPages: true,
-      autoFirstPage: true
+      autoFirstPage: true,
+      info: {
+        Title: `${templateSchema?.name || 'Radiology'} Report - ${report.reportId || 'Draft'}`,
+        Author: report.radiologistName || 'Radiologist',
+        Subject: `${report.modality || 'Radiology'} Report`,
+        Creator: 'Medical Imaging RIS/PACS System',
+        Keywords: scoringSystem ? `${scoringSystem}, Radiology, Medical Report` : 'Radiology, Medical Report'
+      }
     });
+    
     const chunks = [];
     doc.on('data', chunk => chunks.push(chunk));
 
+    // ============ DESIGN CONSTANTS ============
     const COLORS = {
       primary: '#1A365D',
       secondary: '#4A5568',
@@ -2454,13 +2478,16 @@ async function generateReportPDF(report, hospitalId) {
       textMain: '#2D3748',
       textLight: '#718096',
       danger: '#C53030',
-      success: '#2F855A'
+      success: '#276749',
+      warning: '#C05621',
+      impressionBg: '#EBF8FF',
+      scoreBg: '#FEF3C7'
     };
 
     const leftMargin = 40;
     const rightMargin = 555;
     const contentWidth = rightMargin - leftMargin;
-    const pageHeight = 750; // Safe content area - reduced to prevent extra pages
+    const pageHeight = 730; // Safe content area - prevents extra pages
 
     // Helper: Local Path Resolver for snapshots
     const getLocalPath = (imgPath) => {
@@ -2500,18 +2527,90 @@ async function generateReportPDF(report, hospitalId) {
       .toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
 
     const decodeHtml = (str) => {
-      if (!str || typeof str !== 'string') return str;
-      return str.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'");
+      if (!str || typeof str !== 'string') return '';
+      return str
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&#39;/g, "'")
+        .replace(/&#x2F;/g, '/')
+        .trim();
     };
 
-    const getSection = (key) => report.sections?.[key] || report[key] || '';
+    // Use imported isValidContent for junk text detection
+    const hasContent = (content) => {
+      const cleaned = decodeHtml(content);
+      return isValidContent(cleaned);
+    };
 
-    // Page overflow check
+    const getSection = (key, ...fallbacks) => {
+      let value = report.sections?.[key] || report[key];
+      if (!value || (typeof value === 'string' && value.trim().length < 2)) {
+        for (const fb of fallbacks) {
+          value = report.sections?.[fb] || report[fb];
+          if (value && typeof value === 'string' && value.trim().length >= 2) break;
+        }
+      }
+      return decodeHtml(value || '');
+    };
+
+    // Extract scoring category from report if present
+    const extractScore = () => {
+      if (!scoringSystem) return null;
+      
+      // Look for score in various places
+      const scoreFields = ['score', 'category', 'classification', 'grade'];
+      for (const field of scoreFields) {
+        const value = report.sections?.[field] || report[field];
+        if (value) {
+          const category = getScoringCategory(templateSchema?.name?.toUpperCase()?.replace(/[^A-Z]/g, '_'), value);
+          if (category) return category;
+        }
+      }
+      
+      // Try to extract from impression
+      const impression = getSection('impression');
+      if (impression && scoringSystem) {
+        const patterns = {
+          'BI-RADS': /BI-?RADS\s*(?:Category\s*)?(\d[ABC]?)/i,
+          'Lung-RADS': /Lung-?RADS\s*(?:Category\s*)?(\d[ABX]?)/i,
+          'CAD-RADS': /CAD-?RADS\s*(?:Category\s*)?(\d[AB]?|N)/i,
+          'LI-RADS': /LI-?RADS\s*(LR-?[1-5M]|LR-?TIV)/i,
+          'PI-RADS': /PI-?RADS\s*(?:Score\s*)?([1-5])/i,
+          'TI-RADS': /(?:ACR\s*)?TI-?RADS\s*(TR[1-5])/i,
+          'O-RADS': /O-?RADS\s*(?:Score\s*)?([0-5])/i,
+          'ASPECTS': /ASPECTS\s*(?:Score\s*)?:?\s*(\d+)/i
+        };
+        
+        const pattern = patterns[scoringSystem];
+        if (pattern) {
+          const match = impression.match(pattern);
+          if (match) return { code: match[1], extracted: true };
+        }
+      }
+      
+      return null;
+    };
+
+    // Page overflow check - prevents orphaned headers
     const checkPageOverflow = (needed = 50) => { 
       if (doc.y + needed > pageHeight) {
         doc.addPage();
         doc.y = 40;
+        return true;
       }
+      return false;
+    };
+
+    // Calculate text height before rendering
+    const getTextHeight = (text, options = {}) => {
+      if (!text) return 0;
+      return doc.heightOfString(text, {
+        width: options.width || contentWidth,
+        fontSize: options.fontSize || 9,
+        lineGap: options.lineGap || 2
+      });
     };
 
     // ========== 1. HEADER ==========
@@ -2558,163 +2657,313 @@ async function generateReportPDF(report, hospitalId) {
     doc.moveTo(leftMargin, headerEndY).lineTo(rightMargin, headerEndY).lineWidth(1).strokeColor(COLORS.accent).stroke();
 
     // ========== 2. PATIENT INFO GRID ==========
-    const gridTop = headerEndY + 10;
-    doc.rect(leftMargin, gridTop, contentWidth, 55).fill('#F7FAFC');
+    const gridTop = headerEndY + 8;
+    doc.rect(leftMargin, gridTop, contentWidth, 58).fill('#F7FAFC');
+    doc.rect(leftMargin, gridTop, contentWidth, 58).strokeColor(COLORS.accent).lineWidth(0.5).stroke();
     
-    const col1 = 50, col2 = 150, col3 = 330, col4 = 430;
-    const drawLabel = (label, x, y) => doc.fillColor(COLORS.textLight).font('Helvetica-Bold').fontSize(8).text(label, x, y, { lineBreak: false });
-    const drawVal = (val, x, y, maxWidth = 170) => doc.fillColor(COLORS.textMain).font('Helvetica').fontSize(9).text(val || 'N/A', x, y, { width: maxWidth, lineBreak: false });
+    // Grid layout - 2 columns, 3 rows with better spacing
+    const col1Label = leftMargin + 8;
+    const col1Value = leftMargin + 100;
+    const col2Label = leftMargin + 275;
+    const col2Value = leftMargin + 365;
+    const rowHeight = 17;
+    
+    const drawLabel = (label, x, y) => doc.fillColor(COLORS.textLight).font('Helvetica-Bold').fontSize(7).text(label, x, y, { lineBreak: false });
+    const drawVal = (val, x, y, maxWidth = 165) => doc.fillColor(COLORS.textMain).font('Helvetica').fontSize(9).text(val || 'N/A', x, y, { width: maxWidth, lineBreak: false });
 
-    drawLabel('PATIENT NAME', col1, gridTop + 8); drawVal(patientName, col2, gridTop + 8);
-    drawLabel('PATIENT ID', col3, gridTop + 8);   drawVal(report.patientID, col4, gridTop + 8, 115);
-    drawLabel('STUDY TYPE', col1, gridTop + 22);  drawVal(`${report.modality || ''} - ${report.templateName || ''}`.trim(), col2, gridTop + 22);
-    drawLabel('STUDY DATE', col3, gridTop + 22);  drawVal(studyDate, col4, gridTop + 22, 115);
-    drawLabel('STATUS', col1, gridTop + 36);
-    doc.fillColor(report.reportStatus === 'final' ? COLORS.success : COLORS.danger).font('Helvetica-Bold').fontSize(9).text(report.reportStatus?.toUpperCase() || 'DRAFT', col2, gridTop + 36, { lineBreak: false });
+    // Row 1
+    drawLabel('PATIENT NAME', col1Label, gridTop + 8); 
+    drawVal(patientName, col1Value, gridTop + 7, 165);
+    drawLabel('PATIENT ID', col2Label, gridTop + 8);   
+    drawVal(report.patientID, col2Value, gridTop + 7, 140);
+    
+    // Row 2
+    const studyType = [report.modality, report.templateName].filter(Boolean).join(' - ') || 'N/A';
+    drawLabel('STUDY TYPE', col1Label, gridTop + 8 + rowHeight);  
+    drawVal(studyType, col1Value, gridTop + 7 + rowHeight, 165);
+    drawLabel('STUDY DATE', col2Label, gridTop + 8 + rowHeight);  
+    drawVal(studyDate, col2Value, gridTop + 7 + rowHeight, 140);
+    
+    // Row 3
+    drawLabel('REF. PHYSICIAN', col1Label, gridTop + 8 + rowHeight * 2);
+    drawVal(report.referringPhysician || 'N/A', col1Value, gridTop + 7 + rowHeight * 2, 165);
+    drawLabel('STATUS', col2Label, gridTop + 8 + rowHeight * 2);
+    
+    // Status with color coding
+    const statusColor = report.reportStatus === 'final' ? COLORS.success : 
+                        report.reportStatus === 'preliminary' ? COLORS.warning : COLORS.danger;
+    doc.fillColor(statusColor)
+       .font('Helvetica-Bold')
+       .fontSize(9)
+       .text((report.reportStatus || 'DRAFT').toUpperCase(), col2Value, gridTop + 7 + rowHeight * 2, { lineBreak: false });
 
     // ========== 3. CLINICAL CONTENT ==========
-    doc.y = gridTop + 65;
+    doc.y = gridTop + 68;
 
-    const addSection = (title, content) => {
-      if (!content || content.trim().length < 2) return;
-      checkPageOverflow(45);
-      doc.moveDown(0.5);
+    // Section renderer - only renders if content exists
+    const addSection = (title, content, options = {}) => {
+      if (!hasContent(content)) return false;
+      
+      const cleanContent = decodeHtml(content);
+      const contentHeight = getTextHeight(cleanContent, { fontSize: 9 });
+      const totalHeight = 25 + contentHeight;
+      
+      checkPageOverflow(Math.min(totalHeight, 80));
+      
+      doc.moveDown(0.4);
       doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(10).text(title.toUpperCase(), leftMargin);
-      doc.moveTo(leftMargin, doc.y + 2).lineTo(rightMargin, doc.y + 2).lineWidth(0.5).strokeColor(COLORS.accent).stroke();
+      doc.moveTo(leftMargin, doc.y + 2).lineTo(leftMargin + 120, doc.y + 2).lineWidth(0.5).strokeColor(COLORS.primary).stroke();
       doc.moveDown(0.3);
-      doc.fillColor(COLORS.textMain).font('Helvetica').fontSize(9).text(decodeHtml(content), leftMargin, doc.y, { width: contentWidth, align: 'justify', lineGap: 1 });
+      doc.fillColor(options.color || COLORS.textMain)
+         .font(options.bold ? 'Helvetica-Bold' : 'Helvetica')
+         .fontSize(9)
+         .text(cleanContent, leftMargin, doc.y, { width: contentWidth, align: 'justify', lineGap: 2 });
+      return true;
     };
 
-    addSection('Clinical History', getSection('clinical_history'));
+    addSection('Clinical History / Indication', getSection('clinical_history', 'clinical_indication', 'clinicalHistory', 'indication'));
     addSection('Technique', getSection('technique'));
-    addSection('Findings', getSection('findings') || report.findingsText);
+    addSection('Findings', getSection('findings', 'findingsText'));
 
     // ========== 4. MODULES / CHECKLISTS ==========
     const moduleKeys = Object.keys(report.sections || {}).filter(k => k.startsWith('uiModule_'));
     
     moduleKeys.forEach(key => {
       try {
-        const data = JSON.parse(decodeHtml(report.sections[key]));
-        checkPageOverflow(70);
+        const rawData = report.sections[key];
+        if (!rawData) return;
+        
+        const data = typeof rawData === 'string' ? JSON.parse(decodeHtml(rawData)) : rawData;
+        
+        // Parse rows from different data formats
+        let rows = [];
+        if (data.selections && typeof data.selections === 'object') {
+          rows = Object.entries(data.selections).map(([k, v]) => ({ 
+            label: k.replace(/_/g, ' '), 
+            status: normalizeStatus(typeof v === 'string' ? v : (v?.status || 'Normal')),
+            notes: v?.notes || data.notes?.[k] || '',
+            measurement: v?.measurement || ''
+          }));
+        } else if (Array.isArray(data)) {
+          rows = data.map(item => ({
+            label: item.label || item.id || item.name || '',
+            status: normalizeStatus(item.status || 'Normal'),
+            notes: item.notes || '',
+            measurement: item.measurement || item.value || ''
+          }));
+        }
+        
+        // Filter empty rows and rows with invalid labels
+        rows = rows.filter(r => r.label && r.label.trim().length > 0 && isValidContent(r.label));
+        if (rows.length === 0) return;
+        
+        // Calculate space needed - prevent table from splitting
+        const headerHeight = 18;
+        const rowHeight = 14;
+        const tableHeight = headerHeight + (rows.length * rowHeight) + 10;
+        
+        // If table won't fit, move to next page
+        if (doc.y + tableHeight > pageHeight && rows.length <= 15) {
+          doc.addPage();
+          doc.y = 40;
+        } else {
+          checkPageOverflow(Math.min(tableHeight, 100));
+        }
         
         // Section Title
-        doc.moveDown(0.6);
-        doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(10).text(key.replace('uiModule_', '').replace(/_/g, ' ').toUpperCase(), leftMargin);
+        doc.moveDown(0.5);
+        const sectionTitle = key.replace('uiModule_', '').replace(/_/g, ' ').toUpperCase();
+        doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(10).text(sectionTitle, leftMargin);
         doc.moveDown(0.2);
         
         // Table Header
         const tableTop = doc.y;
-        const colX = { assessment: leftMargin + 5, status: leftMargin + 200, notes: leftMargin + 305 };
+        const colX = { 
+          structure: leftMargin + 5, 
+          status: leftMargin + 175, 
+          measurement: leftMargin + 270,
+          notes: leftMargin + 360 
+        };
         
         doc.rect(leftMargin, tableTop, contentWidth, 16).fill(COLORS.accent);
-        doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(8);
-        doc.text('ASSESSMENT', colX.assessment, tableTop + 4);
-        doc.text('STATUS', colX.status, tableTop + 4);
-        doc.text('NOTES', colX.notes, tableTop + 4);
+        doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(7);
+        doc.text('STRUCTURE', colX.structure, tableTop + 5);
+        doc.text('STATUS', colX.status, tableTop + 5);
+        doc.text('MEASUREMENT', colX.measurement, tableTop + 5);
+        doc.text('NOTES', colX.notes, tableTop + 5);
         
         doc.y = tableTop + 18;
 
-        // Parse rows
-        let rows = [];
-        if (data.selections && typeof data.selections === 'object') {
-          rows = Object.entries(data.selections).map(([k, v]) => ({ 
-            label: k, 
-            status: typeof v === 'string' ? v : (v?.status || ''),
-            notes: v?.notes || data.notes?.[k] || ''
-          }));
-        } else if (Array.isArray(data)) {
-          rows = data;
-        }
-
-        // Draw rows
-        rows.forEach(row => {
-          checkPageOverflow(16);
+        // Draw rows - prevent row splitting across pages
+        rows.forEach((row, idx) => {
+          // Check if row will fit, if not move to next page with header
+          if (doc.y + rowHeight > pageHeight) {
+            doc.addPage();
+            doc.y = 40;
+            // Re-render table header on new page
+            doc.rect(leftMargin, doc.y, contentWidth, 16).fill(COLORS.accent);
+            doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(7);
+            doc.text('STRUCTURE', colX.structure, doc.y + 5);
+            doc.text('STATUS', colX.status, doc.y + 5);
+            doc.text('MEASUREMENT', colX.measurement, doc.y + 5);
+            doc.text('NOTES', colX.notes, doc.y + 5);
+            doc.y += 18;
+          }
+          
           const rowY = doc.y;
-          const isAbnormal = (row.status || '').toLowerCase().includes('abnormal');
+          const isAbnormal = row.status === STATUS_VALUES.ABNORMAL;
           
-          // Assessment column
+          // Alternate row background
+          if (idx % 2 === 0) {
+            doc.rect(leftMargin, rowY - 1, contentWidth, rowHeight).fill('#FAFAFA');
+          }
+          
+          // Structure column
           doc.fillColor(isAbnormal ? COLORS.danger : COLORS.textMain)
              .font(isAbnormal ? 'Helvetica-Bold' : 'Helvetica')
-             .fontSize(9)
-             .text(row.label || row.id || '', colX.assessment, rowY, { width: 185 });
+             .fontSize(8)
+             .text(row.label, colX.structure, rowY, { width: 165 });
           
-          // Status column
-          doc.fillColor(isAbnormal ? COLORS.danger : COLORS.textMain)
-             .font(isAbnormal ? 'Helvetica-Bold' : 'Helvetica')
-             .fontSize(9)
-             .text(row.status || '', colX.status, rowY, { width: 95 });
+          // Status column - controlled vocabulary
+          doc.fillColor(isAbnormal ? COLORS.danger : COLORS.success)
+             .font('Helvetica')
+             .fontSize(8)
+             .text(row.status, colX.status, rowY, { width: 90 });
           
-          // Notes column
+          // Measurement column
+          doc.fillColor(COLORS.textMain)
+             .font('Helvetica')
+             .fontSize(8)
+             .text(row.measurement || '-', colX.measurement, rowY, { width: 85 });
+          
+          // Notes column - only show if valid content
+          const noteText = isValidContent(row.notes) ? row.notes : '-';
           doc.fillColor(COLORS.textLight)
              .font('Helvetica')
-             .fontSize(9)
-             .text(row.notes || '', colX.notes, rowY, { width: 200 });
+             .fontSize(8)
+             .text(noteText, colX.notes, rowY, { width: 150 });
           
-          doc.y = rowY + 14;
+          doc.y = rowY + rowHeight;
         });
+        
+        // Table border
+        doc.rect(leftMargin, tableTop, contentWidth, doc.y - tableTop).strokeColor(COLORS.accent).stroke();
+        
       } catch (e) {
         console.error('Module parse error:', key, e.message);
       }
     });
+    
+    // Recommendations section (if exists and valid)
+    addSection('Recommendations', getSection('recommendations'));
 
-    // ========== 5. IMPRESSION ==========
+    // ========== 5. IMPRESSION (with Scoring System Badge) ==========
     const impression = getSection('impression');
-    if (impression && impression.trim().length > 1) {
-      checkPageOverflow(60);
-      doc.moveDown(0.8);
+    if (hasContent(impression)) {
+      const cleanImpression = decodeHtml(impression);
+      const impressionHeight = getTextHeight(cleanImpression, { width: contentWidth - 24, fontSize: 10 });
+      
+      // Extract score if scoring system is used
+      const scoreInfo = extractScore();
+      const hasScore = scoreInfo && scoringSystem;
+      
+      const boxHeight = impressionHeight + (hasScore ? 38 : 18);
+      
+      // Try to keep impression with signature
+      checkPageOverflow(boxHeight + 100);
+      
+      doc.moveDown(0.6);
       doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(11).text('IMPRESSION', leftMargin);
       doc.moveDown(0.2);
       
-      const impressionHeight = doc.heightOfString(decodeHtml(impression), { width: contentWidth - 20, fontSize: 10 });
       const boxY = doc.y;
-      doc.rect(leftMargin, boxY, contentWidth, impressionHeight + 14).fill('#EDF2F7');
-      doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(10).text(decodeHtml(impression), leftMargin + 10, boxY + 7, { width: contentWidth - 20 });
-      doc.y = boxY + impressionHeight + 18;
+      
+      // Box background with left accent bar
+      doc.rect(leftMargin, boxY, contentWidth, boxHeight).fill(COLORS.impressionBg);
+      doc.rect(leftMargin, boxY, contentWidth, boxHeight).strokeColor(COLORS.primary).lineWidth(0.5).stroke();
+      doc.rect(leftMargin, boxY, 4, boxHeight).fill(COLORS.primary);
+      
+      // Scoring system badge (if applicable)
+      if (hasScore) {
+        const badgeY = boxY + 8;
+        const badgeWidth = 140;
+        doc.rect(leftMargin + 12, badgeY, badgeWidth, 22).fill(COLORS.scoreBg);
+        doc.rect(leftMargin + 12, badgeY, badgeWidth, 22).strokeColor(COLORS.warning).lineWidth(0.5).stroke();
+        
+        doc.fillColor(COLORS.warning)
+           .font('Helvetica-Bold')
+           .fontSize(9)
+           .text(`${scoringSystem}: ${scoreInfo.code}`, leftMargin + 18, badgeY + 6);
+        
+        // Impression text below badge
+        doc.fillColor(COLORS.primary)
+           .font('Helvetica-Bold')
+           .fontSize(10)
+           .text(cleanImpression, leftMargin + 12, badgeY + 28, { width: contentWidth - 24, lineGap: 3 });
+      } else {
+        // Impression text without badge
+        doc.fillColor(COLORS.primary)
+           .font('Helvetica-Bold')
+           .fontSize(10)
+           .text(cleanImpression, leftMargin + 12, boxY + 9, { width: contentWidth - 24, lineGap: 3 });
+      }
+      
+      doc.y = boxY + boxHeight + 8;
     }
 
     // ========== 6. SIGNATURE (with image support) ==========
-    checkPageOverflow(90);
-    doc.moveDown(1);
+    checkPageOverflow(85);
+    doc.moveDown(0.8);
     
+    const sigX = rightMargin - 180;
     const sigStartY = doc.y;
-    const sigX = 350;
     
     // Check if signature image exists
     const signatureImagePath = getSignaturePath(report.radiologistSignatureUrl);
     
     if (signatureImagePath) {
-      // Draw signature image
       try {
-        doc.image(signatureImagePath, sigX, sigStartY, { width: 120, height: 40 });
-        doc.y = sigStartY + 45;
+        doc.image(signatureImagePath, sigX, sigStartY, { width: 100, height: 35 });
+        doc.y = sigStartY + 40;
       } catch (e) {
         console.error('Signature image load failed:', e.message);
-        doc.y = sigStartY;
       }
     }
     
     // Signature line
     doc.moveTo(sigX, doc.y).lineTo(rightMargin, doc.y).lineWidth(0.5).strokeColor(COLORS.secondary).stroke();
     
-    // Doctor name and title
+    // Doctor details
     const nameY = doc.y + 5;
-    doc.fillColor(COLORS.textMain).font('Helvetica-Bold').fontSize(10)
-       .text(`Dr. ${report.signature?.displayName || report.radiologistName || 'Radiologist'}`, sigX, nameY);
-    doc.font('Helvetica').fontSize(8).fillColor(COLORS.textLight)
-       .text(report.signature?.specialty || 'Consultant Radiologist', sigX, nameY + 14);
+    const doctorName = report.signature?.displayName || report.radiologistName || 'Radiologist';
     
-    // License number if available
-    if (report.signature?.licenseNumber) {
-      doc.text(`License: ${report.signature.licenseNumber}`, sigX, nameY + 26);
+    doc.fillColor(COLORS.textMain).font('Helvetica-Bold').fontSize(10)
+       .text(`Dr. ${doctorName}`, sigX, nameY);
+    
+    let detailY = nameY + 13;
+    doc.font('Helvetica').fontSize(8).fillColor(COLORS.textLight);
+    
+    if (report.signature?.specialty) {
+      doc.text(report.signature.specialty, sigX, detailY);
+      detailY += 10;
+    } else {
+      doc.text('Consultant Radiologist', sigX, detailY);
+      detailY += 10;
     }
     
-    // Signed date
+    if (report.signature?.licenseNumber) {
+      doc.text(`Reg. No: ${report.signature.licenseNumber}`, sigX, detailY);
+      detailY += 10;
+    }
+    
     if (report.signedAt) {
-      const signedDate = new Date(report.signedAt).toLocaleDateString('en-US', { 
+      const signedDate = new Date(report.signedAt).toLocaleDateString('en-IN', { 
         day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' 
       });
-      doc.text(`Signed: ${signedDate}`, sigX, nameY + (report.signature?.licenseNumber ? 38 : 26));
+      doc.text(`Signed: ${signedDate}`, sigX, detailY);
     }
+
+    doc.y = detailY + 15;
 
     // ========== 7. KEY IMAGES (Only if exists and has valid images) ==========
     if (report.keyImages && report.keyImages.length > 0) {
@@ -2723,21 +2972,94 @@ async function generateReportPDF(report, hospitalId) {
       
       if (validImages.length > 0) {
         doc.addPage();
-        doc.fillColor(COLORS.primary).font('Helvetica-Bold').fontSize(12).text('KEY RADIOLOGICAL IMAGES', leftMargin, 40, { align: 'center', width: contentWidth });
-        doc.moveDown(1);
-        let curX = leftMargin, curY = doc.y;
+        
+        // Page 2 Header
+        doc.fillColor(COLORS.primary)
+           .font('Helvetica-Bold')
+           .fontSize(14)
+           .text('KEY RADIOLOGICAL IMAGES', leftMargin, 40, { align: 'center', width: contentWidth });
+        
+        doc.fillColor(COLORS.textLight)
+           .font('Helvetica')
+           .fontSize(8)
+           .text(`${validImages.length} image(s) • ${report.modality || 'CT'} ${report.templateName || 'Study'}`, leftMargin, 58, { align: 'center', width: contentWidth });
+        
+        doc.moveTo(leftMargin, 72).lineTo(rightMargin, 72).lineWidth(0.5).strokeColor(COLORS.accent).stroke();
+        
+        doc.y = 85;
+        
+        const imgWidth = 235;
+        const imgHeight = 155;
+        const imgGap = 20;
+        const captionHeight = 35;
+        let curX = leftMargin;
+        let curY = doc.y;
+        let figureNum = 1;
+        
         validImages.forEach((img, i) => {
-          const p = getLocalPath(img.dataUrl);
-          if (p) {
-            if (curY > 620) { doc.addPage(); curY = 40; curX = leftMargin; }
-            try {
-              doc.image(p, curX, curY, { width: 240, height: 160 });
-              doc.rect(curX, curY, 240, 160).strokeColor(COLORS.accent).stroke();
-              doc.fontSize(8).fillColor(COLORS.textMain).text(`Fig ${i+1}: ${img.caption || ''}`, curX, curY + 165, { width: 240 });
-            } catch (imgErr) {
-              console.error('Key image load failed:', imgErr.message);
-            }
-            if (i % 2 === 0) curX = 300; else { curX = leftMargin; curY += 190; }
+          const imgPath = getLocalPath(img.dataUrl);
+          if (!imgPath) return;
+          
+          // Check for page overflow - need space for image + caption
+          if (curY + imgHeight + captionHeight > 720) {
+            doc.addPage();
+            curY = 50;
+            curX = leftMargin;
+          }
+          
+          try {
+            // Image border/frame
+            doc.rect(curX, curY, imgWidth, imgHeight).fill('#000000');
+            
+            // Actual image
+            doc.image(imgPath, curX + 2, curY + 2, { 
+              width: imgWidth - 4, 
+              height: imgHeight - 4, 
+              fit: [imgWidth - 4, imgHeight - 4],
+              align: 'center',
+              valign: 'center'
+            });
+            
+            // Image border
+            doc.rect(curX, curY, imgWidth, imgHeight).strokeColor(COLORS.accent).lineWidth(1).stroke();
+            
+            // Figure number badge
+            doc.rect(curX + 5, curY + 5, 45, 18).fill(COLORS.primary);
+            doc.fillColor('#FFFFFF')
+               .font('Helvetica-Bold')
+               .fontSize(9)
+               .text(`Fig ${figureNum}`, curX + 8, curY + 10);
+            
+            // Caption box
+            const captionY = curY + imgHeight + 5;
+            const caption = img.caption || img.description || `Key image from ${report.modality || 'study'}`;
+            
+            doc.fillColor(COLORS.primary)
+               .font('Helvetica-Bold')
+               .fontSize(8)
+               .text(`Figure ${figureNum}:`, curX, captionY);
+            
+            doc.fillColor(COLORS.textMain)
+               .font('Helvetica')
+               .fontSize(8)
+               .text(caption, curX, captionY + 10, { 
+                 width: imgWidth, 
+                 height: 22,
+                 ellipsis: true
+               });
+            
+            figureNum++;
+            
+          } catch (imgErr) {
+            console.error('Key image load failed:', imgErr.message);
+          }
+          
+          // Position next image
+          if (i % 2 === 0) {
+            curX = leftMargin + imgWidth + imgGap;
+          } else {
+            curX = leftMargin;
+            curY += imgHeight + captionHeight + 15;
           }
         });
       }
@@ -2746,24 +3068,38 @@ async function generateReportPDF(report, hospitalId) {
     // ========== 8. FOOTER (on all pages) ==========
     const range = doc.bufferedPageRange();
     const totalPages = range.count;
+    const footerY = 780;
     
     for (let i = range.start; i < range.start + totalPages; i++) {
       doc.switchToPage(i);
-      // Footer at bottom of page - fixed position
-      const footerY = 780;
-      doc.fillColor(COLORS.textLight).fontSize(7)
-        .text(`Report ID: ${report.reportId} | Patient: ${patientName} | © ${hospitalData.name || 'Medical Center'}`, leftMargin, footerY, { align: 'center', width: contentWidth });
-      doc.text(`Page ${i - range.start + 1} of ${totalPages}`, leftMargin, footerY + 10, { align: 'center', width: contentWidth });
+      
+      // Footer separator line
+      doc.moveTo(leftMargin, footerY - 12)
+         .lineTo(rightMargin, footerY - 12)
+         .lineWidth(0.3)
+         .strokeColor(COLORS.accent)
+         .stroke();
+      
+      doc.fillColor(COLORS.textLight).font('Helvetica').fontSize(7);
+      
+      // Left: Report ID
+      doc.text(`Report ID: ${report.reportId || 'Draft'}`, leftMargin, footerY - 5, { continued: false });
+      
+      // Center: Hospital name
+      doc.text(`© ${hospitalData?.name || 'Medical Center'}`, leftMargin, footerY - 5, { width: contentWidth, align: 'center' });
+      
+      // Right: Page number
+      doc.text(`Page ${i - range.start + 1} of ${totalPages}`, leftMargin, footerY - 5, { width: contentWidth, align: 'right' });
     }
 
     doc.end();
-    return new Promise((res, rej) => {
-      doc.on('end', () => res(Buffer.concat(chunks)));
-      doc.on('error', rej);
+    return new Promise((resolve, reject) => {
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
     });
 
   } catch (error) {
-    console.error('PDF Error:', error);
+    console.error('PDF Generation Error:', error);
     throw error;
   }
 }
