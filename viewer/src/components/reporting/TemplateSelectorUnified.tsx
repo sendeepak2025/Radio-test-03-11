@@ -284,7 +284,7 @@ export const TemplateSelectorUnified: React.FC<TemplateSelectorProps> = ({
   // ============================================================================
   // CREATE DRAFT
   // ============================================================================
-
+console.log(patientInfo,"patientInfo")
   // ✅ TEMPLATE FIX: Handle template selection with definitive state
   const handleTemplateClick = async (template: ReportTemplate) => {
     try {

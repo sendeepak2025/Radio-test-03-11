@@ -170,7 +170,7 @@ const reportReducer = (state: ReportState, action: ReportAction): ReportState =>
       return {
         ...state,
         selectedTemplate: action.payload,
-        templateId: action.payload.templateId || action.payload._id,
+        templateId: (action.payload as any).templateId || (action.payload as any)._id || (action.payload as any).id,
         templateName: action.payload.name
       };
       
@@ -478,7 +478,14 @@ export const ReportingProvider: React.FC<{
         });
         
         if (!response.ok) {
-          throw new Error(`Save failed: ${response.statusText}`);
+          const errorData = await response.json().catch(() => ({}));
+          
+          // Handle signed report error specially
+          if (errorData.error === 'SIGNED_IMMUTABLE') {
+            throw new Error('This report is signed and cannot be edited. Use "Amend Report" to create a new version.');
+          }
+          
+          throw new Error(errorData.message || `Save failed: ${response.statusText}`);
         }
         
         const data = await response.json();
@@ -490,6 +497,7 @@ export const ReportingProvider: React.FC<{
         console.error('❌ Save failed:', error);
         dispatch({ type: 'SET_ERROR', payload: error.message });
         dispatch({ type: 'SET_SAVING', payload: false });
+        throw error; // Re-throw so UI can handle it
       }
     }, [state]),
     
@@ -591,7 +599,49 @@ export const ReportingProvider: React.FC<{
     
     setActivePanel: useCallback((panel: ReportState['activePanel']) => {
       dispatch({ type: 'SET_ACTIVE_PANEL', payload: panel });
-    }, [])
+    }, []),
+    
+    // Amend a signed report - creates a new draft version
+    amendReport: useCallback(async (reason: string): Promise<string> => {
+      if (!state.reportId) {
+        throw new Error('Cannot amend: No report ID');
+      }
+      
+      dispatch({ type: 'SET_SAVING', payload: true });
+      dispatch({ type: 'SET_ERROR', payload: '' });
+      
+      try {
+        const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+        
+        const response = await fetch(`/api/reports/${state.reportId}/amend`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ reason })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to create amended report');
+        }
+        
+        const data = await response.json();
+        console.log('✅ Amended report created:', data.amendedReport.reportId);
+        
+        dispatch({ type: 'SET_SAVING', payload: false });
+        
+        // Return the new report ID so UI can navigate to it
+        return data.amendedReport.reportId;
+        
+      } catch (error: any) {
+        console.error('❌ Amend failed:', error);
+        dispatch({ type: 'SET_ERROR', payload: error.message });
+        dispatch({ type: 'SET_SAVING', payload: false });
+        throw error;
+      }
+    }, [state.reportId])
   };
   
   return (

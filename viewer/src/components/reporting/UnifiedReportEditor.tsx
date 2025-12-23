@@ -53,13 +53,18 @@ interface UnifiedReportEditorProps {
 
 const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) => {
   const { state, actions } = useReporting();
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'warning' | 'info' }>({
     open: false,
     message: '',
     severity: 'success'
   });
   const [showSignDialog, setShowSignDialog] = useState(false);
   const [showPreviewDialog, setShowPreviewDialog] = useState(false);
+  const [showAmendDialog, setShowAmendDialog] = useState(false);
+  const [amendReason, setAmendReason] = useState('');
+  
+  // Check if report is signed/final
+  const isSignedReport = state.reportStatus === 'final' || state.reportStatus === 'final_with_addendum';
   
   // Load captured images from screenshotService when editor opens
   useEffect(() => {
@@ -77,11 +82,45 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
   }, []); // Only run once on mount
   
   const handleSave = async () => {
+    // If report is signed, show amend dialog instead
+    if (isSignedReport) {
+      setShowAmendDialog(true);
+      return;
+    }
+    
     try {
       await actions.saveReport();
       setSnackbar({ open: true, message: 'Report saved successfully', severity: 'success' });
-    } catch (error) {
-      setSnackbar({ open: true, message: 'Failed to save report', severity: 'error' });
+    } catch (error: any) {
+      if (error.message?.includes('signed')) {
+        setShowAmendDialog(true);
+        setSnackbar({ open: true, message: 'This report is signed. Create an amended version to make changes.', severity: 'warning' });
+      } else {
+        setSnackbar({ open: true, message: error.message || 'Failed to save report', severity: 'error' });
+      }
+    }
+  };
+  
+  const handleAmend = async () => {
+    if (!amendReason.trim()) {
+      setSnackbar({ open: true, message: 'Please provide a reason for the amendment', severity: 'warning' });
+      return;
+    }
+    
+    try {
+      const newReportId = await actions.amendReport(amendReason);
+      setShowAmendDialog(false);
+      setAmendReason('');
+      setSnackbar({ open: true, message: 'Amended report created! Redirecting...', severity: 'success' });
+      
+      // Navigate to the new amended report
+      setTimeout(() => {
+        const params = new URLSearchParams(window.location.search);
+        params.set('reportId', newReportId);
+        window.location.href = `${window.location.pathname}?${params.toString()}`;
+      }, 1500);
+    } catch (error: any) {
+      setSnackbar({ open: true, message: error.message || 'Failed to create amended report', severity: 'error' });
     }
   };
   
@@ -120,8 +159,11 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
               <Chip 
                 label={state.reportStatus.toUpperCase()} 
                 size="small" 
-                color={state.reportStatus === 'final' ? 'success' : 'default'}
+                color={state.reportStatus === 'final' ? 'success' : state.reportStatus === 'final_with_addendum' ? 'info' : 'default'}
               />
+              {isSignedReport && (
+                <Chip label="🔒 Signed" size="small" color="success" variant="outlined" />
+              )}
             </Box>
             <Box sx={{ fontSize: '0.875rem', color: 'text.secondary', mt: 0.5 }}>
               Patient ID: {state.patientInfo.patientID} | Study: {state.studyInstanceUID.slice(0, 20)}...
@@ -130,7 +172,7 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
         </Box>
         
         <Box display="flex" gap={1} alignItems="center">
-          {state.hasUnsavedChanges && (
+          {state.hasUnsavedChanges && !isSignedReport && (
             <Chip label="Unsaved changes" size="small" color="warning" />
           )}
           
@@ -152,30 +194,49 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
             </Button>
           </Tooltip>
           
-          <Tooltip title="Save Report (Ctrl+S)">
-            <IconButton 
-              color="primary" 
-              onClick={handleSave}
-              disabled={state.saving || !state.hasUnsavedChanges}
-            >
-              <Badge color="error" variant="dot" invisible={!state.hasUnsavedChanges}>
-                <SaveIcon />
-              </Badge>
-            </IconButton>
-          </Tooltip>
+          {isSignedReport ? (
+            // Show Amend button for signed reports
+            <Tooltip title="Create amended version of this signed report">
+              <Button
+                variant="contained"
+                color="warning"
+                size="small"
+                startIcon={<HistoryIcon />}
+                onClick={() => setShowAmendDialog(true)}
+                sx={{ textTransform: 'none' }}
+              >
+                Amend
+              </Button>
+            </Tooltip>
+          ) : (
+            // Show Save button for draft reports
+            <Tooltip title="Save Report (Ctrl+S)">
+              <IconButton 
+                color="primary" 
+                onClick={handleSave}
+                disabled={state.saving || !state.hasUnsavedChanges}
+              >
+                <Badge color="error" variant="dot" invisible={!state.hasUnsavedChanges}>
+                  <SaveIcon />
+                </Badge>
+              </IconButton>
+            </Tooltip>
+          )}
           
-          <Tooltip title="Sign Report">
-            <Button
-              variant="contained"
-              color="success"
-              size="small"
-              startIcon={<SignIcon />}
-              onClick={() => setShowSignDialog(true)}
-              disabled={state.reportStatus === 'final'}
-              sx={{ textTransform: 'none' }}
-            >
-              Sign
-            </Button>
+          <Tooltip title={isSignedReport ? "Report already signed" : "Sign Report"}>
+            <span>
+              <Button
+                variant="contained"
+                color="success"
+                size="small"
+                startIcon={<SignIcon />}
+                onClick={() => setShowSignDialog(true)}
+                disabled={isSignedReport}
+                sx={{ textTransform: 'none' }}
+              >
+                {isSignedReport ? 'Signed' : 'Sign'}
+              </Button>
+            </span>
           </Tooltip>
           
           {onClose && (
@@ -186,6 +247,13 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
         </Box>
       </Paper>
       
+      {/* Signed Report Banner */}
+      {isSignedReport && (
+        <Alert severity="info" sx={{ borderRadius: 0 }}>
+          This report has been signed and is now read-only. To make changes, click "Amend" to create a new version.
+        </Alert>
+      )}
+      
       {/* Loading Bar */}
       {(state.loading || state.saving) && <LinearProgress />}
       
@@ -194,6 +262,78 @@ const UnifiedReportEditor: React.FC<UnifiedReportEditorProps> = ({ onClose }) =>
         <Alert severity="error" onClose={() => actions.updateField('error', '')}>
           {state.error}
         </Alert>
+      )}
+      
+      {/* Amend Dialog */}
+      {showAmendDialog && (
+        <Box
+          sx={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            bgcolor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999
+          }}
+          onClick={() => setShowAmendDialog(false)}
+        >
+          <Paper
+            sx={{ p: 3, maxWidth: 500, width: '90%' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+              <Box display="flex" alignItems="center" gap={1}>
+                <HistoryIcon color="warning" />
+                <strong>Amend Signed Report</strong>
+              </Box>
+              <IconButton size="small" onClick={() => setShowAmendDialog(false)}>
+                <CloseIcon />
+              </IconButton>
+            </Box>
+            
+            <Alert severity="info" sx={{ mb: 2 }}>
+              This will create a new draft report based on the signed report. The original signed report will be preserved for audit purposes.
+            </Alert>
+            
+            <Box mb={2}>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>
+                Reason for Amendment *
+              </label>
+              <textarea
+                value={amendReason}
+                onChange={e => setAmendReason(e.target.value)}
+                placeholder="Enter the reason for amending this report..."
+                style={{
+                  width: '100%',
+                  minHeight: 100,
+                  padding: 12,
+                  borderRadius: 4,
+                  border: '1px solid #ccc',
+                  fontSize: 14,
+                  resize: 'vertical'
+                }}
+              />
+            </Box>
+            
+            <Box display="flex" gap={1} justifyContent="flex-end">
+              <Button variant="outlined" onClick={() => setShowAmendDialog(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="contained"
+                color="warning"
+                onClick={handleAmend}
+                disabled={!amendReason.trim() || state.saving}
+              >
+                {state.saving ? 'Creating...' : 'Create Amended Report'}
+              </Button>
+            </Box>
+          </Paper>
+        </Box>
       )}
       
       {/* Main Content Area */}
