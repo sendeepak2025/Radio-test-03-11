@@ -20,9 +20,19 @@ import {
   Trash2,
   RotateCcw,
   Camera,
+  FlipHorizontal,
+  FlipVertical,
+  Undo2,
+  Redo2,
+  Keyboard,
 } from "lucide-react"
 import { screenshotService } from "../../services/screenshotService"
 import CapturedImagesGallery from "./CapturedImagesGallery"
+
+// Debug mode - set to false for production
+const DEBUG_MODE = process.env.NODE_ENV === 'development'
+const debugLog = (...args: any[]) => DEBUG_MODE && console.log(...args)
+const debugWarn = (...args: any[]) => DEBUG_MODE && console.warn(...args)
 
 // ======================== TYPES ========================
 type Tool =
@@ -40,6 +50,129 @@ type Tool =
   | "calibration"
 type AnnotationType = "length" | "angle" | "rect" | "circle" | "text" | "line" | "arrow" | "polygon" | "calibration"
 type Point = { x: number; y: number }
+
+// Window/Level presets for different modalities
+interface WLPreset {
+  name: string
+  windowWidth: number
+  windowCenter: number
+}
+
+const CT_PRESETS: WLPreset[] = [
+  { name: "Soft Tissue", windowWidth: 400, windowCenter: 40 },
+  { name: "Lung", windowWidth: 1500, windowCenter: -600 },
+  { name: "Bone", windowWidth: 2000, windowCenter: 300 },
+  { name: "Brain", windowWidth: 80, windowCenter: 40 },
+  { name: "Liver", windowWidth: 150, windowCenter: 30 },
+  { name: "Abdomen", windowWidth: 350, windowCenter: 50 },
+]
+
+const MR_PRESETS: WLPreset[] = [
+  { name: "Default", windowWidth: 400, windowCenter: 200 },
+  { name: "T1", windowWidth: 500, windowCenter: 250 },
+  { name: "T2", windowWidth: 300, windowCenter: 150 },
+]
+
+const XR_PRESETS: WLPreset[] = [
+  { name: "Default", windowWidth: 2048, windowCenter: 1024 },
+  { name: "Chest", windowWidth: 4096, windowCenter: 2048 },
+  { name: "Bone", windowWidth: 2500, windowCenter: 1250 },
+]
+
+// Non-image DICOM modalities that cannot be displayed as images
+const NON_IMAGE_MODALITIES = [
+  'SR',   // Structured Report
+  'KO',   // Key Object Selection
+  'PR',   // Presentation State
+  'DOC',  // Document
+  'PLAN', // RT Plan
+  'REG',  // Registration
+  'FID',  // Fiducials
+  'SEG',  // Segmentation (sometimes has images, but often not)
+  'RWV',  // Real World Value Mapping
+  'AU',   // Audio
+  'ECG',  // Electrocardiography
+  'HD',   // Hemodynamic
+  'SMR',  // Stereometric Relationship
+]
+
+// Keyboard shortcuts configuration
+const KEYBOARD_SHORTCUTS = {
+  'r': 'Rotate 90°',
+  'h': 'Flip Horizontal',
+  'v': 'Flip Vertical',
+  'i': 'Invert Colors',
+  'g': 'Toggle Grid',
+  'o': 'Toggle Overlay',
+  '0': 'Reset View',
+  '+': 'Zoom In',
+  '-': 'Zoom Out',
+  'ArrowLeft': 'Previous Frame',
+  'ArrowRight': 'Next Frame',
+  'Space': 'Play/Pause',
+  'l': 'Toggle Loop Mode',
+  'b': 'Reverse Direction',
+  'z': 'Undo',
+  'y': 'Redo',
+  'Escape': 'Cancel Drawing',
+}
+
+// DICOM Metadata interface for proper medical imaging display
+interface DicomMetadata {
+  // Patient Information
+  patientName?: string
+  patientID?: string
+  patientBirthDate?: string
+  patientSex?: string
+  patientAge?: string
+  
+  // Study Information
+  studyDate?: string
+  studyTime?: string
+  studyDescription?: string
+  accessionNumber?: string
+  referringPhysicianName?: string
+  institutionName?: string
+  
+  // Series Information
+  seriesDate?: string
+  seriesTime?: string
+  seriesDescription?: string
+  modality?: string
+  bodyPartExamined?: string
+  
+  // Image Information
+  instanceNumber?: number
+  acquisitionDate?: string
+  acquisitionTime?: string
+  
+  // Window/Level (critical for proper display)
+  windowCenter?: number | number[]
+  windowWidth?: number | number[]
+  
+  // Pixel Spacing for measurements
+  pixelSpacing?: [number, number] // [row spacing, column spacing] in mm
+  imagerPixelSpacing?: [number, number] // For projection radiography
+  
+  // Image dimensions
+  rows?: number
+  columns?: number
+  bitsAllocated?: number
+  bitsStored?: number
+  
+  // Acquisition parameters (CT/XR)
+  kvp?: number // kVp for X-ray
+  exposureTime?: number // ms
+  xRayTubeCurrent?: number // mA
+  exposure?: number // mAs
+  sliceThickness?: number // mm
+  
+  // MR specific
+  magneticFieldStrength?: number
+  repetitionTime?: number // TR
+  echoTime?: number // TE
+  flipAngle?: number
+}
 
 interface Annotation {
   id: string
@@ -84,6 +217,8 @@ interface CombinedDicomViewerProps {
   onCanvasActiveChange?: (isActive: boolean) => void
   isLoading?: boolean
   error?: string
+  // DICOM metadata for proper display
+  dicomMetadata?: DicomMetadata
   // External control callbacks
   onZoomIn?: () => void
   onZoomOut?: () => void
@@ -166,43 +301,100 @@ function drawGrid(
 }
 
 function drawOverlay(ctx: CanvasRenderingContext2D, info: any) {
-  const lines = [
+  const vw = info.vw || 800
+  const vh = info.vh || 600
+  
+  // ===== TOP-LEFT: Image/Frame Info =====
+  const topLeftLines = [
     `Frame: ${info.frame}/${info.totalFrames}`,
     `Zoom: ${(info.zoom * 100).toFixed(0)}%`,
-    `Study: ${info.studyInstanceUID?.slice(-8) || "N/A"}`,
   ]
-
-  // Add series-specific information if available
+  
   if (info.seriesDescription) {
-    lines.push(`Series: ${info.seriesDescription}`)
-  }
-  if (info.seriesNumber) {
-    lines.push(`Series #: ${info.seriesNumber}`)
+    topLeftLines.push(`Series: ${info.seriesDescription}`)
   }
   if (info.modality) {
-    lines.push(`Modality: ${info.modality}`)
+    topLeftLines.push(`Modality: ${info.modality}`)
+  }
+  if (info.windowCenter !== null && info.windowWidth !== null) {
+    topLeftLines.push(`W/L: ${info.windowWidth?.toFixed(0) || '-'} / ${info.windowCenter?.toFixed(0) || '-'}`)
+  }
+  if (info.mmPerPixel) {
+    topLeftLines.push(`Scale: ${info.mmPerPixel.toFixed(3)} mm/px`)
   }
 
-  // Calculate background dimensions
+  // ===== TOP-RIGHT: Patient Info (if available) =====
+  const topRightLines: string[] = []
+  if (info.dicomMetadata) {
+    const meta = info.dicomMetadata
+    if (meta.patientName) topRightLines.push(meta.patientName)
+    if (meta.patientID) topRightLines.push(`ID: ${meta.patientID}`)
+    if (meta.patientSex || meta.patientAge) {
+      topRightLines.push(`${meta.patientSex || ''} ${meta.patientAge || ''}`.trim())
+    }
+    if (meta.studyDate) {
+      // Format date if in DICOM format (YYYYMMDD)
+      const dateStr = meta.studyDate.length === 8 
+        ? `${meta.studyDate.slice(0,4)}-${meta.studyDate.slice(4,6)}-${meta.studyDate.slice(6,8)}`
+        : meta.studyDate
+      topRightLines.push(`Study: ${dateStr}`)
+    }
+    if (meta.institutionName) topRightLines.push(meta.institutionName)
+  }
+
+  // ===== BOTTOM-LEFT: Acquisition Info (if available) =====
+  const bottomLeftLines: string[] = []
+  if (info.dicomMetadata) {
+    const meta = info.dicomMetadata
+    // CT/XR specific
+    if (meta.kvp) bottomLeftLines.push(`${meta.kvp} kVp`)
+    if (meta.exposure) bottomLeftLines.push(`${meta.exposure} mAs`)
+    if (meta.sliceThickness) bottomLeftLines.push(`Slice: ${meta.sliceThickness} mm`)
+    // MR specific
+    if (meta.magneticFieldStrength) bottomLeftLines.push(`${meta.magneticFieldStrength}T`)
+    if (meta.repetitionTime) bottomLeftLines.push(`TR: ${meta.repetitionTime} ms`)
+    if (meta.echoTime) bottomLeftLines.push(`TE: ${meta.echoTime} ms`)
+  }
+
+  // Draw settings
   ctx.font = "11px monospace"
   const lineHeight = 14
   const padding = 8
-  const maxWidth = Math.max(...lines.map(line => ctx.measureText(line).width))
-  const bgWidth = maxWidth + padding * 2
-  const bgHeight = lines.length * lineHeight + padding * 2
 
-  // Draw semi-transparent background
-  ctx.fillStyle = "rgba(0, 0, 0, 0.6)"
-  ctx.beginPath()
-  ctx.roundRect(5, 5, bgWidth, bgHeight, 4)
-  ctx.fill()
+  // Helper to draw text block
+  const drawTextBlock = (lines: string[], x: number, y: number, alignRight = false) => {
+    if (lines.length === 0) return
+    
+    const maxWidth = Math.max(...lines.map(line => ctx.measureText(line).width))
+    const bgWidth = maxWidth + padding * 2
+    const bgHeight = lines.length * lineHeight + padding * 2
+    
+    const drawX = alignRight ? x - bgWidth : x
+    
+    // Background
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)"
+    ctx.beginPath()
+    ctx.roundRect(drawX, y, bgWidth, bgHeight, 4)
+    ctx.fill()
+    
+    // Text
+    ctx.fillStyle = "rgba(255, 255, 255, 0.95)"
+    let textY = y + padding + 10
+    for (const line of lines) {
+      const textX = alignRight ? drawX + padding : drawX + padding
+      ctx.fillText(line, textX, textY)
+      textY += lineHeight
+    }
+  }
 
-  // Draw text
-  ctx.fillStyle = "rgba(255, 255, 255, 0.95)"
-  let y = 5 + padding + 10
-  for (const line of lines) {
-    ctx.fillText(line, 5 + padding, y)
-    y += lineHeight
+  // Draw all overlays
+  drawTextBlock(topLeftLines, 5, 5)
+  if (topRightLines.length > 0) {
+    drawTextBlock(topRightLines, vw - 5, 5, true)
+  }
+  if (bottomLeftLines.length > 0) {
+    const blockHeight = bottomLeftLines.length * lineHeight + padding * 2
+    drawTextBlock(bottomLeftLines, 5, vh - blockHeight - 5)
   }
 }
 
@@ -781,6 +973,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   onCanvasActiveChange,
   isLoading = false,
   error,
+  dicomMetadata,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -805,16 +998,34 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   const [brightness, setBrightness] = useState(1)
   const [contrast, setContrast] = useState(1)
   const [rotation, setRotation] = useState(0) // Rotation in degrees (0, 90, 180, 270)
+  const [flipH, setFlipH] = useState(false) // Horizontal flip
+  const [flipV, setFlipV] = useState(false) // Vertical flip
+  const [invert, setInvert] = useState(false) // Invert colors (negative)
   const [showOverlay, setShowOverlay] = useState(true)
   const [showGrid, setShowGrid] = useState(false)
   const [mmPerPixel, setMmPerPixel] = useState<number | null>(null)
   const [showCapturedImages, setShowCapturedImages] = useState(false)
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false) // Keyboard shortcuts modal
+  
+  // Window/Level state (for proper DICOM display)
+  const [windowCenter, setWindowCenter] = useState<number | null>(null)
+  const [windowWidth, setWindowWidth] = useState<number | null>(null)
+  const [activeWLPreset, setActiveWLPreset] = useState<string | null>(null)
+  
+  // Structured Report viewer state
+  const [showSRViewer, setShowSRViewer] = useState(false)
+  const [srContent, setSRContent] = useState<string | null>(null)
+  const [srLoading, setSRLoading] = useState(false)
 
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
   const [cursorStyle, setCursorStyle] = useState<string>('default')
   const [showMobileTools, setShowMobileTools] = useState(false)
   const [toolsPanelCollapsed, setToolsPanelCollapsed] = useState(true) // Hidden by default
+  
+  // Undo/Redo history for annotations
+  const [annotationHistory, setAnnotationHistory] = useState<Annotation[][]>([[]])
+  const [historyIndex, setHistoryIndex] = useState(0)
   
   // Auto-hide panels when working on canvas
   const [panelsAutoHidden, setPanelsAutoHidden] = useState(false)
@@ -829,6 +1040,8 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   // Playback state for frame navigation
   const [isPlaying, setIsPlaying] = useState(false)
   const [playSpeed, setPlaySpeed] = useState(5) // frames per second
+  const [loopMode, setLoopMode] = useState<'loop' | 'once' | 'bounce'>('loop') // Cine loop mode
+  const [playDirection, setPlayDirection] = useState<1 | -1>(1) // 1 = forward, -1 = reverse
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null)
   
   // Loading state for frame fetching
@@ -848,9 +1061,94 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   // Use totalFrames for multi-frame DICOM, fallback to numberOfInstances
   const totalFrames = currentSeriesData?.totalFrames || currentSeriesData?.numberOfImages || currentSeriesData?.numberOfInstances || sopInstanceUIDs.length || 1
 
+  // Get W/L presets based on modality
+  const currentModality = dicomMetadata?.modality || currentSeriesData?.modality || 'CT'
+  const wlPresets = useMemo(() => {
+    switch (currentModality?.toUpperCase()) {
+      case 'CT': return CT_PRESETS
+      case 'MR': return MR_PRESETS
+      case 'CR':
+      case 'DX':
+      case 'XR': return XR_PRESETS
+      default: return CT_PRESETS
+    }
+  }, [currentModality])
+
+  // Annotation persistence key based on study/series
+  const annotationStorageKey = useMemo(() => 
+    `dicom-annotations-${studyInstanceUID}-${currentSeriesUID || 'default'}`,
+    [studyInstanceUID, currentSeriesUID]
+  )
+  
+  // Load annotations from localStorage on mount or series change
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(annotationStorageKey)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed)) {
+          setAnnotations(parsed)
+          setAnnotationHistory([parsed])
+          setHistoryIndex(0)
+          debugLog(`[Annotations] Loaded ${parsed.length} annotations from storage`)
+        }
+      }
+    } catch (err) {
+      debugWarn('[Annotations] Failed to load from localStorage:', err)
+    }
+  }, [annotationStorageKey])
+  
+  // Save annotations to localStorage when they change
+  useEffect(() => {
+    try {
+      if (annotations.length > 0) {
+        localStorage.setItem(annotationStorageKey, JSON.stringify(annotations))
+        debugLog(`[Annotations] Saved ${annotations.length} annotations to storage`)
+      } else {
+        // Remove key if no annotations
+        localStorage.removeItem(annotationStorageKey)
+      }
+    } catch (err) {
+      debugWarn('[Annotations] Failed to save to localStorage:', err)
+    }
+  }, [annotations, annotationStorageKey])
+
+  // Initialize from DICOM metadata when available
+  useEffect(() => {
+    if (dicomMetadata) {
+      // Auto-set pixel spacing from DICOM
+      if (dicomMetadata.pixelSpacing && dicomMetadata.pixelSpacing.length >= 2) {
+        // Use average of row and column spacing
+        const avgSpacing = (dicomMetadata.pixelSpacing[0] + dicomMetadata.pixelSpacing[1]) / 2
+        setMmPerPixel(avgSpacing)
+        debugLog(`[DICOM] Auto-calibrated from PixelSpacing: ${avgSpacing.toFixed(4)} mm/px`)
+      } else if (dicomMetadata.imagerPixelSpacing && dicomMetadata.imagerPixelSpacing.length >= 2) {
+        const avgSpacing = (dicomMetadata.imagerPixelSpacing[0] + dicomMetadata.imagerPixelSpacing[1]) / 2
+        setMmPerPixel(avgSpacing)
+        debugLog(`[DICOM] Auto-calibrated from ImagerPixelSpacing: ${avgSpacing.toFixed(4)} mm/px`)
+      }
+      
+      // Auto-set Window/Level from DICOM
+      if (dicomMetadata.windowCenter !== undefined && dicomMetadata.windowWidth !== undefined) {
+        const wc = Array.isArray(dicomMetadata.windowCenter) ? dicomMetadata.windowCenter[0] : dicomMetadata.windowCenter
+        const ww = Array.isArray(dicomMetadata.windowWidth) ? dicomMetadata.windowWidth[0] : dicomMetadata.windowWidth
+        setWindowCenter(wc)
+        setWindowWidth(ww)
+        debugLog(`[DICOM] Auto-set W/L from metadata: WC=${wc}, WW=${ww}`)
+      }
+    }
+  }, [dicomMetadata])
   // ============ OPTIMIZED FRAME LOADING SYSTEM ============
-  // LRU Cache with size limit to prevent memory issues on large studies
-  const MAX_CACHE_SIZE = 50 // Keep max 50 frames in memory
+  // Dynamic cache size based on available memory and study size
+  const MAX_CACHE_SIZE = useMemo(() => {
+    // Estimate: each frame ~2MB in memory (512x512 RGBA)
+    // Default to 100 frames (~200MB), adjust based on study size
+    const baseSize = 100
+    if (totalFrames <= 50) return Math.min(totalFrames, 50) // Small study: cache all
+    if (totalFrames <= 200) return 80 // Medium study
+    return baseSize // Large study: use LRU
+  }, [totalFrames])
+  
   const cacheOrderRef = useRef<string[]>([]) // Track access order for LRU
   
   // Request deduplication - prevent duplicate fetches for same frame
@@ -858,6 +1156,19 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   
   // Prefetch controller to cancel on series change
   const prefetchControllerRef = useRef<AbortController | null>(null)
+  
+  // Concurrent request limiter - prevent overwhelming the server
+  const MAX_CONCURRENT_REQUESTS = 4
+  const activeRequestsRef = useRef<number>(0)
+  const requestQueueRef = useRef<Array<() => void>>([])
+  
+  // Process queued requests when a slot opens
+  const processQueue = useCallback(() => {
+    while (requestQueueRef.current.length > 0 && activeRequestsRef.current < MAX_CONCURRENT_REQUESTS) {
+      const nextRequest = requestQueueRef.current.shift()
+      if (nextRequest) nextRequest()
+    }
+  }, [])
 
   // LRU cache management
   const addToCache = useCallback((key: string, bitmap: ImageBitmap) => {
@@ -883,15 +1194,15 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         cache.delete(oldestKey)
       }
     }
-  }, [])
+  }, [MAX_CACHE_SIZE])
 
-  // Core frame fetcher with deduplication and retry
+  // Core frame fetcher with deduplication, retry, and concurrency control
   const fetchFrame = useCallback(
-    async (frameIndex: number, signal?: AbortSignal, retryCount = 0): Promise<ImageBitmap | null> => {
+    async (frameIndex: number, signal?: AbortSignal, retryCount = 0, priority: 'high' | 'low' = 'high'): Promise<ImageBitmap | null> => {
       const cacheKey = `${currentSeriesUID}-${frameIndex}`
       const MAX_RETRIES = 2
       
-      // Check cache first
+      // Check cache first (instant return)
       if (frameCacheRef.current.has(cacheKey)) {
         // Update LRU order
         const order = cacheOrderRef.current
@@ -908,15 +1219,40 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         return pendingRequestsRef.current.get(cacheKey)!
       }
       
-      // Create new request
+      // Create new request with concurrency control
       const frameUrl = currentSeriesUID
         ? `${dicomWebBaseUrl}/studies/${studyInstanceUID}/series/${currentSeriesUID}/frames/${frameIndex}`
         : `${dicomWebBaseUrl}/studies/${studyInstanceUID}/frames/${frameIndex}`
       
+      // Wait for available slot if at max concurrent requests
+      const waitForSlot = (): Promise<void> => {
+        return new Promise((resolve) => {
+          if (activeRequestsRef.current < MAX_CONCURRENT_REQUESTS) {
+            activeRequestsRef.current++
+            resolve()
+          } else {
+            // Queue the request - high priority goes to front
+            if (priority === 'high') {
+              requestQueueRef.current.unshift(() => {
+                activeRequestsRef.current++
+                resolve()
+              })
+            } else {
+              requestQueueRef.current.push(() => {
+                activeRequestsRef.current++
+                resolve()
+              })
+            }
+          }
+        })
+      }
+      
       const requestPromise = (async () => {
+        await waitForSlot()
+        
         try {
           const response = await fetch(frameUrl, { 
-            signal: signal || AbortSignal.timeout(90000) // 90 second timeout
+            signal: signal || AbortSignal.timeout(60000) // 60 second timeout (reduced from 90)
           })
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
           
@@ -924,7 +1260,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
           
           // Validate blob has content
           if (blob.size < 100) {
-            console.warn(`[Frame ${frameIndex}] Received empty or too small blob (${blob.size} bytes)`)
+            debugWarn(`[Frame ${frameIndex}] Received empty or too small blob (${blob.size} bytes)`)
             throw new Error('Empty frame data')
           }
           
@@ -932,7 +1268,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
           
           // Validate bitmap dimensions
           if (bitmap.width < 10 || bitmap.height < 10) {
-            console.warn(`[Frame ${frameIndex}] Invalid bitmap dimensions: ${bitmap.width}x${bitmap.height}`)
+            debugWarn(`[Frame ${frameIndex}] Invalid bitmap dimensions: ${bitmap.width}x${bitmap.height}`)
             bitmap.close()
             throw new Error('Invalid frame dimensions')
           }
@@ -947,29 +1283,31 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
           
           console.error(`[Frame ${frameIndex}] Load error (attempt ${retryCount + 1}):`, err.message)
           
-          // Retry on failure
+          // Retry on failure (with reduced retries for faster failure)
           if (retryCount < MAX_RETRIES) {
-            console.log(`[Frame ${frameIndex}] Retrying... (${retryCount + 1}/${MAX_RETRIES})`)
+            debugLog(`[Frame ${frameIndex}] Retrying... (${retryCount + 1}/${MAX_RETRIES})`)
             pendingRequestsRef.current.delete(cacheKey)
-            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1))) // Exponential backoff
-            return fetchFrame(frameIndex, signal, retryCount + 1)
+            await new Promise(resolve => setTimeout(resolve, 500 * (retryCount + 1))) // Faster retry
+            return fetchFrame(frameIndex, signal, retryCount + 1, priority)
           }
           
           return null
         } finally {
           pendingRequestsRef.current.delete(cacheKey)
+          activeRequestsRef.current--
+          processQueue() // Process next queued request
         }
       })()
       
       pendingRequestsRef.current.set(cacheKey, requestPromise)
       return requestPromise
     },
-    [dicomWebBaseUrl, studyInstanceUID, currentSeriesUID, addToCache],
+    [dicomWebBaseUrl, studyInstanceUID, currentSeriesUID, addToCache, processQueue],
   )
 
-  // Smart prefetching - load nearby frames in background
+  // Smart prefetching - load nearby frames in background with adaptive strategy
   const prefetchNearbyFrames = useCallback(
-    (centerFrame: number) => {
+    (centerFrame: number, direction: 'forward' | 'backward' | 'both' = 'both') => {
       // Cancel previous prefetch
       if (prefetchControllerRef.current) {
         prefetchControllerRef.current.abort()
@@ -977,9 +1315,27 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
       prefetchControllerRef.current = new AbortController()
       const signal = prefetchControllerRef.current.signal
       
-      // Prefetch pattern: prioritize forward frames, then backward
-      const prefetchOrder = [1, 2, -1, 3, 4, -2, 5] // Relative to current
-      const prefetchCount = Math.min(5, Math.floor(totalFrames / 10) + 2) // Adaptive based on study size
+      // Adaptive prefetch count based on study size and playback state
+      const basePrefetch = isPlaying ? 15 : 8 // More prefetch during playback
+      const prefetchCount = Math.min(basePrefetch, Math.max(5, Math.floor(totalFrames / 5)))
+      
+      // Build prefetch order based on direction
+      const prefetchOrder: number[] = []
+      if (direction === 'forward' || direction === 'both') {
+        for (let i = 1; i <= prefetchCount; i++) prefetchOrder.push(i)
+      }
+      if (direction === 'backward' || direction === 'both') {
+        for (let i = 1; i <= Math.floor(prefetchCount / 2); i++) prefetchOrder.push(-i)
+      }
+      
+      // Sort by priority (forward frames first for playback)
+      if (direction === 'both') {
+        prefetchOrder.sort((a, b) => {
+          if (a > 0 && b < 0) return -1 // Forward first
+          if (a < 0 && b > 0) return 1
+          return Math.abs(a) - Math.abs(b) // Then by distance
+        })
+      }
       
       let prefetched = 0
       for (const offset of prefetchOrder) {
@@ -990,13 +1346,13 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
           const cacheKey = `${currentSeriesUID}-${targetFrame}`
           if (!frameCacheRef.current.has(cacheKey) && !pendingRequestsRef.current.has(cacheKey)) {
             // Low priority background fetch
-            fetchFrame(targetFrame, signal)
+            fetchFrame(targetFrame, signal, 0, 'low')
             prefetched++
           }
         }
       }
     },
-    [currentSeriesUID, totalFrames, fetchFrame],
+    [currentSeriesUID, totalFrames, fetchFrame, isPlaying],
   )
 
   // Main frame loader - used by draw function
@@ -1015,7 +1371,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
       setIsFrameLoading(true)
       
       try {
-        const bitmap = await fetchFrame(frameIndex)
+        const bitmap = await fetchFrame(frameIndex, undefined, 0, 'high') // High priority for current frame
         setIsFrameLoading(false)
         
         // Trigger prefetch after loading
@@ -1048,34 +1404,72 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     cache.clear()
     order.length = 0
     
-    // Clear pending requests
+    // Clear pending requests and reset queue
     pendingRequestsRef.current.clear()
+    requestQueueRef.current = []
+    activeRequestsRef.current = 0
     
-    console.log(`[Cache] Cleared for series change to: ${currentSeriesUID?.slice(-8)}`)
+    debugLog(`[Cache] Cleared for series change to: ${currentSeriesUID?.slice(-8)}`)
+    
+    // Check if this is a non-image modality
+    const seriesModality = currentSeriesData?.modality?.toUpperCase() || ''
+    const isNonImageModality = NON_IMAGE_MODALITIES.includes(seriesModality)
     
     // Reset frame and start preloading for new series
     if (currentSeriesUID) {
       setCurrentFrame(0) // Reset to first frame of new series
+      
+      // Skip preloading for non-image modalities
+      if (isNonImageModality) {
+        debugLog(`[Series] Non-image modality detected: ${seriesModality}, skipping preload`)
+        setIsInitialLoading(false)
+        setIsFrameLoading(false)
+        return
+      }
+      
       setIsInitialLoading(true) // Show initial loading screen
       setIsFrameLoading(true) // Show loading indicator
-      setPreloadProgress({ loaded: 0, total: totalFrames })
       
-      // Preload first frame before showing viewer
-      const preloadFirstFrame = async () => {
+      // Adaptive preload count based on study size
+      const initialPreloadCount = Math.min(
+        totalFrames <= 20 ? totalFrames : 20, // Small studies: load all, large: first 20
+        totalFrames
+      )
+      setPreloadProgress({ loaded: 0, total: initialPreloadCount })
+      
+      // Preload first frame with high priority, then batch load others
+      const preloadFrames = async () => {
         try {
-          const bitmap = await fetchFrame(0)
-          if (bitmap) {
-            setPreloadProgress({ loaded: 1, total: totalFrames })
+          // Load first frame immediately (high priority)
+          const firstBitmap = await fetchFrame(0, undefined, 0, 'high')
+          if (firstBitmap) {
+            setPreloadProgress({ loaded: 1, total: initialPreloadCount })
             setIsInitialLoading(false) // First frame loaded, show viewer
             setIsFrameLoading(false)
             
-            // Continue preloading remaining frames in background (up to first 10)
-            const preloadCount = Math.min(10, totalFrames)
-            for (let i = 1; i < preloadCount; i++) {
-              fetchFrame(i).then(() => {
-                setPreloadProgress(prev => ({ ...prev, loaded: Math.min(prev.loaded + 1, preloadCount) }))
-              })
+            // Continue preloading remaining frames in background with controlled concurrency
+            // Use Promise.all with chunks to avoid overwhelming the server
+            const chunkSize = MAX_CONCURRENT_REQUESTS
+            for (let start = 1; start < initialPreloadCount; start += chunkSize) {
+              const end = Math.min(start + chunkSize, initialPreloadCount)
+              const promises = []
+              
+              for (let i = start; i < end; i++) {
+                promises.push(
+                  fetchFrame(i, undefined, 0, 'low').then(() => {
+                    setPreloadProgress(prev => ({ 
+                      ...prev, 
+                      loaded: Math.min(prev.loaded + 1, initialPreloadCount) 
+                    }))
+                  })
+                )
+              }
+              
+              // Wait for this chunk to complete before starting next
+              await Promise.all(promises)
             }
+            
+            debugLog(`[Preload] Completed initial preload of ${initialPreloadCount} frames`)
           } else {
             // Failed to load first frame, still show viewer with error state
             setIsInitialLoading(false)
@@ -1088,9 +1482,51 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         }
       }
       
-      preloadFirstFrame()
+      preloadFrames()
     }
-  }, [currentSeriesUID, totalFrames, fetchFrame])
+  }, [currentSeriesUID, totalFrames, fetchFrame, currentSeriesData?.modality])
+  
+  // ============ MEMORY CLEANUP ON UNMOUNT ============
+  useEffect(() => {
+    // Cleanup function runs on unmount
+    return () => {
+      debugLog('[Cleanup] Component unmounting, cleaning up resources...')
+      
+      // Cancel any pending prefetches
+      if (prefetchControllerRef.current) {
+        prefetchControllerRef.current.abort()
+        prefetchControllerRef.current = null
+      }
+      
+      // Close all cached ImageBitmaps to free GPU/memory
+      const cache = frameCacheRef.current
+      cache.forEach((bitmap, key) => {
+        try {
+          bitmap.close()
+        } catch (e) {
+          debugWarn(`[Cleanup] Failed to close bitmap ${key}:`, e)
+        }
+      })
+      cache.clear()
+      cacheOrderRef.current.length = 0
+      
+      // Clear pending requests map
+      pendingRequestsRef.current.clear()
+      
+      // Clear any pending timeouts
+      if (autoHideTimeoutRef.current) {
+        clearTimeout(autoHideTimeoutRef.current)
+        autoHideTimeoutRef.current = null
+      }
+      
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current)
+        playIntervalRef.current = null
+      }
+      
+      debugLog('[Cleanup] All resources cleaned up')
+    }
+  }, []) // Empty deps - only run on unmount
   // ============ END OPTIMIZED FRAME LOADING ============
 
   // Draw function - stored in ref to avoid dependency issues
@@ -1132,6 +1568,17 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     // Background
     ctx.fillStyle = "#0f172a"
     ctx.fillRect(0, 0, vw, vh)
+
+    // Check if current series is a non-image modality
+    const seriesModality = currentSeriesData?.modality?.toUpperCase() || dicomMetadata?.modality?.toUpperCase() || ''
+    const isNonImageModality = NON_IMAGE_MODALITIES.includes(seriesModality)
+    
+    if (isNonImageModality) {
+      // Just draw background - the overlay with buttons is rendered as HTML
+      ctx.fillStyle = "#1e293b"
+      ctx.fillRect(0, 0, vw, vh)
+      return
+    }
 
     const bitmap = await loadFrame(currentFrame)
     
@@ -1208,19 +1655,34 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     imageBoundsRef.current = { dx, dy, scale, imgW, imgH }
 
     ctx.imageSmoothingEnabled = true
-    ctx.filter = `brightness(${brightness}) contrast(${contrast})`
     
-    // Apply rotation if needed
-    if (rotation !== 0) {
+    // Build filter string with brightness, contrast, and optional invert
+    let filterStr = `brightness(${brightness}) contrast(${contrast})`
+    if (invert) {
+      filterStr += ' invert(1)'
+    }
+    ctx.filter = filterStr
+    
+    // Apply transformations (rotation and flip)
+    const needsTransform = rotation !== 0 || flipH || flipV
+    if (needsTransform) {
       ctx.save()
       ctx.translate(vw / 2, vh / 2)
-      ctx.rotate((rotation * Math.PI) / 180)
+      
+      // Apply rotation
+      if (rotation !== 0) {
+        ctx.rotate((rotation * Math.PI) / 180)
+      }
+      
+      // Apply flip
+      ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1)
+      
       ctx.translate(-vw / 2, -vh / 2)
     }
     
     ctx.drawImage(bitmap, dx, dy, drawW, drawH)
     
-    if (rotation !== 0) {
+    if (needsTransform) {
       ctx.restore()
     }
     
@@ -1240,12 +1702,16 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         totalFrames,
         zoom: scale,
         mmPerPixel: mmPerPixel,
+        windowCenter,
+        windowWidth,
         vw,
         vh,
         // Series-specific information
         seriesDescription: currentSeriesData?.seriesDescription,
         seriesNumber: currentSeriesData?.seriesNumber,
-        modality: currentSeriesData?.modality,
+        modality: currentSeriesData?.modality || dicomMetadata?.modality,
+        // DICOM metadata for patient/acquisition info
+        dicomMetadata,
       })
     }
 
@@ -1274,14 +1740,73 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     brightness,
     contrast,
     rotation,
+    flipH,
+    flipV,
+    invert,
     showOverlay,
     showGrid,
     mmPerPixel,
+    windowCenter,
+    windowWidth,
+    dicomMetadata,
+    currentSeriesData,
+    currentSeriesUID,
     annotations,
     selectedAnnotationId,
     loadFrame,
     dpr,
   ])
+  
+  // Undo/Redo functions for annotations
+  const saveAnnotationHistory = useCallback((newAnnotations: Annotation[]) => {
+    setAnnotationHistory(prev => {
+      // Remove any future history if we're not at the end
+      const newHistory = prev.slice(0, historyIndex + 1)
+      newHistory.push([...newAnnotations])
+      // Keep max 50 history states
+      if (newHistory.length > 50) newHistory.shift()
+      return newHistory
+    })
+    setHistoryIndex(prev => Math.min(prev + 1, 49))
+  }, [historyIndex])
+  
+  // Track annotation changes and save to history (debounced)
+  const lastAnnotationsRef = useRef<string>('')
+  useEffect(() => {
+    const currentJson = JSON.stringify(annotations)
+    // Only save if annotations actually changed (not from undo/redo)
+    if (currentJson !== lastAnnotationsRef.current && annotations.length > 0) {
+      // Debounce to avoid saving during rapid changes
+      const timeoutId = setTimeout(() => {
+        if (currentJson !== JSON.stringify(annotationHistory[historyIndex] || [])) {
+          saveAnnotationHistory(annotations)
+        }
+      }, 500)
+      lastAnnotationsRef.current = currentJson
+      return () => clearTimeout(timeoutId)
+    }
+    lastAnnotationsRef.current = currentJson
+  }, [annotations, annotationHistory, historyIndex, saveAnnotationHistory])
+  
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      const newIndex = historyIndex - 1
+      setHistoryIndex(newIndex)
+      const prevAnnotations = annotationHistory[newIndex] || []
+      lastAnnotationsRef.current = JSON.stringify(prevAnnotations) // Prevent re-saving
+      setAnnotations(prevAnnotations)
+    }
+  }, [historyIndex, annotationHistory])
+  
+  const redo = useCallback(() => {
+    if (historyIndex < annotationHistory.length - 1) {
+      const newIndex = historyIndex + 1
+      setHistoryIndex(newIndex)
+      const nextAnnotations = annotationHistory[newIndex] || []
+      lastAnnotationsRef.current = JSON.stringify(nextAnnotations) // Prevent re-saving
+      setAnnotations(nextAnnotations)
+    }
+  }, [historyIndex, annotationHistory])
   
   // Update drawRef whenever draw changes
   useEffect(() => {
@@ -1342,47 +1867,218 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     return () => canvas.removeEventListener("wheel", handleWheel)
   }, [handleWheel])
 
-  // Add keyboard navigation support
+  // Add keyboard navigation and shortcuts support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!containerRef.current?.contains(document.activeElement)) return
+      // Don't handle if typing in an input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      
+      // Check if canvas or container is focused
+      const isViewerFocused = containerRef.current?.contains(document.activeElement) || 
+                              document.activeElement === document.body
 
-      switch (e.key) {
-        case 'ArrowLeft':
-        case 'ArrowUp':
-          e.preventDefault()
-          setCurrentFrame(prev => Math.max(0, prev - 1))
+      switch (e.key.toLowerCase()) {
+        // Frame navigation
+        case 'arrowleft':
+        case 'arrowup':
+          if (isViewerFocused) {
+            e.preventDefault()
+            setCurrentFrame(prev => Math.max(0, prev - 1))
+          }
           break
-        case 'ArrowRight':
-        case 'ArrowDown':
-          e.preventDefault()
-          setCurrentFrame(prev => Math.min(totalFrames - 1, prev + 1))
+        case 'arrowright':
+        case 'arrowdown':
+          if (isViewerFocused) {
+            e.preventDefault()
+            setCurrentFrame(prev => Math.min(totalFrames - 1, prev + 1))
+          }
           break
-        case 'Home':
-          e.preventDefault()
-          setCurrentFrame(0)
+        case 'home':
+          if (isViewerFocused) {
+            e.preventDefault()
+            setCurrentFrame(0)
+          }
           break
-        case 'End':
-          e.preventDefault()
-          setCurrentFrame(totalFrames - 1)
+        case 'end':
+          if (isViewerFocused) {
+            e.preventDefault()
+            setCurrentFrame(totalFrames - 1)
+          }
+          break
+          
+        // Playback
+        case ' ': // Space
+          if (isViewerFocused) {
+            e.preventDefault()
+            setIsPlaying(prev => !prev)
+          }
+          break
+          
+        // View controls
+        case 'r': // Rotate
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setRotation(prev => (prev + 90) % 360)
+          }
+          break
+        case 'h': // Flip Horizontal
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setFlipH(prev => !prev)
+          }
+          break
+        case 'v': // Flip Vertical
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setFlipV(prev => !prev)
+          }
+          break
+        case 'i': // Invert
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setInvert(prev => !prev)
+          }
+          break
+        case 'g': // Grid
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setShowGrid(prev => !prev)
+          }
+          break
+        case 'o': // Overlay
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setShowOverlay(prev => !prev)
+          }
+          break
+          
+        // Zoom
+        case '+':
+        case '=':
+          if (isViewerFocused) {
+            e.preventDefault()
+            setZoom(prev => Math.min(5, prev + 0.25))
+          }
+          break
+        case '-':
+          if (isViewerFocused) {
+            e.preventDefault()
+            setZoom(prev => Math.max(0.25, prev - 0.25))
+          }
+          break
+          
+        // Reset
+        case '0':
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setZoom(1)
+            setBrightness(1)
+            setContrast(1)
+            setRotation(0)
+            setFlipH(false)
+            setFlipV(false)
+            setInvert(false)
+            setPan({ x: 0, y: 0 })
+            setWindowCenter(null)
+            setWindowWidth(null)
+            setActiveWLPreset(null)
+          }
+          break
+          
+        // Undo/Redo
+        case 'z':
+          if (isViewerFocused && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault()
+            if (e.shiftKey) {
+              redo()
+            } else {
+              undo()
+            }
+          }
+          break
+        case 'y':
+          if (isViewerFocused && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault()
+            redo()
+          }
+          break
+          
+        // Cancel drawing
+        case 'escape':
+          if (drawingStateRef.current.isDrawing) {
+            e.preventDefault()
+            tempAnnotationRef.current = null
+            drawingStateRef.current.isDrawing = false
+            drawRef.current?.()
+          }
+          break
+          
+        // Loop mode toggle
+        case 'l':
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setLoopMode(prev => {
+              if (prev === 'loop') return 'once'
+              if (prev === 'once') return 'bounce'
+              return 'loop'
+            })
+          }
+          break
+          
+        // Reverse playback direction
+        case 'b':
+          if (isViewerFocused && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault()
+            setPlayDirection(prev => prev === 1 ? -1 : 1)
+          }
+          break
+          
+        // Show shortcuts help
+        case '?':
+          if (isViewerFocused) {
+            e.preventDefault()
+            setShowShortcutsHelp(prev => !prev)
+          }
           break
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [totalFrames])
+  }, [totalFrames, undo, redo])
 
-  // Playback control effect
+  // Playback control effect with loop mode and direction support
   useEffect(() => {
     if (isPlaying) {
       playIntervalRef.current = setInterval(() => {
         setCurrentFrame(prev => {
-          const next = prev + 1
-          if (next >= totalFrames) {
-            return 0 // Loop back to start
+          if (loopMode === 'loop') {
+            // Continuous loop - wrap around
+            const next = prev + playDirection
+            if (next >= totalFrames) return 0
+            if (next < 0) return totalFrames - 1
+            return next
+          } else if (loopMode === 'once') {
+            // Play once - stop at end
+            const next = prev + playDirection
+            if (next >= totalFrames || next < 0) {
+              setIsPlaying(false)
+              return prev
+            }
+            return next
+          } else {
+            // Bounce mode - reverse direction at ends
+            const next = prev + playDirection
+            if (next >= totalFrames) {
+              setPlayDirection(-1)
+              return totalFrames - 2
+            }
+            if (next < 0) {
+              setPlayDirection(1)
+              return 1
+            }
+            return next
           }
-          return next
         })
       }, 1000 / playSpeed)
     } else {
@@ -1397,7 +2093,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         clearInterval(playIntervalRef.current)
       }
     }
-  }, [isPlaying, playSpeed, totalFrames])
+  }, [isPlaying, playSpeed, totalFrames, loopMode, playDirection])
 
   // Auto-hide panels when canvas is active - DISABLED for manual control
   const handleCanvasEnter = useCallback(() => {
@@ -1889,6 +2585,77 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     draw, // Add draw to dependencies to ensure it's called when draw function changes
   ])
 
+  // ============ STRUCTURED REPORT FUNCTIONS ============
+  
+  // View SR content
+  const handleViewSR = useCallback(async () => {
+    if (!currentSeriesUID || !studyInstanceUID) return
+    
+    setSRLoading(true)
+    setShowSRViewer(true)
+    
+    try {
+      // Try to fetch SR content from the server
+      const response = await fetch(
+        `${dicomWebBaseUrl}/studies/${studyInstanceUID}/series/${currentSeriesUID}/sr`,
+        { signal: AbortSignal.timeout(30000) }
+      )
+      
+      if (response.ok) {
+        const data = await response.json()
+        setSRContent(data.content || JSON.stringify(data, null, 2))
+      } else {
+        // Fallback: show basic info
+        setSRContent(`Structured Report\n\nSeries: ${currentSeriesData?.seriesDescription || 'Unknown'}\nModality: ${currentSeriesData?.modality || 'SR'}\n\nNote: Full SR content parsing is not available.\nUse the Download button to get the original DICOM file.`)
+      }
+    } catch (err) {
+      console.error('Failed to load SR content:', err)
+      setSRContent(`Structured Report\n\nSeries: ${currentSeriesData?.seriesDescription || 'Unknown'}\nModality: ${currentSeriesData?.modality || 'SR'}\n\nNote: Could not load SR content.\nUse the Download button to get the original DICOM file.`)
+    } finally {
+      setSRLoading(false)
+    }
+  }, [currentSeriesUID, studyInstanceUID, dicomWebBaseUrl, currentSeriesData])
+  
+  // Download DICOM file
+  const handleDownloadDICOM = useCallback(async () => {
+    if (!currentSeriesUID || !studyInstanceUID) return
+    
+    try {
+      // Get the first instance of the series
+      const instanceId = currentSeriesData?.instances?.[0]?.orthancInstanceId || 
+                         currentSeriesData?.instances?.[0]?.sopInstanceUID
+      
+      if (!instanceId) {
+        alert('No instance found for download')
+        return
+      }
+      
+      // Create download URL
+      const downloadUrl = `${dicomWebBaseUrl}/studies/${studyInstanceUID}/series/${currentSeriesUID}/download`
+      
+      // Try to download
+      const response = await fetch(downloadUrl)
+      
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${currentSeriesData?.seriesDescription || 'series'}_${currentSeriesData?.modality || 'DICOM'}.dcm`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
+      } else {
+        // Fallback: open in new tab
+        window.open(downloadUrl, '_blank')
+      }
+    } catch (err) {
+      console.error('Download failed:', err)
+      alert('Download failed. Please try again.')
+    }
+  }, [currentSeriesUID, studyInstanceUID, dicomWebBaseUrl, currentSeriesData])
+
   // Capture current canvas as PNG - shows modal with options
   const handleCapture = useCallback(async () => {
     const canvas = canvasRef.current
@@ -2177,6 +2944,170 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
           tabIndex={0}
         />
         
+        {/* Non-Image Modality Overlay - Shows for SR, KO, PR, etc. */}
+        {NON_IMAGE_MODALITIES.includes((currentSeriesData?.modality?.toUpperCase() || dicomMetadata?.modality?.toUpperCase() || '')) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-800 z-40">
+            <div className="text-center max-w-md px-8">
+              {/* Document Icon */}
+              <div className="relative w-24 h-28 mx-auto mb-6">
+                <svg viewBox="0 0 80 100" className="w-full h-full">
+                  {/* Document shape */}
+                  <path 
+                    d="M0 0 L60 0 L80 20 L80 100 L0 100 Z" 
+                    fill="#334155" 
+                    stroke="#64748b" 
+                    strokeWidth="2"
+                  />
+                  {/* Folded corner */}
+                  <path 
+                    d="M60 0 L60 20 L80 20" 
+                    fill="none" 
+                    stroke="#64748b" 
+                    strokeWidth="2"
+                  />
+                  {/* Lines on document */}
+                  <line x1="10" y1="35" x2="60" y2="35" stroke="#475569" strokeWidth="2" />
+                  <line x1="10" y1="50" x2="60" y2="50" stroke="#475569" strokeWidth="2" />
+                  <line x1="10" y1="65" x2="60" y2="65" stroke="#475569" strokeWidth="2" />
+                  <line x1="10" y1="80" x2="40" y2="80" stroke="#475569" strokeWidth="2" />
+                </svg>
+              </div>
+              
+              {/* Modality Badge */}
+              <div className="inline-block px-4 py-1.5 bg-blue-600 rounded-md mb-4">
+                <span className="text-white font-bold text-sm">
+                  {currentSeriesData?.modality?.toUpperCase() || dicomMetadata?.modality?.toUpperCase() || 'SR'}
+                </span>
+              </div>
+              
+              {/* Title */}
+              <h3 className="text-white text-xl font-semibold mb-2">Non-Image DICOM Object</h3>
+              
+              {/* Description */}
+              <p className="text-slate-400 text-sm mb-6">
+                {(() => {
+                  const mod = currentSeriesData?.modality?.toUpperCase() || dicomMetadata?.modality?.toUpperCase() || ''
+                  const descriptions: Record<string, string> = {
+                    'SR': 'Structured Report - Contains text, measurements, and findings',
+                    'KO': 'Key Object Selection - Reference to key images',
+                    'PR': 'Presentation State - Display settings for images',
+                    'DOC': 'Document - Encapsulated document (PDF, CDA, etc.)',
+                    'PLAN': 'RT Plan - Radiation therapy treatment plan',
+                    'REG': 'Registration - Spatial registration data',
+                    'SEG': 'Segmentation - Region/structure definitions',
+                    'AU': 'Audio - Audio waveform data',
+                    'ECG': 'ECG - Electrocardiography waveform',
+                  }
+                  return descriptions[mod] || 'This modality does not contain viewable images'
+                })()}
+              </p>
+              
+              {/* Series Info */}
+              {currentSeriesData?.seriesDescription && (
+                <p className="text-slate-500 text-xs mb-6">
+                  Series: {currentSeriesData.seriesDescription}
+                </p>
+              )}
+              
+              {/* Action Buttons */}
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={handleViewSR}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors font-medium"
+                >
+                  <Eye size={18} />
+                  View Report
+                </button>
+                <button
+                  onClick={handleDownloadDICOM}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors font-medium"
+                >
+                  <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download DICOM
+                </button>
+              </div>
+              
+              {/* Hint */}
+              <p className="text-slate-600 text-xs mt-6">
+                Select a different series from the left panel to view images
+              </p>
+            </div>
+          </div>
+        )}
+        
+        {/* SR Viewer Modal */}
+        {showSRViewer && (
+          <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-800 rounded-xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-hidden border border-slate-700 flex flex-col">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-4 border-b border-slate-700 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-600 rounded-lg">
+                    <Eye size={20} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Structured Report</h3>
+                    <p className="text-xs text-slate-400">
+                      {currentSeriesData?.seriesDescription || 'Report Content'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowSRViewer(false)
+                    setSRContent(null)
+                  }}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              
+              {/* Modal Content */}
+              <div className="flex-1 overflow-auto p-4">
+                {srLoading ? (
+                  <div className="flex items-center justify-center h-64">
+                    <div className="text-center">
+                      <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
+                      <p className="text-slate-400">Loading report content...</p>
+                    </div>
+                  </div>
+                ) : (
+                  <pre className="text-slate-300 text-sm whitespace-pre-wrap font-mono bg-slate-900 p-4 rounded-lg">
+                    {srContent || 'No content available'}
+                  </pre>
+                )}
+              </div>
+              
+              {/* Modal Footer */}
+              <div className="flex items-center justify-end gap-3 p-4 border-t border-slate-700 flex-shrink-0">
+                <button
+                  onClick={handleDownloadDICOM}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  Download DICOM
+                </button>
+                <button
+                  onClick={() => {
+                    setShowSRViewer(false)
+                    setSRContent(null)
+                  }}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {/* Initial Loading Overlay - Shows until first frame is fully loaded */}
         {isInitialLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-900 z-50">
@@ -2237,84 +3168,182 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         
         {/* Floating Quick Toolbar - Always visible at bottom center */}
         {!isInitialLoading && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-3 py-2 bg-black/70 backdrop-blur-md rounded-xl border border-white/10 shadow-lg">
+          <div 
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-1 px-3 py-2 bg-black/80 backdrop-blur-md rounded-xl border border-white/10 shadow-lg"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Zoom Controls */}
             <button
-              onClick={() => setZoom(prev => Math.min(5, prev + 0.25))}
+              onClick={(e) => { e.stopPropagation(); setZoom(prev => Math.min(5, prev + 0.25)); }}
               className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
-              title="Zoom In"
+              title="Zoom In (+)"
             >
-              <ZoomIn size={20} />
+              <ZoomIn size={18} />
             </button>
             <button
-              onClick={() => setZoom(prev => Math.max(0.25, prev - 0.25))}
+              onClick={(e) => { e.stopPropagation(); setZoom(prev => Math.max(0.25, prev - 0.25)); }}
               className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
-              title="Zoom Out"
+              title="Zoom Out (-)"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
               </svg>
             </button>
             
-            <div className="w-px h-6 bg-white/20 mx-1" />
+            <div className="w-px h-5 bg-white/20 mx-0.5" />
             
-            {/* Rotate */}
+            {/* Rotate & Flip */}
             <button
-              onClick={() => setRotation(prev => (prev + 90) % 360)}
-              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
-              title={`Rotate (${rotation}°)`}
+              onClick={(e) => { e.stopPropagation(); setRotation(prev => (prev + 90) % 360); }}
+              className={`p-2 rounded-lg transition ${rotation !== 0 ? 'text-blue-400 bg-blue-500/20' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
+              title={`Rotate 90° (R) - Current: ${rotation}°`}
             >
-              <RotateCcw size={20} style={{ transform: 'scaleX(-1)' }} />
+              <RotateCcw size={18} style={{ transform: 'scaleX(-1)' }} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setFlipH(prev => !prev); }}
+              className={`p-2 rounded-lg transition ${flipH ? 'text-blue-400 bg-blue-500/20' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
+              title="Flip Horizontal (H)"
+            >
+              <FlipHorizontal size={18} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setFlipV(prev => !prev); }}
+              className={`p-2 rounded-lg transition ${flipV ? 'text-blue-400 bg-blue-500/20' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
+              title="Flip Vertical (V)"
+            >
+              <FlipVertical size={18} />
+            </button>
+            
+            <div className="w-px h-5 bg-white/20 mx-0.5" />
+            
+            {/* Invert */}
+            <button
+              onClick={(e) => { e.stopPropagation(); setInvert(prev => !prev); }}
+              className={`p-2 rounded-lg transition ${invert ? 'text-amber-400 bg-amber-500/20' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
+              title="Invert Colors (I)"
+            >
+              <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                <circle cx="12" cy="12" r="3" fill="currentColor" />
+              </svg>
             </button>
             
             {/* Brightness/Contrast */}
             <button
-              onClick={() => setContrast(prev => prev >= 1.5 ? 0.5 : prev + 0.25)}
-              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
-              title={`Contrast: ${(contrast * 100).toFixed(0)}%`}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-            </button>
-            <button
-              onClick={() => setBrightness(prev => prev >= 1.5 ? 0.5 : prev + 0.25)}
-              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+              onClick={(e) => { e.stopPropagation(); setBrightness(prev => prev >= 1.5 ? 0.5 : prev + 0.25); }}
+              className={`p-2 rounded-lg transition ${brightness !== 1 ? 'text-yellow-400 bg-yellow-500/20' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
               title={`Brightness: ${(brightness * 100).toFixed(0)}%`}
             >
-              <Sun size={20} />
+              <Sun size={18} />
             </button>
             
-            <div className="w-px h-6 bg-white/20 mx-1" />
+            <div className="w-px h-5 bg-white/20 mx-0.5" />
+            
+            {/* Undo/Redo */}
+            <button
+              onClick={(e) => { e.stopPropagation(); undo(); }}
+              disabled={historyIndex <= 0}
+              className={`p-2 rounded-lg transition ${historyIndex > 0 ? 'text-white/80 hover:text-white hover:bg-white/10' : 'text-white/30 cursor-not-allowed'}`}
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo2 size={18} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); redo(); }}
+              disabled={historyIndex >= annotationHistory.length - 1}
+              className={`p-2 rounded-lg transition ${historyIndex < annotationHistory.length - 1 ? 'text-white/80 hover:text-white hover:bg-white/10' : 'text-white/30 cursor-not-allowed'}`}
+              title="Redo (Ctrl+Y)"
+            >
+              <Redo2 size={18} />
+            </button>
+            
+            <div className="w-px h-5 bg-white/20 mx-0.5" />
             
             {/* Reset */}
             <button
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 setZoom(1)
                 setBrightness(1)
                 setContrast(1)
                 setRotation(0)
+                setFlipH(false)
+                setFlipV(false)
+                setInvert(false)
                 setPan({ x: 0, y: 0 })
+                setWindowCenter(null)
+                setWindowWidth(null)
+                setActiveWLPreset(null)
               }}
               className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
-              title="Reset View"
+              title="Reset View (0)"
             >
-              <RotateCcw size={20} />
+              <RotateCcw size={18} />
+            </button>
+            
+            {/* Keyboard Shortcuts Help */}
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowShortcutsHelp(prev => !prev); }}
+              className={`p-2 rounded-lg transition ${showShortcutsHelp ? 'text-blue-400 bg-blue-500/20' : 'text-white/80 hover:text-white hover:bg-white/10'}`}
+              title="Keyboard Shortcuts (?)"
+            >
+              <Keyboard size={18} />
             </button>
             
             {/* Settings - Toggle Tools Panel */}
             <button
-              onClick={() => setToolsPanelCollapsed(prev => !prev)}
+              onClick={(e) => { e.stopPropagation(); setToolsPanelCollapsed(prev => !prev); }}
               className={`p-2 rounded-lg transition ${
                 !toolsPanelCollapsed ? 'text-blue-400 bg-blue-500/20' : 'text-white/80 hover:text-white hover:bg-white/10'
               }`}
               title="Toggle Tools Panel"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </button>
+          </div>
+        )}
+        
+        {/* Keyboard Shortcuts Help Modal */}
+        {showShortcutsHelp && (
+          <div 
+            className="absolute bottom-20 left-1/2 -translate-x-1/2 z-[101] w-80 bg-slate-900/95 backdrop-blur-md rounded-xl border border-slate-700 shadow-2xl p-4"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-white font-semibold text-sm">Keyboard Shortcuts</h3>
+              <button 
+                onClick={() => setShowShortcutsHelp(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="flex justify-between"><span className="text-slate-400">Rotate</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">R</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Flip H</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">H</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Flip V</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">V</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Invert</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">I</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Grid</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">G</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Overlay</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">O</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Reset</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">0</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Play/Pause</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">Space</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Zoom In</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">+</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Zoom Out</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">-</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Prev Frame</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">←</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Next Frame</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">→</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Loop Mode</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">L</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Reverse</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">B</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Undo</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">Ctrl+Z</kbd></div>
+              <div className="flex justify-between"><span className="text-slate-400">Redo</span><kbd className="bg-slate-700 px-1.5 py-0.5 rounded text-white">Ctrl+Y</kbd></div>
+            </div>
           </div>
         )}
       </div>
@@ -2474,6 +3503,86 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
                 </button>
               ))}
             </div>
+            
+            {/* Loop Mode Control */}
+            <div className="flex items-center justify-center gap-2 mt-2">
+              <span className="text-xs text-slate-400">Loop:</span>
+              <button
+                onClick={() => setLoopMode('loop')}
+                className={`px-2 py-1 text-xs rounded transition flex items-center gap-1 ${
+                  loopMode === 'loop' 
+                    ? 'bg-green-600 text-white' 
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                }`}
+                title="Continuous loop"
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+                </svg>
+                Loop
+              </button>
+              <button
+                onClick={() => setLoopMode('once')}
+                className={`px-2 py-1 text-xs rounded transition flex items-center gap-1 ${
+                  loopMode === 'once' 
+                    ? 'bg-green-600 text-white' 
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                }`}
+                title="Play once and stop"
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/>
+                </svg>
+                Once
+              </button>
+              <button
+                onClick={() => setLoopMode('bounce')}
+                className={`px-2 py-1 text-xs rounded transition flex items-center gap-1 ${
+                  loopMode === 'bounce' 
+                    ? 'bg-green-600 text-white' 
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                }`}
+                title="Bounce back and forth"
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/>
+                </svg>
+                Bounce
+              </button>
+            </div>
+            
+            {/* Direction Control */}
+            <div className="flex items-center justify-center gap-2 mt-2">
+              <span className="text-xs text-slate-400">Direction:</span>
+              <button
+                onClick={() => setPlayDirection(1)}
+                className={`px-2 py-1 text-xs rounded transition flex items-center gap-1 ${
+                  playDirection === 1 
+                    ? 'bg-purple-600 text-white' 
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                }`}
+                title="Play forward"
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+                Forward
+              </button>
+              <button
+                onClick={() => setPlayDirection(-1)}
+                className={`px-2 py-1 text-xs rounded transition flex items-center gap-1 ${
+                  playDirection === -1 
+                    ? 'bg-purple-600 text-white' 
+                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                }`}
+                title="Play in reverse"
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24" style={{ transform: 'scaleX(-1)' }}>
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+                Reverse
+              </button>
+            </div>
           </div>
 
           {/* ===== VIEW TOOLS SECTION ===== */}
@@ -2538,7 +3647,13 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
                   setBrightness(1)
                   setContrast(1)
                   setRotation(0)
+                  setFlipH(false)
+                  setFlipV(false)
+                  setInvert(false)
                   setPan({ x: 0, y: 0 })
+                  setWindowCenter(null)
+                  setWindowWidth(null)
+                  setActiveWLPreset(null)
                 }}
                 className="w-full py-2 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition flex items-center justify-center gap-2"
               >
@@ -2546,6 +3661,74 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
                 Reset View
               </button>
             </div>
+          </div>
+
+          {/* ===== WINDOW/LEVEL PRESETS ===== */}
+          <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+            <div className="flex items-center gap-2 mb-3">
+              <Gauge size={16} className="text-orange-400" />
+              <span className="text-sm font-semibold text-white">W/L Presets ({currentModality})</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {wlPresets.map((preset) => (
+                <button
+                  key={preset.name}
+                  onClick={() => {
+                    setWindowCenter(preset.windowCenter)
+                    setWindowWidth(preset.windowWidth)
+                    setActiveWLPreset(preset.name)
+                    // Convert W/L to brightness/contrast approximation
+                    // This is a simplified mapping - real DICOM viewers use LUT
+                    const normalizedWC = preset.windowCenter / 1000
+                    const normalizedWW = preset.windowWidth / 1000
+                    setBrightness(1 - normalizedWC * 0.5)
+                    setContrast(1 + (1 - normalizedWW) * 0.5)
+                  }}
+                  className={`px-2 py-2 text-xs rounded transition ${
+                    activeWLPreset === preset.name
+                      ? 'bg-orange-600 text-white'
+                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                  }`}
+                  title={`WC: ${preset.windowCenter}, WW: ${preset.windowWidth}`}
+                >
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+            {/* Manual W/L input */}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Window Center</label>
+                <input
+                  type="number"
+                  value={windowCenter ?? ''}
+                  onChange={(e) => {
+                    setWindowCenter(e.target.value ? Number(e.target.value) : null)
+                    setActiveWLPreset(null)
+                  }}
+                  placeholder="Auto"
+                  className="w-full px-2 py-1 text-xs rounded bg-slate-700 text-white border border-slate-600 focus:border-orange-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Window Width</label>
+                <input
+                  type="number"
+                  value={windowWidth ?? ''}
+                  onChange={(e) => {
+                    setWindowWidth(e.target.value ? Number(e.target.value) : null)
+                    setActiveWLPreset(null)
+                  }}
+                  placeholder="Auto"
+                  className="w-full px-2 py-1 text-xs rounded bg-slate-700 text-white border border-slate-600 focus:border-orange-500 focus:outline-none"
+                />
+              </div>
+            </div>
+            {mmPerPixel && (
+              <div className="mt-2 text-xs text-green-400">
+                ✓ Calibrated: {mmPerPixel.toFixed(3)} mm/px
+              </div>
+            )}
           </div>
 
           {/* ===== DISPLAY OPTIONS ===== */}

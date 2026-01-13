@@ -855,6 +855,22 @@ const ViewerPage: React.FC = () => {
                             sopInstanceUIDs={selectedSeries?.instances?.map((instance: any) => instance.sopInstanceUID) || []}
                             isLoading={isLoading}
                             error={error || undefined}
+                            dicomMetadata={{
+                              // Patient Information
+                              patientName: studyData.patientName,
+                              patientID: studyData.patientID,
+                              // Study Information
+                              studyDate: studyData.studyDate,
+                              studyTime: studyData.studyTime,
+                              studyDescription: studyData.studyDescription,
+                              accessionNumber: studyData.accessionNumber,
+                              institutionName: studyData.institutionName,
+                              // Series Information
+                              seriesDescription: selectedSeries?.seriesDescription,
+                              modality: selectedSeries?.modality || studyData.modality,
+                              // Note: Window/Level and PixelSpacing will be auto-detected from DICOM
+                              // if available in the frame metadata, or use modality defaults
+                            }}
                             onCanvasActiveChange={(isActive) => {
                               // Auto-hide header when canvas is active
                               if (isActive) {
