@@ -69,10 +69,10 @@ function TabPanel({ children, value, index, ...other }: TabPanelProps) {
       hidden={value !== index}
       id={`viewer-tabpanel-${index}`}
       aria-labelledby={`viewer-tab-${index}`}
-      style={{ height: '100%' }}
+      style={{ height: '100%', display: value === index ? 'flex' : 'none', flexDirection: 'column', minHeight: 0 }}
       {...other}
     >
-      {value === index && <Box sx={{ height: '100%' }}>{children}</Box>}
+      {value === index && <Box sx={{ height: '100%', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>{children}</Box>}
     </div>
   )
 }
@@ -87,26 +87,7 @@ const ViewerPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [seriesCollapsed, setSeriesCollapsed] = useState(false)
-  const [studyData, setStudyData] = useState<any>({
-    studyInstanceUID: '',
-    studyDate: '',
-    studyTime: '',
-    patientName: '',
-    patientID: '',
-    modality: '',
-    studyDescription: '',
-    series: [{
-      seriesInstanceUID: '',
-      seriesNumber: 1,
-      modality: '',
-      seriesDescription: '',
-      numberOfInstances: 96,
-      instances: [{
-        sopInstanceUID: '',
-        instanceNumber: 1
-      }]
-    }]
-  })
+  const [studyData, setStudyData] = useState<any>(null)
   const [patientContext, setPatientContext] = useState<any>(null)
   const [activeTab, setActiveTab] = useState(0)
   const [viewerType, setViewerType] = useState<'legacy' | 'cornerstone3d' | '3d' | 'ohif'>('legacy')
@@ -175,9 +156,9 @@ const ViewerPage: React.FC = () => {
         
         console.log('Loading study data for:', currentStudyUID)
         
-        // Add timeout to prevent hanging
+        // Add timeout to prevent hanging (increased to 90 seconds for large studies with many series)
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('API call timeout')), 5000)
+          setTimeout(() => reject(new Error('API call timeout')), 90000)
         })
         
         try {
@@ -303,13 +284,15 @@ const ViewerPage: React.FC = () => {
 
   // Playback control handlers
   const handlePlay = () => {
-    if (!selectedSeries || selectedSeries.numberOfInstances <= 1) return
+    // Use totalFrames for multi-frame DICOM, fallback to numberOfInstances
+    const frameCount = selectedSeries?.totalFrames || selectedSeries?.numberOfImages || selectedSeries?.numberOfInstances || 1
+    if (!selectedSeries || frameCount <= 1) return
     
     setIsPlaying(true)
     playbackIntervalRef.current = setInterval(() => {
       setCurrentFrame(prev => {
         const nextFrame = prev + 1
-        if (nextFrame >= selectedSeries.numberOfInstances) {
+        if (nextFrame >= frameCount) {
           // Loop back to start
           return 0
         }
@@ -328,7 +311,8 @@ const ViewerPage: React.FC = () => {
 
   const handleNext = () => {
     if (!selectedSeries) return
-    setCurrentFrame(prev => Math.min(prev + 1, selectedSeries.numberOfInstances - 1))
+    const frameCount = selectedSeries?.totalFrames || selectedSeries?.numberOfImages || selectedSeries?.numberOfInstances || 1
+    setCurrentFrame(prev => Math.min(prev + 1, frameCount - 1))
   }
 
   const handlePrevious = () => {
@@ -798,10 +782,10 @@ const ViewerPage: React.FC = () => {
             </Fade>
 
             {/* Tab Content */}
-            <Box sx={{ flex: 1, position: 'relative' }}>
+            <Box sx={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <TabPanel value={activeTab} index={0}>
                 {studyData ? (
-                  <Box sx={{ display: 'flex', height: '100%' }}>
+                  <Box sx={{ display: 'flex', height: '100%', minHeight: 0 }}>
                     {/* Series Selector Sidebar - Always show for debugging */}
                     <SeriesSelector
                       series={studyData?.series || []}
@@ -817,7 +801,7 @@ const ViewerPage: React.FC = () => {
                         }
                       }}
                       currentFrame={currentFrame}
-                      totalFrames={selectedSeries?.numberOfInstances || 1}
+                      totalFrames={selectedSeries?.totalFrames || selectedSeries?.numberOfImages || selectedSeries?.numberOfInstances || 1}
                       studyInstanceUID={studyData?.studyInstanceUID}
                       isCollapsed={seriesCollapsed}
                       onToggleCollapse={() => setSeriesCollapsed(!seriesCollapsed)}
@@ -829,19 +813,19 @@ const ViewerPage: React.FC = () => {
                         <VolumeViewer3D
                           studyInstanceUID={studyData.studyInstanceUID}
                           frameUrls={Array.from(
-                            { length: selectedSeries?.numberOfInstances || 1 },
+                            { length: selectedSeries?.totalFrames || selectedSeries?.numberOfImages || selectedSeries?.numberOfInstances || 1 },
                             (_, i) => selectedSeries?.seriesInstanceUID 
                               ? `/api/dicom/studies/${studyData.studyInstanceUID}/series/${selectedSeries.seriesInstanceUID}/frames/${i}`
                               : `/api/dicom/studies/${studyData.studyInstanceUID}/frames/${i}`
                           )}
-                          totalFrames={selectedSeries?.numberOfInstances || 1}
+                          totalFrames={selectedSeries?.totalFrames || selectedSeries?.numberOfImages || selectedSeries?.numberOfInstances || 1}
                         />
                       ) : viewerType === 'cornerstone3d' ? (
                         <SmartModalityViewer
                           instanceId={selectedSeries?.instances?.[0]?.orthancInstanceId || ''}
                           metadata={{
                             Modality: studyData.modality,
-                            NumberOfFrames: selectedSeries?.numberOfInstances,
+                            NumberOfFrames: selectedSeries?.totalFrames || selectedSeries?.numberOfImages || selectedSeries?.numberOfInstances,
                             ...studyData
                           }}
                         >
@@ -858,7 +842,7 @@ const ViewerPage: React.FC = () => {
                           instanceId={selectedSeries?.instances?.[0]?.orthancInstanceId || ''}
                           metadata={{
                             Modality: studyData.modality,
-                            NumberOfFrames: selectedSeries?.numberOfInstances,
+                            NumberOfFrames: selectedSeries?.totalFrames || selectedSeries?.numberOfImages || selectedSeries?.numberOfInstances,
                             ...studyData
                           }}
                         >
@@ -866,6 +850,8 @@ const ViewerPage: React.FC = () => {
                             key={selectedSeries?.seriesInstanceUID}
                             studyInstanceUID={studyData.studyInstanceUID}
                             seriesInstanceUID={selectedSeries?.seriesInstanceUID || 'default-series'}
+                            selectedSeriesUID={selectedSeries?.seriesInstanceUID}
+                            seriesData={studyData?.series || []}
                             sopInstanceUIDs={selectedSeries?.instances?.map((instance: any) => instance.sopInstanceUID) || []}
                             isLoading={isLoading}
                             error={error || undefined}
@@ -1008,61 +994,7 @@ const ViewerPage: React.FC = () => {
                 )}
               </TabPanel>
               
-              {/* Floating Toolbar - Only show on Image Viewer tab */}
-              {activeTab === 0 && (
-                <Fade in={showToolbar}>
-                  <Paper
-                    sx={{
-                      position: 'absolute',
-                      bottom: 24,
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      backdropFilter: 'blur(20px)',
-                      bgcolor: alpha('#000', 0.7),
-                      border: `1px solid ${alpha('#fff', 0.1)}`,
-                      borderRadius: 3,
-                      px: 2,
-                      py: 1,
-                      display: 'flex',
-                      gap: 1,
-                      zIndex: 100,
-                    }}
-                  >
-                    <Tooltip title="Zoom In">
-                      <IconButton size="small" sx={{ color: 'white' }}>
-                        <ZoomIn fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Zoom Out">
-                      <IconButton size="small" sx={{ color: 'white' }}>
-                        <ZoomOut fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Divider orientation="vertical" flexItem sx={{ bgcolor: alpha('#fff', 0.2), mx: 0.5 }} />
-                    <Tooltip title="Rotate">
-                      <IconButton size="small" sx={{ color: 'white' }}>
-                        <RotateRight fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Contrast">
-                      <IconButton size="small" sx={{ color: 'white' }}>
-                        <Contrast fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Brightness">
-                      <IconButton size="small" sx={{ color: 'white' }}>
-                        <Brightness7 fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                    <Divider orientation="vertical" flexItem sx={{ bgcolor: alpha('#fff', 0.2), mx: 0.5 }} />
-                    <Tooltip title="Settings">
-                      <IconButton size="small" sx={{ color: 'white' }}>
-                        <Settings fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  </Paper>
-                </Fade>
-              )}
+              {/* Floating Toolbar removed - now built into MedicalImageViewer component */}
             </Box>
           </Box>
         </Box>

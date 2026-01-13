@@ -249,31 +249,286 @@ async function getStudyMetadata(req, res) {
   try {
     const { studyUid } = req.params;
     
-    // Check authentication
-    // if (!req.user) {
-    //   return res.status(401).json({
-    //     success: false,
-    //     message: 'Authentication required'
-    //   });
-    // }
+    console.log(`📊 Fetching metadata for study: ${studyUid}`);
     
+    // Try Orthanc REST API first (faster for getting series list)
+    try {
+      const axios = require('axios');
+      const orthancUrl = process.env.ORTHANC_URL || 'http://35.172.184.138:8043';
+      const authConfig = {
+        auth: {
+          username: process.env.ORTHANC_USERNAME || 'orthanc',
+          password: process.env.ORTHANC_PASSWORD || 'orthanc'
+        },
+        timeout: 30000
+      };
+      
+      // Step 1: Find the study in Orthanc
+      console.log(`🔍 Finding study in Orthanc: ${studyUid}`);
+      const findResponse = await axios.post(`${orthancUrl}/tools/find`, {
+        Level: 'Study',
+        Query: { StudyInstanceUID: studyUid }
+      }, authConfig);
+      
+      if (findResponse.data && findResponse.data.length > 0) {
+        const orthancStudyId = findResponse.data[0];
+        console.log(`✅ Found Orthanc study ID: ${orthancStudyId}`);
+        
+        // Step 2: Get study details including series list
+        const studyResponse = await axios.get(
+          `${orthancUrl}/studies/${orthancStudyId}`,
+          authConfig
+        );
+        
+        const studyDetails = studyResponse.data;
+        const seriesIds = studyDetails.Series || [];
+        console.log(`📊 Study has ${seriesIds.length} series`);
+        
+        // Step 3: Get details for each series (parallel requests)
+        const seriesPromises = seriesIds.map(async (seriesId) => {
+          try {
+            const seriesResponse = await axios.get(
+              `${orthancUrl}/series/${seriesId}`,
+              { ...authConfig, timeout: 30000 } // 30 second timeout
+            );
+            const seriesData = seriesResponse.data;
+            const mainTags = seriesData.MainDicomTags || {};
+            
+            // Get instance count and check for multi-frame
+            const instanceIds = seriesData.Instances || [];
+            let totalFrames = instanceIds.length;
+            
+            // Check first instance for NumberOfFrames (multi-frame DICOM)
+            // Only check if there's 1 instance (likely multi-frame) or few instances
+            if (instanceIds.length > 0 && instanceIds.length <= 5) {
+              try {
+                // Use /tags endpoint with simplify for reliable NumberOfFrames
+                const instResponse = await axios.get(
+                  `${orthancUrl}/instances/${instanceIds[0]}/tags?simplify`,
+                  { ...authConfig, timeout: 15000 } // Increased timeout
+                );
+                const numFrames = parseInt(instResponse.data.NumberOfFrames) || 1;
+                if (numFrames > 1) {
+                  // Multi-frame DICOM - sum frames from all instances
+                  totalFrames = 0;
+                  for (const instId of instanceIds) {
+                    try {
+                      const resp = await axios.get(
+                        `${orthancUrl}/instances/${instId}/tags?simplify`,
+                        { ...authConfig, timeout: 10000 }
+                      );
+                      totalFrames += parseInt(resp.data.NumberOfFrames) || 1;
+                    } catch (e) {
+                      totalFrames += 1;
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn(`⚠️ Could not get frame count for series ${seriesId}:`, e.message);
+              }
+            }
+            
+            return {
+              seriesInstanceUID: mainTags.SeriesInstanceUID || seriesId,
+              seriesNumber: mainTags.SeriesNumber || '',
+              seriesDescription: mainTags.SeriesDescription || '',
+              modality: mainTags.Modality || 'OT',
+              numberOfInstances: instanceIds.length,
+              totalFrames: totalFrames,
+              numberOfImages: totalFrames,
+              instances: instanceIds.map((instId, idx) => ({
+                sopInstanceUID: instId,
+                instanceNumber: idx + 1,
+                orthancInstanceId: instId
+              }))
+            };
+          } catch (err) {
+            console.warn(`⚠️ Failed to get series ${seriesId}:`, err.message);
+            return null;
+          }
+        });
+        
+        const seriesResults = await Promise.all(seriesPromises);
+        const seriesData = seriesResults.filter(s => s !== null);
+        
+        // Sort by series number
+        seriesData.sort((a, b) => {
+          const aNum = parseInt(a.seriesNumber) || 0;
+          const bNum = parseInt(b.seriesNumber) || 0;
+          return aNum - bNum;
+        });
+        
+        // Get patient info from study
+        const patientTags = studyDetails.PatientMainDicomTags || {};
+        const studyTags = studyDetails.MainDicomTags || {};
+        
+        const totalInstances = seriesData.reduce((sum, s) => sum + s.numberOfInstances, 0);
+        const totalFramesAll = seriesData.reduce((sum, s) => sum + s.totalFrames, 0);
+        
+        const metadata = {
+          studyInstanceUID: studyUid,
+          patientName: patientTags.PatientName || 'Unknown',
+          patientID: patientTags.PatientID || 'Unknown',
+          studyDate: studyTags.StudyDate || '',
+          studyTime: studyTags.StudyTime || '',
+          studyDescription: studyTags.StudyDescription || '',
+          modality: studyTags.ModalitiesInStudy || seriesData[0]?.modality || 'OT',
+          accessionNumber: studyTags.AccessionNumber || '',
+          numberOfSeries: seriesData.length,
+          numberOfInstances: totalInstances,
+          totalFrames: totalFramesAll,
+          series: seriesData
+        };
+        
+        console.log(`✅ Loaded ${seriesData.length} series with ${totalInstances} instances via Orthanc REST API`);
+        
+        return res.json({ success: true, data: metadata });
+      }
+      
+      console.log('⚠️ Study not found in Orthanc, trying DICOMweb...');
+    } catch (orthancError) {
+      console.warn('⚠️ Orthanc REST API failed:', orthancError.message);
+    }
+    
+    // Fallback: Try DICOMweb API
+    try {
+      const axios = require('axios');
+      const orthancUrl = process.env.ORTHANC_URL || 'http://35.172.184.138:8043';
+      const dicomWebBase = `${orthancUrl}/dicom-web`;
+      
+      console.log(`🔍 Fetching study via DICOMweb: ${dicomWebBase}/studies/${studyUid}/metadata`);
+      
+      // Get study metadata via DICOMweb WADO-RS
+      const metadataResponse = await axios.get(
+        `${dicomWebBase}/studies/${studyUid}/metadata`,
+        {
+          auth: {
+            username: process.env.ORTHANC_USERNAME || 'orthanc',
+            password: process.env.ORTHANC_PASSWORD || 'orthanc'
+          },
+          timeout: 60000, // 1 minute timeout
+          headers: {
+            'Accept': 'application/json'
+          }
+        }
+      );
+      
+      const instances = metadataResponse.data;
+      console.log(`✅ DICOMweb returned ${instances.length} instances`);
+      
+      if (instances && instances.length > 0) {
+        // Extract study-level info from first instance
+        const firstInstance = instances[0];
+        
+        // Helper to get DICOM tag value
+        const getTagValue = (inst, tag) => {
+          const tagData = inst[tag];
+          if (!tagData) return '';
+          if (tagData.Value && tagData.Value.length > 0) {
+            const val = tagData.Value[0];
+            // Handle PersonName format
+            if (typeof val === 'object' && val.Alphabetic) {
+              return val.Alphabetic;
+            }
+            return val;
+          }
+          return '';
+        };
+        
+        // DICOM tags
+        const TAGS = {
+          PatientName: '00100010',
+          PatientID: '00100020',
+          StudyDate: '00080020',
+          StudyTime: '00080030',
+          StudyDescription: '00081030',
+          Modality: '00080060',
+          AccessionNumber: '00080050',
+          SeriesInstanceUID: '0020000E',
+          SeriesNumber: '00200011',
+          SeriesDescription: '0008103E',
+          SOPInstanceUID: '00080018',
+          InstanceNumber: '00200013',
+          NumberOfFrames: '00280008'
+        };
+        
+        // Group instances by series
+        const seriesMap = new Map();
+        
+        for (const inst of instances) {
+          const seriesUID = getTagValue(inst, TAGS.SeriesInstanceUID);
+          const numberOfFrames = parseInt(getTagValue(inst, TAGS.NumberOfFrames)) || 1;
+          
+          if (!seriesMap.has(seriesUID)) {
+            seriesMap.set(seriesUID, {
+              seriesInstanceUID: seriesUID,
+              seriesNumber: getTagValue(inst, TAGS.SeriesNumber) || '',
+              seriesDescription: getTagValue(inst, TAGS.SeriesDescription) || '',
+              modality: getTagValue(inst, TAGS.Modality) || 'OT',
+              numberOfInstances: 0,
+              totalFrames: 0,
+              instances: []
+            });
+          }
+          
+          const series = seriesMap.get(seriesUID);
+          series.numberOfInstances++;
+          series.totalFrames += numberOfFrames; // Count total frames across all instances
+          series.instances.push({
+            sopInstanceUID: getTagValue(inst, TAGS.SOPInstanceUID),
+            instanceNumber: parseInt(getTagValue(inst, TAGS.InstanceNumber)) || 1,
+            numberOfFrames: numberOfFrames
+          });
+        }
+        
+        // Convert to array and sort
+        const seriesData = Array.from(seriesMap.values());
+        seriesData.sort((a, b) => {
+          const aNum = parseInt(a.seriesNumber) || 0;
+          const bNum = parseInt(b.seriesNumber) || 0;
+          return aNum - bNum;
+        });
+        
+        // Sort instances within each series
+        seriesData.forEach(series => {
+          series.instances.sort((a, b) => a.instanceNumber - b.instanceNumber);
+          // Use totalFrames as the display count (for multi-frame DICOM)
+          // This matches what OHIF shows
+          series.numberOfImages = series.totalFrames;
+        });
+        
+        const totalInstances = seriesData.reduce((sum, s) => sum + s.numberOfInstances, 0);
+        const totalFrames = seriesData.reduce((sum, s) => sum + s.totalFrames, 0);
+        
+        const metadata = {
+          studyInstanceUID: studyUid,
+          patientName: getTagValue(firstInstance, TAGS.PatientName) || 'Unknown',
+          patientID: getTagValue(firstInstance, TAGS.PatientID) || 'Unknown',
+          studyDate: getTagValue(firstInstance, TAGS.StudyDate) || '',
+          studyTime: getTagValue(firstInstance, TAGS.StudyTime) || '',
+          studyDescription: getTagValue(firstInstance, TAGS.StudyDescription) || '',
+          modality: getTagValue(firstInstance, TAGS.Modality) || 'OT',
+          accessionNumber: getTagValue(firstInstance, TAGS.AccessionNumber) || '',
+          numberOfSeries: seriesData.length,
+          numberOfInstances: totalInstances,
+          totalFrames: totalFrames,
+          series: seriesData
+        };
+        
+        console.log(`✅ Loaded ${seriesData.length} series with ${totalInstances} instances (${totalFrames} total frames) via DICOMweb`);
+        
+        return res.json({ success: true, data: metadata });
+      }
+      
+      console.log('⚠️ No instances returned from DICOMweb, falling back to database');
+    } catch (dicomWebError) {
+      console.warn('⚠️ DICOMweb fetch failed, falling back to database:', dicomWebError.message);
+    }
+    
+    // Fallback to database if Orthanc fails or study not found
     let study = await Study.findOne({ studyInstanceUID: studyUid }).lean();
     if (!study) return res.status(404).json({ success: false, message: 'Study not found' });
     
-    // Check hospital access
-    // const isSuperAdmin = req.user.roles && (
-    //   req.user.roles.includes('system:admin') || 
-    //   req.user.roles.includes('super_admin')
-    // );
-    
-    // if (!isSuperAdmin && req.user.hospitalId && study.hospitalId !== req.user.hospitalId) {
-    //   console.warn(`🚫 Access denied: User ${req.user.username} tried to access metadata for study from different hospital`);
-    //   return res.status(403).json({ 
-    //     success: false, 
-    //     message: 'Access denied - you can only view studies from your hospital' 
-    //   });
-    // }
-
     // Get series data from database instances
     let seriesData = [];
     let totalFrames = 0;
@@ -428,7 +683,7 @@ async function getSeriesThumbnail(req, res) {
     console.log(`🖼️ Getting thumbnail for series: ${seriesUid} in study: ${studyUid}`);
     console.log(`📍 Request URL: ${req.originalUrl}`);
 
-    // 🔹 Find first instance of this series
+    // 🔹 Find first instance of this series in local database
     const firstInstance = await Instance.findOne({
       studyInstanceUID: studyUid,
       seriesInstanceUID: seriesUid
@@ -436,71 +691,73 @@ async function getSeriesThumbnail(req, res) {
       .sort({ instanceNumber: 1 })
       .lean();
 
-    /**
-     * ─────────────────────────────────────────────
-     * NO INSTANCE IN SERIES → FALLBACK
-     * ─────────────────────────────────────────────
-     */
+    // If no local instance, try fetching from Orthanc via REST API (more reliable than DICOMweb for thumbnails)
     if (!firstInstance) {
-      console.warn(`⚠️ No instances found for series ${seriesUid} in study ${studyUid}`);
-
-      const anyInstance = await Instance.findOne({
-        studyInstanceUID: studyUid
-      })
-        .sort({ instanceNumber: 1 })
-        .lean();
-
-      if (anyInstance) {
-        console.log(`🔄 Using fallback instance: ${anyInstance.sopInstanceUID}`);
-
-        // 👉 Try Orthanc fallback
-        if (anyInstance.orthancInstanceId) {
-          try {
-            const { getUnifiedOrthancService } = require('../services/unified-orthanc-service');
-            const orthancService = getUnifiedOrthancService();
-
-            const frameBuffer = await orthancService.getFrame(
-              anyInstance.orthancInstanceId,
-              0
-            );
-
-            if (frameBuffer) {
-              console.log('✅ Retrieved fallback thumbnail from Orthanc');
-              res.set('Content-Type', 'image/jpeg');
-              res.set('Cache-Control', 'public, max-age=3600');
-              return res.send(frameBuffer);
-            }
-          } catch (err) {
-            console.warn(`⚠️ Orthanc fallback failed: ${err.message}`);
-          }
-        }
-      }
-
-      // 👉 Filesystem fallback
+      console.log(`📡 No local instance found, trying Orthanc REST API for thumbnail...`);
+      
       try {
-        const framesDir = path.join(BACKEND_DIR, `uploaded_frames_${studyUid}`);
-        const frameFile = path.join(framesDir, 'frame_0.png');
-
-        if (fs.existsSync(frameFile)) {
-          console.log('✅ Retrieved fallback thumbnail from filesystem');
-          res.set('Content-Type', 'image/png');
-          res.set('Cache-Control', 'public, max-age=3600');
-          return res.sendFile(frameFile);
+        const axios = require('axios');
+        const orthancUrl = process.env.ORTHANC_URL || 'http://35.172.184.138:8043';
+        const authConfig = {
+          auth: {
+            username: process.env.ORTHANC_USERNAME || 'orthanc',
+            password: process.env.ORTHANC_PASSWORD || 'orthanc'
+          },
+          timeout: 30000
+        };
+        
+        // First, find the series in Orthanc using REST API
+        console.log(`🔍 Finding series ${seriesUid} in Orthanc...`);
+        const findSeriesResponse = await axios.post(`${orthancUrl}/tools/find`, {
+          Level: 'Series',
+          Query: { SeriesInstanceUID: seriesUid }
+        }, authConfig);
+        
+        if (findSeriesResponse.data && findSeriesResponse.data.length > 0) {
+          const orthancSeriesId = findSeriesResponse.data[0];
+          console.log(`✅ Found Orthanc series ID: ${orthancSeriesId}`);
+          
+          // Get series details to find instances
+          const seriesDetailsResponse = await axios.get(
+            `${orthancUrl}/series/${orthancSeriesId}`,
+            authConfig
+          );
+          
+          const seriesDetails = seriesDetailsResponse.data;
+          if (seriesDetails && seriesDetails.Instances && seriesDetails.Instances.length > 0) {
+            // Get the first instance for thumbnail
+            const firstInstanceId = seriesDetails.Instances[0];
+            const previewUrl = `${orthancUrl}/instances/${firstInstanceId}/preview`;
+            
+            console.log(`📸 Fetching thumbnail from: ${previewUrl}`);
+            
+            const frameResponse = await axios.get(previewUrl, {
+              ...authConfig,
+              responseType: 'arraybuffer'
+            });
+            
+            console.log(`✅ Retrieved thumbnail from Orthanc for series ${seriesUid}`);
+            res.set('Content-Type', 'image/png');
+            res.set('Cache-Control', 'public, max-age=3600');
+            return res.send(Buffer.from(frameResponse.data));
+          }
+        } else {
+          console.log(`⚠️ Series ${seriesUid} not found in Orthanc`);
         }
-      } catch (err) {
-        console.warn(`⚠️ Filesystem fallback failed: ${err.message}`);
+      } catch (orthancError) {
+        console.warn(`⚠️ Orthanc thumbnail fetch failed: ${orthancError.message}`);
       }
-
-      // 👉 Placeholder
+      
+      // If DICOMweb also failed, return placeholder
       return sendPlaceholder(res, 'IMG');
     }
 
     /**
      * ─────────────────────────────────────────────
-     * INSTANCE FOUND → PRIMARY FLOW
+     * LOCAL INSTANCE FOUND → PRIMARY FLOW
      * ─────────────────────────────────────────────
      */
-    console.log(`📸 Found first instance: ${firstInstance.sopInstanceUID}`);
+    console.log(`📸 Found local instance: ${firstInstance.sopInstanceUID}`);
 
     // 👉 Try Orthanc first
     if (firstInstance.orthancInstanceId) {

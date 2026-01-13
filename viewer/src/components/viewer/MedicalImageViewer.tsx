@@ -60,6 +60,8 @@ interface SeriesInfo {
   seriesDescription: string
   modality: string
   numberOfInstances: number
+  totalFrames?: number
+  numberOfImages?: number
   instances: InstanceInfo[]
 }
 
@@ -82,6 +84,24 @@ interface CombinedDicomViewerProps {
   onCanvasActiveChange?: (isActive: boolean) => void
   isLoading?: boolean
   error?: string
+  // External control callbacks
+  onZoomIn?: () => void
+  onZoomOut?: () => void
+  onRotate?: () => void
+  onResetView?: () => void
+  onBrightnessChange?: (value: number) => void
+  onContrastChange?: (value: number) => void
+}
+
+// Export viewer control interface for external use
+export interface ViewerControlRef {
+  zoomIn: () => void
+  zoomOut: () => void
+  rotate: () => void
+  resetView: () => void
+  setBrightness: (value: number) => void
+  setContrast: (value: number) => void
+  getState: () => { zoom: number; brightness: number; contrast: number; rotation: number }
 }
 
 // ======================== HELPER FUNCTIONS ========================
@@ -745,36 +765,8 @@ function drawPreview(
 
 // ======================== MAIN COMPONENT ========================
 export const MedicalImageViewer: React.FC<CombinedDicomViewerProps> = (props) => {
-  const [viewMode, setViewMode] = useState<"2d" | "mpr">("2d")
-
-  return (
-    <div className="w-full h-screen flex flex-col bg-slate-900">
-      {/* Tab Navigation */}
-      <div className="flex gap-2 p-3 bg-slate-800 border-b border-slate-700">
-        <button
-          onClick={() => setViewMode("2d")}
-          className={`px-4 py-2 rounded text-sm font-medium transition ${
-            viewMode === "2d" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-          }`}
-        >
-          2D Viewer
-        </button>
-        <button
-          onClick={() => setViewMode("mpr")}
-          className={`px-4 py-2 rounded text-sm font-medium transition ${
-            viewMode === "mpr" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
-          }`}
-        >
-          MPR Viewer (Optimized)
-        </button>
-      </div>
-
-      {/* Viewer Content */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-         {viewMode === "2d" ? <TwoDViewer {...props} /> : <MPRViewerOptimized {...props} />}
-      </div>
-    </div>
-  )
+  // Directly render 2D viewer without extra wrapper - cleaner and fills space properly
+  return <TwoDViewer {...props} />
 }
 
 // ======================== 2D VIEWER ========================
@@ -812,6 +804,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [brightness, setBrightness] = useState(1)
   const [contrast, setContrast] = useState(1)
+  const [rotation, setRotation] = useState(0) // Rotation in degrees (0, 90, 180, 270)
   const [showOverlay, setShowOverlay] = useState(true)
   const [showGrid, setShowGrid] = useState(false)
   const [mmPerPixel, setMmPerPixel] = useState<number | null>(null)
@@ -821,7 +814,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
   const [cursorStyle, setCursorStyle] = useState<string>('default')
   const [showMobileTools, setShowMobileTools] = useState(false)
-  const [toolsPanelCollapsed, setToolsPanelCollapsed] = useState(false)
+  const [toolsPanelCollapsed, setToolsPanelCollapsed] = useState(true) // Hidden by default
   
   // Auto-hide panels when working on canvas
   const [panelsAutoHidden, setPanelsAutoHidden] = useState(false)
@@ -837,6 +830,14 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
   const [isPlaying, setIsPlaying] = useState(false)
   const [playSpeed, setPlaySpeed] = useState(5) // frames per second
   const playIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Loading state for frame fetching
+  const [isFrameLoading, setIsFrameLoading] = useState(false)
+  const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 })
+  
+  // Initial preloading state - wait for first frame before showing viewer
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
+  const [preloadProgress, setPreloadProgress] = useState({ loaded: 0, total: 0 })
 
   // Series-aware state management
   const currentSeriesUID = selectedSeriesUID || seriesInstanceUID
@@ -844,37 +845,253 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     (seriesData.length > 0 ? seriesData[0] : null)
   
   // Calculate total frames based on current series
-  const totalFrames = currentSeriesData?.numberOfInstances || sopInstanceUIDs.length || 1
+  // Use totalFrames for multi-frame DICOM, fallback to numberOfInstances
+  const totalFrames = currentSeriesData?.totalFrames || currentSeriesData?.numberOfImages || currentSeriesData?.numberOfInstances || sopInstanceUIDs.length || 1
 
-  // Series-aware frame loading with caching
-  const loadFrame = useCallback(
-    async (frameIndex: number) => {
-      const cacheKey = `${currentSeriesUID}-${frameIndex}`
-      if (frameCacheRef.current.has(cacheKey)) {
-        return frameCacheRef.current.get(cacheKey)
+  // ============ OPTIMIZED FRAME LOADING SYSTEM ============
+  // LRU Cache with size limit to prevent memory issues on large studies
+  const MAX_CACHE_SIZE = 50 // Keep max 50 frames in memory
+  const cacheOrderRef = useRef<string[]>([]) // Track access order for LRU
+  
+  // Request deduplication - prevent duplicate fetches for same frame
+  const pendingRequestsRef = useRef<Map<string, Promise<ImageBitmap | null>>>(new Map())
+  
+  // Prefetch controller to cancel on series change
+  const prefetchControllerRef = useRef<AbortController | null>(null)
+
+  // LRU cache management
+  const addToCache = useCallback((key: string, bitmap: ImageBitmap) => {
+    const cache = frameCacheRef.current
+    const order = cacheOrderRef.current
+    
+    // Remove from current position if exists
+    const existingIndex = order.indexOf(key)
+    if (existingIndex > -1) {
+      order.splice(existingIndex, 1)
+    }
+    
+    // Add to end (most recently used)
+    order.push(key)
+    cache.set(key, bitmap)
+    
+    // Evict oldest if over limit
+    while (order.length > MAX_CACHE_SIZE) {
+      const oldestKey = order.shift()
+      if (oldestKey) {
+        const oldBitmap = cache.get(oldestKey)
+        if (oldBitmap) oldBitmap.close() // Free memory
+        cache.delete(oldestKey)
       }
+    }
+  }, [])
 
-      // Use series-specific endpoint when available
+  // Core frame fetcher with deduplication and retry
+  const fetchFrame = useCallback(
+    async (frameIndex: number, signal?: AbortSignal, retryCount = 0): Promise<ImageBitmap | null> => {
+      const cacheKey = `${currentSeriesUID}-${frameIndex}`
+      const MAX_RETRIES = 2
+      
+      // Check cache first
+      if (frameCacheRef.current.has(cacheKey)) {
+        // Update LRU order
+        const order = cacheOrderRef.current
+        const idx = order.indexOf(cacheKey)
+        if (idx > -1) {
+          order.splice(idx, 1)
+          order.push(cacheKey)
+        }
+        return frameCacheRef.current.get(cacheKey)!
+      }
+      
+      // Check if request already in flight (deduplication)
+      if (pendingRequestsRef.current.has(cacheKey)) {
+        return pendingRequestsRef.current.get(cacheKey)!
+      }
+      
+      // Create new request
       const frameUrl = currentSeriesUID
         ? `${dicomWebBaseUrl}/studies/${studyInstanceUID}/series/${currentSeriesUID}/frames/${frameIndex}`
         : `${dicomWebBaseUrl}/studies/${studyInstanceUID}/frames/${frameIndex}`
+      
+      const requestPromise = (async () => {
+        try {
+          const response = await fetch(frameUrl, { 
+            signal: signal || AbortSignal.timeout(90000) // 90 second timeout
+          })
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          
+          const blob = await response.blob()
+          
+          // Validate blob has content
+          if (blob.size < 100) {
+            console.warn(`[Frame ${frameIndex}] Received empty or too small blob (${blob.size} bytes)`)
+            throw new Error('Empty frame data')
+          }
+          
+          const bitmap = await createImageBitmap(blob)
+          
+          // Validate bitmap dimensions
+          if (bitmap.width < 10 || bitmap.height < 10) {
+            console.warn(`[Frame ${frameIndex}] Invalid bitmap dimensions: ${bitmap.width}x${bitmap.height}`)
+            bitmap.close()
+            throw new Error('Invalid frame dimensions')
+          }
+          
+          // Add to LRU cache
+          addToCache(cacheKey, bitmap)
+          return bitmap
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            return null
+          }
+          
+          console.error(`[Frame ${frameIndex}] Load error (attempt ${retryCount + 1}):`, err.message)
+          
+          // Retry on failure
+          if (retryCount < MAX_RETRIES) {
+            console.log(`[Frame ${frameIndex}] Retrying... (${retryCount + 1}/${MAX_RETRIES})`)
+            pendingRequestsRef.current.delete(cacheKey)
+            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1))) // Exponential backoff
+            return fetchFrame(frameIndex, signal, retryCount + 1)
+          }
+          
+          return null
+        } finally {
+          pendingRequestsRef.current.delete(cacheKey)
+        }
+      })()
+      
+      pendingRequestsRef.current.set(cacheKey, requestPromise)
+      return requestPromise
+    },
+    [dicomWebBaseUrl, studyInstanceUID, currentSeriesUID, addToCache],
+  )
 
-      try {
-        const response = await fetch(frameUrl, { signal: AbortSignal.timeout(10000) })
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
-        const blob = await response.blob()
-        const bitmap = await createImageBitmap(blob)
+  // Smart prefetching - load nearby frames in background
+  const prefetchNearbyFrames = useCallback(
+    (centerFrame: number) => {
+      // Cancel previous prefetch
+      if (prefetchControllerRef.current) {
+        prefetchControllerRef.current.abort()
+      }
+      prefetchControllerRef.current = new AbortController()
+      const signal = prefetchControllerRef.current.signal
+      
+      // Prefetch pattern: prioritize forward frames, then backward
+      const prefetchOrder = [1, 2, -1, 3, 4, -2, 5] // Relative to current
+      const prefetchCount = Math.min(5, Math.floor(totalFrames / 10) + 2) // Adaptive based on study size
+      
+      let prefetched = 0
+      for (const offset of prefetchOrder) {
+        if (prefetched >= prefetchCount) break
         
-        // Cache with series-specific key
-        frameCacheRef.current.set(cacheKey, bitmap)
+        const targetFrame = centerFrame + offset
+        if (targetFrame >= 0 && targetFrame < totalFrames) {
+          const cacheKey = `${currentSeriesUID}-${targetFrame}`
+          if (!frameCacheRef.current.has(cacheKey) && !pendingRequestsRef.current.has(cacheKey)) {
+            // Low priority background fetch
+            fetchFrame(targetFrame, signal)
+            prefetched++
+          }
+        }
+      }
+    },
+    [currentSeriesUID, totalFrames, fetchFrame],
+  )
+
+  // Main frame loader - used by draw function
+  const loadFrame = useCallback(
+    async (frameIndex: number) => {
+      const cacheKey = `${currentSeriesUID}-${frameIndex}`
+      
+      // Fast path: already cached
+      if (frameCacheRef.current.has(cacheKey)) {
+        // Trigger prefetch in background
+        setTimeout(() => prefetchNearbyFrames(frameIndex), 0)
+        return frameCacheRef.current.get(cacheKey)
+      }
+
+      // Show loading indicator for uncached frames
+      setIsFrameLoading(true)
+      
+      try {
+        const bitmap = await fetchFrame(frameIndex)
+        setIsFrameLoading(false)
+        
+        // Trigger prefetch after loading
+        if (bitmap) {
+          setTimeout(() => prefetchNearbyFrames(frameIndex), 100)
+        }
+        
         return bitmap
       } catch (err) {
-        console.error("[Series-aware] Frame load error:", err)
+        setIsFrameLoading(false)
         return null
       }
     },
-    [dicomWebBaseUrl, studyInstanceUID, currentSeriesUID],
+    [currentSeriesUID, fetchFrame, prefetchNearbyFrames],
   )
+
+  // Clear cache when series changes
+  useEffect(() => {
+    // Cancel pending prefetches
+    if (prefetchControllerRef.current) {
+      prefetchControllerRef.current.abort()
+    }
+    
+    // Clear cache for old series (keep memory clean)
+    const cache = frameCacheRef.current
+    const order = cacheOrderRef.current
+    
+    // Close all bitmaps to free memory
+    cache.forEach((bitmap) => bitmap.close())
+    cache.clear()
+    order.length = 0
+    
+    // Clear pending requests
+    pendingRequestsRef.current.clear()
+    
+    console.log(`[Cache] Cleared for series change to: ${currentSeriesUID?.slice(-8)}`)
+    
+    // Reset frame and start preloading for new series
+    if (currentSeriesUID) {
+      setCurrentFrame(0) // Reset to first frame of new series
+      setIsInitialLoading(true) // Show initial loading screen
+      setIsFrameLoading(true) // Show loading indicator
+      setPreloadProgress({ loaded: 0, total: totalFrames })
+      
+      // Preload first frame before showing viewer
+      const preloadFirstFrame = async () => {
+        try {
+          const bitmap = await fetchFrame(0)
+          if (bitmap) {
+            setPreloadProgress({ loaded: 1, total: totalFrames })
+            setIsInitialLoading(false) // First frame loaded, show viewer
+            setIsFrameLoading(false)
+            
+            // Continue preloading remaining frames in background (up to first 10)
+            const preloadCount = Math.min(10, totalFrames)
+            for (let i = 1; i < preloadCount; i++) {
+              fetchFrame(i).then(() => {
+                setPreloadProgress(prev => ({ ...prev, loaded: Math.min(prev.loaded + 1, preloadCount) }))
+              })
+            }
+          } else {
+            // Failed to load first frame, still show viewer with error state
+            setIsInitialLoading(false)
+            setIsFrameLoading(false)
+          }
+        } catch (err) {
+          console.error('Failed to preload first frame:', err)
+          setIsInitialLoading(false)
+          setIsFrameLoading(false)
+        }
+      }
+      
+      preloadFirstFrame()
+    }
+  }, [currentSeriesUID, totalFrames, fetchFrame])
+  // ============ END OPTIMIZED FRAME LOADING ============
 
   // Draw function - stored in ref to avoid dependency issues
   const drawRef = useRef<(() => Promise<void>) | null>(null)
@@ -888,12 +1105,12 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     imgH: 0,
   })
   
+  // Track failed frames for retry functionality
+  const [failedFrame, setFailedFrame] = useState<number | null>(null)
+  
   const draw = useCallback(async () => {
     const canvas = canvasRef.current
     if (!canvas) return
-
-    const bitmap = await loadFrame(currentFrame)
-    if (!bitmap) return
 
     const ctx = canvas.getContext("2d", { willReadFrequently: true })
     if (!ctx) return
@@ -916,10 +1133,72 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     ctx.fillStyle = "#0f172a"
     ctx.fillRect(0, 0, vw, vh)
 
-    // Image scaling and positioning
+    const bitmap = await loadFrame(currentFrame)
+    
+    // Handle failed frame - show error state instead of black screen
+    if (!bitmap) {
+      setFailedFrame(currentFrame)
+      
+      // Draw error state
+      ctx.fillStyle = "#1e293b"
+      ctx.fillRect(0, 0, vw, vh)
+      
+      // Error icon (X in circle)
+      const centerX = vw / 2
+      const centerY = vh / 2 - 30
+      const iconSize = 40
+      
+      ctx.strokeStyle = "#ef4444"
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(centerX, centerY, iconSize, 0, Math.PI * 2)
+      ctx.stroke()
+      
+      ctx.beginPath()
+      ctx.moveTo(centerX - 20, centerY - 20)
+      ctx.lineTo(centerX + 20, centerY + 20)
+      ctx.moveTo(centerX + 20, centerY - 20)
+      ctx.lineTo(centerX - 20, centerY + 20)
+      ctx.stroke()
+      
+      // Error text
+      ctx.fillStyle = "#f87171"
+      ctx.font = "bold 16px Arial"
+      ctx.textAlign = "center"
+      ctx.fillText("Failed to load frame", centerX, centerY + 60)
+      
+      ctx.fillStyle = "#94a3b8"
+      ctx.font = "14px Arial"
+      ctx.fillText(`Frame ${currentFrame + 1} of ${totalFrames}`, centerX, centerY + 85)
+      
+      // Retry hint
+      ctx.fillStyle = "#60a5fa"
+      ctx.font = "13px Arial"
+      ctx.fillText("Click to retry or use arrow keys to navigate", centerX, centerY + 115)
+      
+      ctx.textAlign = "left"
+      return
+    }
+    
+    // Clear failed frame state on successful load
+    if (failedFrame === currentFrame) {
+      setFailedFrame(null)
+    }
+
+    // Image scaling and positioning - FIT TO SCREEN by default
     const imgW = bitmap.width
     const imgH = bitmap.height
-    const scale = zoom
+    
+    // Calculate base scale to fit image within viewport (with small padding)
+    const padding = 20 // pixels padding on each side
+    const availableW = vw - padding * 2
+    const availableH = vh - padding * 2
+    const fitScaleX = availableW / imgW
+    const fitScaleY = availableH / imgH
+    const baseScale = Math.min(fitScaleX, fitScaleY, 1) // Don't upscale small images beyond 100%
+    
+    // Apply user zoom on top of fit-to-screen base scale
+    const scale = baseScale * zoom
     const drawW = imgW * scale
     const drawH = imgH * scale
     const dx = vw / 2 - drawW / 2 + pan.x
@@ -930,7 +1209,21 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
 
     ctx.imageSmoothingEnabled = true
     ctx.filter = `brightness(${brightness}) contrast(${contrast})`
+    
+    // Apply rotation if needed
+    if (rotation !== 0) {
+      ctx.save()
+      ctx.translate(vw / 2, vh / 2)
+      ctx.rotate((rotation * Math.PI) / 180)
+      ctx.translate(-vw / 2, -vh / 2)
+    }
+    
     ctx.drawImage(bitmap, dx, dy, drawW, drawH)
+    
+    if (rotation !== 0) {
+      ctx.restore()
+    }
+    
     ctx.filter = "none"
 
     // Grid overlay
@@ -980,6 +1273,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     pan,
     brightness,
     contrast,
+    rotation,
     showOverlay,
     showGrid,
     mmPerPixel,
@@ -1048,13 +1342,6 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     return () => canvas.removeEventListener("wheel", handleWheel)
   }, [handleWheel])
 
-  // Reset frame position when series changes
-  useEffect(() => {
-    if (currentSeriesUID) {
-      setCurrentFrame(0) // Reset to first frame of new series
-    }
-  }, [currentSeriesUID])
-
   // Add keyboard navigation support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1112,51 +1399,22 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     }
   }, [isPlaying, playSpeed, totalFrames])
 
-  // Auto-hide panels when canvas is active
+  // Auto-hide panels when canvas is active - DISABLED for manual control
   const handleCanvasEnter = useCallback(() => {
     setIsCanvasActive(true)
-    onCanvasActiveChange?.(true) // Notify parent
-    // Start auto-hide timer
-    if (autoHideTimeoutRef.current) {
-      clearTimeout(autoHideTimeoutRef.current)
-    }
-    autoHideTimeoutRef.current = setTimeout(() => {
-      setPanelsAutoHidden(true)
-    }, 1500) // Hide after 1.5 seconds of canvas activity
+    onCanvasActiveChange?.(true)
+    // Auto-hide disabled - user controls panel manually
   }, [onCanvasActiveChange])
 
   const handleCanvasLeave = useCallback(() => {
     setIsCanvasActive(false)
-    onCanvasActiveChange?.(false) // Notify parent
-    // Clear auto-hide timer and show panels
-    if (autoHideTimeoutRef.current) {
-      clearTimeout(autoHideTimeoutRef.current)
-      autoHideTimeoutRef.current = null
-    }
-    setPanelsAutoHidden(false)
+    onCanvasActiveChange?.(false)
+    // Auto-hide disabled - user controls panel manually
   }, [onCanvasActiveChange])
 
-  // Show panels when mouse is near edges
+  // Show panels when mouse is near edges - DISABLED for manual control
   const handleMouseMoveForPanels = useCallback((e: React.MouseEvent) => {
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return
-    
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    const edgeThreshold = 60 // pixels from edge to trigger show
-    
-    // Check if near left, right, or top edge
-    const nearLeftEdge = x < edgeThreshold
-    const nearRightEdge = x > rect.width - edgeThreshold
-    const nearTopEdge = y < edgeThreshold
-    
-    if (nearLeftEdge || nearRightEdge || nearTopEdge) {
-      setPanelsAutoHidden(false)
-      if (autoHideTimeoutRef.current) {
-        clearTimeout(autoHideTimeoutRef.current)
-        autoHideTimeoutRef.current = null
-      }
-    }
+    // Disabled - user controls panel manually via button
   }, [])
 
   // Cleanup auto-hide timeout on unmount
@@ -1577,6 +1835,20 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
     [],
   )
 
+  // Handle canvas click - retry failed frames
+  const handleCanvasClick = useCallback(() => {
+    if (failedFrame !== null && failedFrame === currentFrame) {
+      // Clear cache for this frame and retry
+      const cacheKey = `${currentSeriesUID}-${currentFrame}`
+      frameCacheRef.current.delete(cacheKey)
+      pendingRequestsRef.current.delete(cacheKey)
+      setFailedFrame(null)
+      setIsFrameLoading(true)
+      // Force redraw which will trigger a new fetch
+      setTimeout(() => drawRef.current?.(), 100)
+    }
+  }, [failedFrame, currentFrame, currentSeriesUID])
+
   // Single useEffect for all drawing - with RAF throttling
   useEffect(() => {
     let rafId: number | null = null
@@ -1892,11 +2164,12 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
         <canvas
           ref={canvasRef}
           style={{ 
-            cursor: cursorStyle,
+            cursor: failedFrame === currentFrame ? 'pointer' : cursorStyle,
             display: 'block',
             width: '100%',
             height: '100%',
           }}
+          onClick={handleCanvasClick}
           onMouseDown={handleCanvasMouseDown}
           onMouseMove={handleCanvasMouseMove}
           onMouseUp={handleCanvasMouseUp}
@@ -1904,58 +2177,173 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
           tabIndex={0}
         />
         
+        {/* Initial Loading Overlay - Shows until first frame is fully loaded */}
+        {isInitialLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-900 z-50">
+            <div className="text-center max-w-md px-8">
+              {/* Animated medical icon */}
+              <div className="relative w-24 h-24 mx-auto mb-6">
+                <div className="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
+                <div className="absolute inset-0 border-4 border-transparent border-t-blue-500 rounded-full animate-spin"></div>
+                <div className="absolute inset-3 border-4 border-cyan-500/20 rounded-full"></div>
+                <div className="absolute inset-3 border-4 border-transparent border-b-cyan-500 rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }}></div>
+                {/* Center icon */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Layers className="w-8 h-8 text-blue-400" />
+                </div>
+              </div>
+              
+              <h3 className="text-white text-lg font-semibold mb-2">Loading Medical Images</h3>
+              <p className="text-slate-400 text-sm mb-4">
+                {currentSeriesData?.seriesDescription || 'Preparing series'} • {totalFrames} frames
+              </p>
+              
+              {/* Progress bar */}
+              <div className="w-full bg-slate-700 rounded-full h-2 mb-2 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-blue-500 to-cyan-500 h-full rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${Math.max(5, (preloadProgress.loaded / Math.min(10, preloadProgress.total)) * 100)}%` }}
+                />
+              </div>
+              <p className="text-slate-500 text-xs">
+                Loading frame {preloadProgress.loaded} of {Math.min(10, preloadProgress.total)}...
+              </p>
+            </div>
+          </div>
+        )}
+        
+        {/* Frame Loading Overlay - Shows when switching frames */}
+        {!isInitialLoading && isFrameLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm z-50">
+            <div className="text-center">
+              <div className="relative w-16 h-16 mx-auto mb-4">
+                <div className="absolute inset-0 border-4 border-blue-500/30 rounded-full"></div>
+                <div className="absolute inset-0 border-4 border-transparent border-t-blue-500 rounded-full animate-spin"></div>
+              </div>
+              <p className="text-white text-sm font-medium">Loading frame...</p>
+              <p className="text-slate-400 text-xs mt-1">
+                {currentSeriesData?.seriesDescription || 'Series'} • Frame {currentFrame + 1}/{totalFrames}
+              </p>
+            </div>
+          </div>
+        )}
+        
         {/* Show panels hint when auto-hidden */}
         {panelsAutoHidden && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/60 text-white/60 text-xs rounded-full backdrop-blur-sm pointer-events-none transition-opacity">
             Move mouse to edges to show panels
           </div>
         )}
+        
+        {/* Floating Quick Toolbar - Always visible at bottom center */}
+        {!isInitialLoading && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 px-3 py-2 bg-black/70 backdrop-blur-md rounded-xl border border-white/10 shadow-lg">
+            {/* Zoom Controls */}
+            <button
+              onClick={() => setZoom(prev => Math.min(5, prev + 0.25))}
+              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+              title="Zoom In"
+            >
+              <ZoomIn size={20} />
+            </button>
+            <button
+              onClick={() => setZoom(prev => Math.max(0.25, prev - 0.25))}
+              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+              title="Zoom Out"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+              </svg>
+            </button>
+            
+            <div className="w-px h-6 bg-white/20 mx-1" />
+            
+            {/* Rotate */}
+            <button
+              onClick={() => setRotation(prev => (prev + 90) % 360)}
+              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+              title={`Rotate (${rotation}°)`}
+            >
+              <RotateCcw size={20} style={{ transform: 'scaleX(-1)' }} />
+            </button>
+            
+            {/* Brightness/Contrast */}
+            <button
+              onClick={() => setContrast(prev => prev >= 1.5 ? 0.5 : prev + 0.25)}
+              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+              title={`Contrast: ${(contrast * 100).toFixed(0)}%`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setBrightness(prev => prev >= 1.5 ? 0.5 : prev + 0.25)}
+              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+              title={`Brightness: ${(brightness * 100).toFixed(0)}%`}
+            >
+              <Sun size={20} />
+            </button>
+            
+            <div className="w-px h-6 bg-white/20 mx-1" />
+            
+            {/* Reset */}
+            <button
+              onClick={() => {
+                setZoom(1)
+                setBrightness(1)
+                setContrast(1)
+                setRotation(0)
+                setPan({ x: 0, y: 0 })
+              }}
+              className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+              title="Reset View"
+            >
+              <RotateCcw size={20} />
+            </button>
+            
+            {/* Settings - Toggle Tools Panel */}
+            <button
+              onClick={() => setToolsPanelCollapsed(prev => !prev)}
+              className={`p-2 rounded-lg transition ${
+                !toolsPanelCollapsed ? 'text-blue-400 bg-blue-500/20' : 'text-white/80 hover:text-white hover:bg-white/10'
+              }`}
+              title="Toggle Tools Panel"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Desktop Tools Panel Toggle - Fixed position when collapsed */}
-      {(toolsPanelCollapsed || panelsAutoHidden) && !toolsPanelCollapsed && (
-        <button
-          onClick={() => setPanelsAutoHidden(false)}
-          className="hidden md:flex fixed right-0 top-1/2 -translate-y-1/2 z-40 p-2 bg-blue-600/80 text-white rounded-l-lg shadow-lg hover:bg-blue-700 transition-all items-center gap-1 opacity-50 hover:opacity-100"
-          title="Show Tools Panel"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7" />
-          </svg>
-        </button>
-      )}
-      
-      {toolsPanelCollapsed && !panelsAutoHidden && (
+      {/* Desktop Tools Panel Toggle - Always visible when collapsed */}
+      {toolsPanelCollapsed && (
         <button
           onClick={() => setToolsPanelCollapsed(false)}
-          className="hidden md:flex fixed right-0 top-1/2 -translate-y-1/2 z-40 p-2 bg-blue-600 text-white rounded-l-lg shadow-lg hover:bg-blue-700 transition-all items-center gap-1"
-          title="Show Tools Panel"
+          className="hidden md:flex fixed right-0 top-1/2 -translate-y-1/2 z-40 px-2 py-3 bg-blue-600 text-white rounded-l-lg shadow-lg hover:bg-blue-700 hover:px-3 transition-all items-center gap-1 group"
+          title="Open Tools Panel"
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7" />
           </svg>
+          <span className="text-xs font-medium hidden group-hover:inline">Tools</span>
         </button>
       )}
 
-      {/* Tools Panel - Responsive: hidden on mobile by default, slide in when toggled */}
+      {/* Tools Panel - Hidden by default, opens on button click */}
       <div 
         className={`
           bg-slate-800 border-l border-slate-700 flex flex-col h-full shadow-lg flex-shrink-0
           transition-all duration-300 ease-in-out
           md:relative
           fixed top-0 right-0 z-30
-          ${toolsPanelCollapsed || panelsAutoHidden ? 'md:w-0 md:overflow-hidden md:opacity-0' : 'w-72 md:opacity-100'}
+          ${toolsPanelCollapsed ? 'md:w-0 md:overflow-hidden' : 'w-72'}
           ${showMobileTools ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}
           max-md:h-screen max-md:pt-16 max-md:w-72
-          hover:md:opacity-100 hover:md:w-72
         `}
-        onMouseEnter={() => {
-          setPanelsAutoHidden(false)
-          if (autoHideTimeoutRef.current) {
-            clearTimeout(autoHideTimeoutRef.current)
-            autoHideTimeoutRef.current = null
-          }
-        }}
         onWheel={(e) => e.stopPropagation()}
       >
         {/* Panel Header with Collapse Button */}
@@ -2149,6 +2537,7 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
                   setZoom(1)
                   setBrightness(1)
                   setContrast(1)
+                  setRotation(0)
                   setPan({ x: 0, y: 0 })
                 }}
                 className="w-full py-2 text-xs bg-slate-700 text-slate-300 rounded hover:bg-slate-600 transition flex items-center justify-center gap-2"
@@ -2183,6 +2572,14 @@ const TwoDViewer: React.FC<CombinedDicomViewerProps> = ({
               >
                 <GridIcon size={18} />
                 <span className="text-xs">Grid</span>
+              </button>
+              <button
+                onClick={() => setRotation(prev => (prev + 90) % 360)}
+                className="flex flex-col items-center gap-1 p-3 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600 transition"
+                title={`Current rotation: ${rotation}°`}
+              >
+                <RotateCcw size={18} style={{ transform: `rotate(${-rotation}deg)` }} />
+                <span className="text-xs">Rotate {rotation > 0 ? `${rotation}°` : ''}</span>
               </button>
               <button
                 onClick={handleCapture}
@@ -2388,7 +2785,8 @@ const MPRViewerOptimized: React.FC<CombinedDicomViewerProps> = ({
   const currentSeriesData = seriesData.find(s => s.seriesInstanceUID === currentSeriesUID) || 
     (seriesData.length > 0 ? seriesData[0] : null)
   
-  const totalFrames = currentSeriesData?.numberOfInstances || sopInstanceUIDs.length || 1
+  // Use totalFrames for multi-frame DICOM, fallback to numberOfInstances
+  const totalFrames = currentSeriesData?.totalFrames || currentSeriesData?.numberOfImages || currentSeriesData?.numberOfInstances || sopInstanceUIDs.length || 1
 
   // State for drawing annotations on MPR
   const [annotations, setAnnotations] = useState<Annotation[]>([])
