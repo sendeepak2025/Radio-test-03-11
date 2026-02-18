@@ -113,8 +113,34 @@ class UnifiedOrthancService {
    * Find study by StudyInstanceUID
    */
   async findStudyByUID(studyInstanceUID) {
+    // Fast path via Orthanc /tools/find
+    try {
+      const response = await this.client.post('/tools/find', {
+        Level: 'Study',
+        Query: {
+          StudyInstanceUID: studyInstanceUID
+        }
+      });
+
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        const orthancStudyId = response.data[0];
+        let tags = null;
+        try {
+          tags = await this.getStudyTags(orthancStudyId);
+        } catch (_err) {
+          // tags are optional for export path
+        }
+        return {
+          orthancStudyId,
+          tags
+        };
+      }
+    } catch (error) {
+      console.warn('Orthanc /tools/find study lookup failed, falling back to scan:', error.message);
+    }
+
+    // Fallback path: brute-force scan
     const studies = await this.getAllStudies();
-    
     for (const studyId of studies) {
       try {
         const tags = await this.getStudyTags(studyId);
@@ -128,7 +154,7 @@ class UnifiedOrthancService {
         console.warn(`Failed to check study ${studyId}:`, error.message);
       }
     }
-    
+
     return null;
   }
 

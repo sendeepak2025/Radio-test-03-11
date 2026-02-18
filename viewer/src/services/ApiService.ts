@@ -21,6 +21,40 @@ const getBackendUrl = (): string => {
 
 const BACKEND_URL = getBackendUrl()
 
+const extractFilenameFromDisposition = (contentDisposition: string | null): string | null => {
+  if (!contentDisposition) return null
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1])
+  }
+  const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+  return asciiMatch?.[1] || null
+}
+
+const parseErrorMessage = async (response: Response): Promise<string> => {
+  try {
+    const payload = await response.json()
+    return payload?.message || payload?.error || `Request failed (${response.status})`
+  } catch {
+    return `Request failed (${response.status})`
+  }
+}
+
+const triggerDownloadFromResponse = async (
+  response: Response,
+  fallbackFilename: string
+) => {
+  const blob = await response.blob()
+  const downloadUrl = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = downloadUrl
+  link.download = extractFilenameFromDisposition(response.headers.get('content-disposition')) || fallbackFilename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(downloadUrl)
+}
+
 /**
  * Get auth token from storage
  */
@@ -58,7 +92,7 @@ export const apiCall = async (
 
   // Get auth token
   const token = getAuthToken()
-  console.log(token,"API TOKEN IN SERVICES")
+
   // Get CSRF token for state-changing operations
   const csrfToken = getCSRFToken()
 
@@ -541,19 +575,10 @@ export const exportPatientData = async (
   })
 
   if (!response.ok) {
-    throw new Error('Export failed')
+    throw new Error(await parseErrorMessage(response))
   }
 
-  // Download the file
-  const blob = await response.blob()
-  const downloadUrl = window.URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = downloadUrl
-  link.download = `patient_${patientID}_export.${format}`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  window.URL.revokeObjectURL(downloadUrl)
+  await triggerDownloadFromResponse(response, `patient_${patientID}_export.${format}`)
 
   return { success: true }
 }
@@ -578,19 +603,10 @@ export const exportStudyData = async (
   })
 
   if (!response.ok) {
-    throw new Error('Export failed')
+    throw new Error(await parseErrorMessage(response))
   }
 
-  // Download the file
-  const blob = await response.blob()
-  const downloadUrl = window.URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = downloadUrl
-  link.download = `study_${studyUID}_export.${format}`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  window.URL.revokeObjectURL(downloadUrl)
+  await triggerDownloadFromResponse(response, `study_${studyUID}_export.${format}`)
 
   return { success: true }
 }
@@ -611,21 +627,47 @@ export const exportAllData = async (includeImages: boolean = false) => {
   })
 
   if (!response.ok) {
-    throw new Error('Export failed')
+    throw new Error(await parseErrorMessage(response))
   }
 
-  // Download the file
-  const blob = await response.blob()
-  const downloadUrl = window.URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = downloadUrl
-  link.download = `complete_export.zip`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  window.URL.revokeObjectURL(downloadUrl)
+  await triggerDownloadFromResponse(response, 'complete_export.zip')
 
   return { success: true }
+}
+
+export const exportAndBurnToCD = async ({
+  targetType,
+  targetId,
+  includeImages = true,
+  driveLetter,
+}: {
+  targetType: 'patient' | 'study'
+  targetId: string
+  includeImages?: boolean
+  driveLetter?: string
+}) => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/burn`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify({
+      targetType,
+      targetId,
+      includeImages,
+      burnToCd: true,
+      driveLetter,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  return response.json()
 }
 
 export default {
@@ -663,6 +705,7 @@ export default {
   // Export API
   exportPatientData,
   exportStudyData,
+  exportAndBurnToCD,
   exportAllData,
   // Follow-up API
   getFollowUps: async (filters = {}) => {

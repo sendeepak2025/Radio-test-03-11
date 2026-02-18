@@ -4,7 +4,7 @@
  * Requirements: 10.1-10.12, 11.1-11.10
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { authService } from '../services/authService'
 
 interface SessionConfig {
@@ -36,7 +36,19 @@ export const useSessionManagement = (
   onWarning?: (minutesLeft: number) => void,
   config: Partial<SessionConfig> = {}
 ) => {
-  const finalConfig = { ...DEFAULT_CONFIG, ...config }
+  const finalConfig = useMemo(
+    () => ({
+      ...DEFAULT_CONFIG,
+      ...config
+    }),
+    [
+      config.timeoutMinutes,
+      config.warningMinutes,
+      config.extendOnActivity,
+      config.autoRefreshToken,
+      config.refreshIntervalMinutes
+    ]
+  )
   
   const [sessionStatus, setSessionStatus] = useState<SessionStatus>({
     isActive: true,
@@ -51,9 +63,21 @@ export const useSessionManagement = (
   const refreshRef = useRef<NodeJS.Timeout>()
   const lastActivityRef = useRef<Date>(new Date())
   const countdownRef = useRef<NodeJS.Timeout>()
+  const isActiveRef = useRef<boolean>(true)
+  const onTimeoutRef = useRef(onTimeout)
+  const onWarningRef = useRef(onWarning)
+
+  useEffect(() => {
+    onTimeoutRef.current = onTimeout
+  }, [onTimeout])
+
+  useEffect(() => {
+    onWarningRef.current = onWarning
+  }, [onWarning])
 
   // Reset session timer
   const resetTimer = useCallback(() => {
+    isActiveRef.current = true
     lastActivityRef.current = new Date()
     
     setSessionStatus(prev => ({
@@ -78,8 +102,8 @@ export const useSessionManagement = (
         showWarning: true
       }))
       
-      if (onWarning) {
-        onWarning(finalConfig.warningMinutes)
+      if (onWarningRef.current) {
+        onWarningRef.current(finalConfig.warningMinutes)
       }
     }, warningTime)
 
@@ -88,10 +112,13 @@ export const useSessionManagement = (
     timeoutRef.current = setTimeout(() => {
       handleTimeout()
     }, timeoutTime)
-  }, [finalConfig, onWarning])
+  }, [finalConfig.timeoutMinutes, finalConfig.warningMinutes])
 
   // Handle session timeout
   const handleTimeout = useCallback(() => {
+    if (!isActiveRef.current) return
+    isActiveRef.current = false
+
     setSessionStatus(prev => ({
       ...prev,
       isActive: false,
@@ -106,20 +133,20 @@ export const useSessionManagement = (
     window.dispatchEvent(event)
 
     // Call timeout callback
-    if (onTimeout) {
-      onTimeout()
+    if (onTimeoutRef.current) {
+      onTimeoutRef.current()
     }
 
     // Clear session data and logout
     authService.logout().catch(console.error)
-  }, [onTimeout])
+  }, [])
 
   // Track user activity
   const handleActivity = useCallback(() => {
-    if (sessionStatus.isActive && finalConfig.extendOnActivity) {
+    if (isActiveRef.current && finalConfig.extendOnActivity) {
       resetTimer()
     }
-  }, [sessionStatus.isActive, finalConfig.extendOnActivity, resetTimer])
+  }, [finalConfig.extendOnActivity, resetTimer])
 
   // Auto-refresh token
   const refreshToken = useCallback(async () => {
@@ -191,7 +218,7 @@ export const useSessionManagement = (
       }))
 
       // Auto-expire if time runs out
-      if (remaining <= 0 && sessionStatus.isActive) {
+      if (remaining <= 0 && isActiveRef.current) {
         handleTimeout()
       }
     }, 1000)
@@ -199,7 +226,7 @@ export const useSessionManagement = (
     return () => {
       if (countdownRef.current) clearInterval(countdownRef.current)
     }
-  }, [finalConfig.timeoutMinutes, sessionStatus.isActive, handleTimeout])
+  }, [finalConfig.timeoutMinutes, handleTimeout])
 
   // Extend session manually
   const extendSession = useCallback(async () => {

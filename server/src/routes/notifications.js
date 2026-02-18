@@ -21,6 +21,53 @@ const notificationService = getCriticalNotificationService({
 escalationService.config.notificationService = notificationService;
 
 /**
+ * GET /api/notifications/critical
+ * Get current user's notifications (or all for admin use)
+ * Requires authentication
+ */
+router.get('/critical',
+  rateLimit({ maxRequests: 100, windowMs: 60000 }),
+  authenticate,
+  async (req, res) => {
+    try {
+      const userId = req.user.id || req.user.userId;
+      const isAdmin = Array.isArray(req.user.roles) && req.user.roles.includes('admin');
+
+      const notifications = await notificationService.getNotificationHistory({
+        userId: isAdmin ? undefined : userId,
+        limit: 200
+      });
+
+      res.json(
+        notifications.map((n) => ({
+          id: String(n._id),
+          type: n.type,
+          severity: n.severity,
+          title: n.title,
+          message: n.message,
+          patientId: n.patientId,
+          studyId: n.studyId,
+          status: n.status,
+          createdAt: n.createdAt,
+          deliveredAt: n.deliveredAt,
+          acknowledgedAt: n.acknowledgedAt,
+          acknowledgedBy: n.acknowledgedBy,
+          escalationLevel: n.escalationLevel || 0,
+          escalationHistory: n.escalationHistory || []
+        }))
+      );
+    } catch (error) {
+      console.error('❌ Failed to get critical notifications:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get critical notifications',
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
  * POST /api/notifications/critical
  * Create and send a critical notification
  * Requires authentication

@@ -32,6 +32,7 @@ import {
   uploadPacsStudy,
   exportPatientData,
   exportStudyData,
+  exportAndBurnToCD,
 } from "../../services/ApiService";
 
 import { Alert } from "../../components/ui/alert";
@@ -142,6 +143,10 @@ const PatientsPage: React.FC = () => {
     id: string;
   } | null>(null);
   const [includeImages, setIncludeImages] = useState(true);
+  const [exportMode, setExportMode] = useState<"download" | "burn-cd">(
+    "download"
+  );
+  const [cdDriveLetter, setCdDriveLetter] = useState("");
   const [exporting, setExporting] = useState(false);
 
   // Filters
@@ -157,6 +162,7 @@ const PatientsPage: React.FC = () => {
 
   // Error
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   // Voice support check
   useEffect(() => {
@@ -425,11 +431,32 @@ const PatientsPage: React.FC = () => {
     try {
       setExporting(true);
       setError(null);
+      setSuccess(null);
 
-      if (exportTarget.type === "patient") {
-        await exportPatientData(exportTarget.id, includeImages, "zip");
+      if (exportMode === "burn-cd") {
+        const burnResult = await exportAndBurnToCD({
+          targetType: exportTarget.type,
+          targetId: exportTarget.id,
+          includeImages,
+          driveLetter: cdDriveLetter || undefined,
+        });
+
+        const burnMessage =
+          burnResult?.cdBurn?.status === "completed"
+            ? "CD burn completed successfully."
+            : burnResult?.cdBurn?.message ||
+              "Export prepared. Direct burn was not completed.";
+
+        setSuccess(
+          `${burnMessage} ZIP: ${burnResult?.export?.zipFileName || "prepared"}`
+        );
       } else {
-        await exportStudyData(exportTarget.id, includeImages, "zip");
+        if (exportTarget.type === "patient") {
+          await exportPatientData(exportTarget.id, includeImages, "zip");
+        } else {
+          await exportStudyData(exportTarget.id, includeImages, "zip");
+        }
+        setSuccess("Export downloaded successfully.");
       }
 
       setExportDialogOpen(false);
@@ -445,6 +472,8 @@ const PatientsPage: React.FC = () => {
     setExportDialogOpen(false);
     setExportTarget(null);
     setIncludeImages(true);
+    setExportMode("download");
+    setCdDriveLetter("");
   };
 
   // ===================== RENDER =========================
@@ -1193,7 +1222,7 @@ const PatientsPage: React.FC = () => {
         <div className="space-y-6">
           <Alert severity="info" icon={<FileDown />}>
             <p className="font-bold text-sm">
-              This will create a ZIP file containing:
+              This export flow supports ZIP download and optional direct CD burn:
             </p>
             <ul className="list-disc list-inside text-sm mt-2 space-y-1 ml-4">
               <li>Complete metadata (JSON format)</li>
@@ -1203,6 +1232,51 @@ const PatientsPage: React.FC = () => {
               <li>AI analysis results (if available)</li>
             </ul>
           </Alert>
+
+          <div className="space-y-3">
+            <p className="text-sm font-bold text-gray-800">Delivery Method</p>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="exportMode"
+                checked={exportMode === "download"}
+                onChange={() => setExportMode("download")}
+                className="mt-1"
+              />
+              <span className="text-sm text-gray-700">
+                Download ZIP file
+              </span>
+            </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="exportMode"
+                checked={exportMode === "burn-cd"}
+                onChange={() => setExportMode("burn-cd")}
+                className="mt-1"
+              />
+              <span className="text-sm text-gray-700">
+                Export and attempt direct CD burn (Windows server host only)
+              </span>
+            </label>
+          </div>
+
+          {exportMode === "burn-cd" && (
+            <div>
+              <Input
+                label="CD/DVD Drive Letter (Optional)"
+                placeholder="Example: D"
+                value={cdDriveLetter}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  setCdDriveLetter(e.target.value.toUpperCase())
+                }
+                fullWidth
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Leave blank for auto-detect. If direct burn fails, ZIP file is still prepared for manual burn.
+              </p>
+            </div>
+          )}
 
           <div className="flex items-start">
             <input
@@ -1255,7 +1329,11 @@ const PatientsPage: React.FC = () => {
             loading={exporting}
             startIcon={<FileDown className="w-4 h-4" />}
           >
-            {exporting ? "Exporting..." : "Export Data"}
+            {exporting
+              ? "Processing..."
+              : exportMode === "burn-cd"
+              ? "Export + Burn CD"
+              : "Export Data"}
           </Button>
         </ModalFooter>
       </Modal>
@@ -1270,6 +1348,18 @@ const PatientsPage: React.FC = () => {
         >
           <p className="font-bold text-sm">Error</p>
           <p className="text-sm">{error}</p>
+        </Alert>
+      )}
+
+      {success && (
+        <Alert
+          severity="success"
+          onClose={() => setSuccess(null)}
+          icon={<CheckCircle />}
+          className="fixed bottom-6 right-6 min-w-[320px] z-50 shadow-xl"
+        >
+          <p className="font-bold text-sm">Success</p>
+          <p className="text-sm">{success}</p>
         </Alert>
       )}
     </>

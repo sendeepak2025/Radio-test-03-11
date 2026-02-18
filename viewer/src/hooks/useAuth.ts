@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useAppSelector, useAppDispatch } from '../store/hooks'
 import { 
   login as loginAction,
@@ -25,6 +25,7 @@ export const useAuth = () => {
   const isLoading = useAppSelector(selectAuthLoading)
   const error = useAppSelector(selectAuthError)
   const accessToken = useAppSelector(selectAccessToken)
+  const lastActivityRef = useRef<number>(auth.lastActivity || Date.now())
 
   // Auto-refresh token when it's about to expire
   useEffect(() => {
@@ -75,7 +76,12 @@ export const useAuth = () => {
     if (!isAuthenticated) return
 
     const updateActivity = () => {
-      dispatch(updateLastActivity())
+      const now = Date.now()
+      // Avoid dispatching on every mousemove/scroll event.
+      if (now - lastActivityRef.current >= 15000) {
+        lastActivityRef.current = now
+        dispatch(updateLastActivity())
+      }
     }
 
     const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart']
@@ -90,13 +96,17 @@ export const useAuth = () => {
     }
   }, [isAuthenticated, dispatch])
 
+  useEffect(() => {
+    lastActivityRef.current = auth.lastActivity || Date.now()
+  }, [auth.lastActivity])
+
   // Auto-logout after inactivity
   useEffect(() => {
     if (!isAuthenticated) return
 
     const checkInactivity = () => {
       const inactivityTimeout = 30 * 60 * 1000 // 30 minutes
-      const timeSinceLastActivity = Date.now() - auth.lastActivity
+      const timeSinceLastActivity = Date.now() - lastActivityRef.current
       
       if (timeSinceLastActivity > inactivityTimeout) {
         dispatch(logoutAction())
@@ -105,7 +115,7 @@ export const useAuth = () => {
 
     const interval = setInterval(checkInactivity, 60 * 1000) // Check every minute
     return () => clearInterval(interval)
-  }, [isAuthenticated, auth.lastActivity, dispatch])
+  }, [isAuthenticated, dispatch])
 
   const login = async (credentials: LoginCredentials) => {
     const result = await dispatch(loginAction(credentials))

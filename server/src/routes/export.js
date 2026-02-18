@@ -37,4 +37,14 @@ router.get(
   exportController.exportAllData
 );
 
+// Build ZIP and attempt direct CD burn (Windows server host)
+// POST /api/export/burn
+router.post(
+  '/burn',
+  rateLimit({ maxRequests: 5, windowMs: 60000 }),
+  authenticate,
+  express.json(),
+  exportController.burnExportToCD
+);
+
 module.exports = router;

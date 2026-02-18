@@ -19,6 +19,11 @@ class NotificationService {
     backoffMultiplier: 2,
   };
 
+  private isNotFoundError(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+    return msg.includes('404') || msg.toLowerCase().includes('not found');
+  }
+
   /**
    * Retry wrapper with exponential backoff
    */
@@ -58,10 +63,18 @@ class NotificationService {
     try {
       return await this.retryWithBackoff(async () => {
         const response = await apiCall('/api/notifications/critical');
-        if (!response.ok) {
-          throw new Error(`Failed to fetch notifications: ${response.statusText}`);
+        if (response.status === 404) {
+          return [];
         }
-        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(`Failed to fetch notifications: ${response.status} ${response.statusText}`);
+        }
+        const payload = await response.json();
+        const data = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.notifications)
+          ? payload.notifications
+          : [];
         
         // Convert date strings to Date objects
         return data.map((notification: any) => ({
@@ -77,6 +90,9 @@ class NotificationService {
         }));
       });
     } catch (error) {
+      if (this.isNotFoundError(error)) {
+        return [];
+      }
       console.error('Error fetching notifications after retries:', error);
       throw error;
     }
