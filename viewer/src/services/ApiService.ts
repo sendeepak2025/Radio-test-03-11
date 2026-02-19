@@ -59,8 +59,42 @@ const downloadWithProgress = async (
   url: string,
   token: string | null,
   fallbackFilename: string,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  useNativeDownload: boolean = false // New parameter for browser native download
 ) => {
+  // Use browser's native download dialog
+  if (useNativeDownload) {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        // Create a temporary link element
+        const link = document.createElement('a')
+        
+        // Add token to URL if available
+        const downloadUrl = token 
+          ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+          : url
+        
+        link.href = downloadUrl
+        link.download = fallbackFilename
+        link.style.display = 'none'
+        
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        
+        // Simulate progress for UI feedback
+        if (onProgress) {
+          onProgress(100)
+        }
+        
+        resolve()
+      } catch (error) {
+        reject(error)
+      }
+    })
+  }
+
+  // Original XHR implementation for progress tracking
   return new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('GET', url)
@@ -688,14 +722,15 @@ export const exportPatientData = async (
   patientID: string,
   includeImages: boolean = true,
   format: 'zip' | 'json' = 'zip',
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  useNativeDownload: boolean = true // Default to browser native download
 ) => {
   const url = `${BACKEND_URL}/api/export/patient/${patientID}?includeImages=${includeImages}&format=${format}`
   const token = getAuthToken()
 
   // Use XHR for progress support, especially for large ZIP exports.
   if (format === 'zip') {
-    await downloadWithProgress(url, token, `patient_${patientID}_export.${format}`, onProgress)
+    await downloadWithProgress(url, token, `patient_${patientID}_export.${format}`, onProgress, useNativeDownload)
     return { success: true }
   }
 
@@ -723,13 +758,14 @@ export const exportStudyData = async (
   studyUID: string,
   includeImages: boolean = true,
   format: 'zip' | 'json' = 'zip',
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  useNativeDownload: boolean = true // Default to browser native download
 ) => {
   const url = `${BACKEND_URL}/api/export/study/${studyUID}?includeImages=${includeImages}&format=${format}`
   const token = getAuthToken()
 
   if (format === 'zip') {
-    await downloadWithProgress(url, token, `study_${studyUID}_export.${format}`, onProgress)
+    await downloadWithProgress(url, token, `study_${studyUID}_export.${format}`, onProgress, useNativeDownload)
     return { success: true }
   }
 

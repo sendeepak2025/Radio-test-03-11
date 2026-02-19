@@ -17,12 +17,14 @@ interface ExportButtonProps {
   type: 'patient' | 'study'
   id: string
   label?: string
+  className?: string
 }
 
 export const ExportButton: React.FC<ExportButtonProps> = ({
   type,
   id,
-  label = 'Export'
+  label = 'Export',
+  className
 }) => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [exporting, setExporting] = useState(false)
@@ -37,19 +39,36 @@ export const ExportButton: React.FC<ExportButtonProps> = ({
           ? `/api/export/patient/${id}`
           : `/api/export/study/${id}`
 
+      const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken')
+      
       const response = await fetch(`${endpoint}?format=${format}&includeImages=true`, {
-        credentials: 'include'
+        credentials: 'include',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
       })
 
       if (!response.ok) {
-        throw new Error('Export failed')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.message || `Export failed with status ${response.status}`)
       }
 
       const blob = await response.blob()
+      
+      // Get filename from Content-Disposition header if available
+      const contentDisposition = response.headers.get('Content-Disposition')
+      let filename = `${type}-${id}.${format}`
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i)
+        if (filenameMatch) {
+          filename = filenameMatch[1]
+        }
+      }
+      
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${type}-${id}.${format}`
+      a.download = filename
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -57,6 +76,7 @@ export const ExportButton: React.FC<ExportButtonProps> = ({
 
       alert('✅ Export completed successfully!')
     } catch (error: any) {
+      console.error('Export error:', error)
       alert(`❌ Export failed: ${error.message}`)
     } finally {
       setExporting(false)
@@ -71,6 +91,7 @@ export const ExportButton: React.FC<ExportButtonProps> = ({
         disabled={exporting}
         variant="outlined"
         size="small"
+        className={className}
       >
         {label}
       </Button>

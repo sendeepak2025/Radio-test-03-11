@@ -5,6 +5,10 @@ const jwt = require('jsonwebtoken');
  * Validates JWT tokens and attaches user information to request
  * 
  * SECURITY: JWT_SECRET environment variable is REQUIRED in production
+ * 
+ * Supports token from:
+ * 1. Authorization header (Bearer token) - preferred
+ * 2. Query parameter (?token=xxx) - for file downloads
  */
 function authenticate(req, res, next) {
   // Check for JWT_SECRET in production
@@ -16,18 +20,28 @@ function authenticate(req, res, next) {
     });
   }
 
-  // Extract authorization header
+  // Extract token from Authorization header or query parameter
+  let token = null;
+  
+  // Try Authorization header first (preferred method)
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) {
+  if (auth && auth.startsWith('Bearer ')) {
+    token = auth.substring('Bearer '.length);
+  }
+  
+  // Fallback to query parameter (for file downloads)
+  if (!token && req.query.token) {
+    token = req.query.token;
+  }
+  
+  // No token found
+  if (!token) {
     return res.status(401).json({ 
       success: false, 
-      message: 'Missing or invalid Authorization header',
+      message: 'Missing or invalid Authorization header or token parameter',
       error: 'UNAUTHORIZED'
     });
   }
-
-  // Extract token
-  const token = auth.substring('Bearer '.length);
   
   try {
     // Verify token (use dev_secret only in development)
@@ -55,8 +69,7 @@ function authenticate(req, res, next) {
     next();
   } catch (e) {
     console.log(e,"ERROR AUTH")
-    // Handle speci
-    // fic JWT errors
+    // Handle specific JWT errors
     let message = 'Invalid or expired token';
     let error = 'INVALID_TOKEN';
 
