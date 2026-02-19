@@ -148,6 +148,7 @@ const PatientsPage: React.FC = () => {
   );
   const [cdDriveLetter, setCdDriveLetter] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   // Filters
   const [searchTerm, setSearchTerm] = useState("");
@@ -430,6 +431,7 @@ const PatientsPage: React.FC = () => {
 
     try {
       setExporting(true);
+      setExportProgress(0);
       setError(null);
       setSuccess(null);
 
@@ -452,9 +454,19 @@ const PatientsPage: React.FC = () => {
         );
       } else {
         if (exportTarget.type === "patient") {
-          await exportPatientData(exportTarget.id, includeImages, "zip");
+          await exportPatientData(
+            exportTarget.id,
+            includeImages,
+            "zip",
+            setExportProgress
+          );
         } else {
-          await exportStudyData(exportTarget.id, includeImages, "zip");
+          await exportStudyData(
+            exportTarget.id,
+            includeImages,
+            "zip",
+            setExportProgress
+          );
         }
         setSuccess("Export downloaded successfully.");
       }
@@ -465,6 +477,7 @@ const PatientsPage: React.FC = () => {
       setError(e.message || "Export failed");
     } finally {
       setExporting(false);
+      setExportProgress(0);
     }
   };
 
@@ -474,6 +487,7 @@ const PatientsPage: React.FC = () => {
     setIncludeImages(true);
     setExportMode("download");
     setCdDriveLetter("");
+    setExportProgress(0);
   };
 
   // ===================== RENDER =========================
@@ -1312,6 +1326,25 @@ const PatientsPage: React.FC = () => {
               </p>
             </div>
           )}
+
+          {exporting && exportMode === "download" && (
+            <div className="space-y-2">
+              <div className="flex justify-between items-center text-sm">
+                <span className="font-medium text-gray-700">
+                  Download Progress
+                </span>
+                <span className="font-semibold text-primary-700">
+                  {exportProgress}%
+                </span>
+              </div>
+              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary-600 transition-all duration-300"
+                  style={{ width: `${exportProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         <ModalFooter>
@@ -1330,7 +1363,9 @@ const PatientsPage: React.FC = () => {
             startIcon={<FileDown className="w-4 h-4" />}
           >
             {exporting
-              ? "Processing..."
+              ? exportMode === "download"
+                ? `Downloading... ${exportProgress}%`
+                : "Processing..."
               : exportMode === "burn-cd"
               ? "Export + Burn CD"
               : "Export Data"}

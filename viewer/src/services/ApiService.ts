@@ -55,6 +55,132 @@ const triggerDownloadFromResponse = async (
   window.URL.revokeObjectURL(downloadUrl)
 }
 
+const downloadWithProgress = async (
+  url: string,
+  token: string | null,
+  fallbackFilename: string,
+  onProgress?: (percent: number) => void
+) => {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('GET', url)
+    xhr.responseType = 'blob'
+    xhr.withCredentials = true
+    let pseudoProgress = 0
+    let realProgress = 0
+    let pseudoTimer: number | null = null
+    let receivedDownloadBytes = false
+    let sawComputableProgress = false
+    let lastLoadedBytes = 0
+    let lastProgressEventAt = Date.now()
+
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    }
+
+    if (onProgress) {
+      onProgress(0)
+      // Keep UI responsive during long server-side preparation.
+      pseudoTimer = window.setInterval(() => {
+        const now = Date.now()
+        const stalledMs = now - lastProgressEventAt
+
+        if (!receivedDownloadBytes) {
+          if (pseudoProgress < 35) pseudoProgress += 1
+          else if (pseudoProgress < 70) pseudoProgress += 0.75
+          else if (pseudoProgress < 85) pseudoProgress += 0.4
+          else if (pseudoProgress < 95) pseudoProgress += 0.15
+          else if (pseudoProgress < 98) pseudoProgress += 0.08
+        } else if (sawComputableProgress) {
+          // If computable download stalls (common with slow server/socket buffering),
+          // keep slight forward movement instead of freezing.
+          if (stalledMs > 1500 && pseudoProgress < 99) {
+            pseudoProgress += 0.2
+          }
+        } else if (pseudoProgress < 99) {
+          // Bytes started but total size not computable.
+          pseudoProgress += 0.3
+        }
+
+        // Keep fractional internal progress so small increments can accumulate.
+        pseudoProgress = Math.min(99, pseudoProgress)
+        onProgress(Math.max(Math.round(pseudoProgress), realProgress))
+      }, 700)
+    }
+
+    xhr.onprogress = (event) => {
+      if (!onProgress) return
+      receivedDownloadBytes = receivedDownloadBytes || event.loaded > 0
+      if (event.loaded > lastLoadedBytes) {
+        lastLoadedBytes = event.loaded
+        lastProgressEventAt = Date.now()
+      }
+
+      if (event.lengthComputable && event.total > 0) {
+        sawComputableProgress = true
+        realProgress = Math.min(99, Math.round((event.loaded / event.total) * 100))
+        onProgress(Math.max(pseudoProgress, realProgress))
+        return
+      }
+
+      // Non-computable stream: keep pseudo movement alive.
+      if (event.loaded > 0) {
+        onProgress(Math.max(pseudoProgress, realProgress))
+      }
+    }
+
+    xhr.onload = async () => {
+      if (pseudoTimer !== null) {
+        window.clearInterval(pseudoTimer)
+        pseudoTimer = null
+      }
+
+      if (xhr.status < 200 || xhr.status >= 300) {
+        let message = `Request failed (${xhr.status})`
+        try {
+          const payload = JSON.parse(xhr.responseText)
+          message = payload?.message || payload?.error || message
+        } catch {
+          // Keep fallback message
+        }
+        reject(new Error(message))
+        return
+      }
+
+      const blob = xhr.response
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download =
+        extractFilenameFromDisposition(xhr.getResponseHeader('content-disposition')) ||
+        fallbackFilename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(downloadUrl)
+
+      if (onProgress) {
+        onProgress(100)
+      }
+      resolve()
+    }
+
+    xhr.onerror = () => {
+      if (pseudoTimer !== null) {
+        window.clearInterval(pseudoTimer)
+      }
+      reject(new Error('Network error during export download'))
+    }
+    xhr.onabort = () => {
+      if (pseudoTimer !== null) {
+        window.clearInterval(pseudoTimer)
+      }
+      reject(new Error('Export download aborted'))
+    }
+    xhr.send()
+  })
+}
+
 /**
  * Get auth token from storage
  */
@@ -561,10 +687,17 @@ export const checkAIHealth = async () => {
 export const exportPatientData = async (
   patientID: string,
   includeImages: boolean = true,
-  format: 'zip' | 'json' = 'zip'
+  format: 'zip' | 'json' = 'zip',
+  onProgress?: (percent: number) => void
 ) => {
   const url = `${BACKEND_URL}/api/export/patient/${patientID}?includeImages=${includeImages}&format=${format}`
   const token = getAuthToken()
+
+  // Use XHR for progress support, especially for large ZIP exports.
+  if (format === 'zip') {
+    await downloadWithProgress(url, token, `patient_${patientID}_export.${format}`, onProgress)
+    return { success: true }
+  }
 
   const response = await fetch(url, {
     method: 'GET',
@@ -589,10 +722,16 @@ export const exportPatientData = async (
 export const exportStudyData = async (
   studyUID: string,
   includeImages: boolean = true,
-  format: 'zip' | 'json' = 'zip'
+  format: 'zip' | 'json' = 'zip',
+  onProgress?: (percent: number) => void
 ) => {
   const url = `${BACKEND_URL}/api/export/study/${studyUID}?includeImages=${includeImages}&format=${format}`
   const token = getAuthToken()
+
+  if (format === 'zip') {
+    await downloadWithProgress(url, token, `study_${studyUID}_export.${format}`, onProgress)
+    return { success: true }
+  }
 
   const response = await fetch(url, {
     method: 'GET',

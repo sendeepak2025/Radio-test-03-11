@@ -112,7 +112,9 @@ class UnifiedOrthancService {
   /**
    * Find study by StudyInstanceUID
    */
-  async findStudyByUID(studyInstanceUID) {
+  async findStudyByUID(studyInstanceUID, options = {}) {
+    const allowScanFallback = options.allowScanFallback !== false;
+    const timeout = options.timeoutMs || this.config.timeout;
     // Fast path via Orthanc /tools/find
     try {
       const response = await this.client.post('/tools/find', {
@@ -120,6 +122,8 @@ class UnifiedOrthancService {
         Query: {
           StudyInstanceUID: studyInstanceUID
         }
+      }, {
+        timeout
       });
 
       if (Array.isArray(response.data) && response.data.length > 0) {
@@ -140,6 +144,9 @@ class UnifiedOrthancService {
     }
 
     // Fallback path: brute-force scan
+    if (!allowScanFallback) {
+      return null;
+    }
     const studies = await this.getAllStudies();
     for (const studyId of studies) {
       try {
@@ -169,9 +176,23 @@ class UnifiedOrthancService {
   /**
    * Export study as ZIP archive
    */
-  async exportStudy(orthancStudyId) {
+  async exportStudy(orthancStudyId, options = {}) {
+    const timeout = options.timeoutMs || this.config.timeout;
     const response = await this.client.get(`/studies/${orthancStudyId}/archive`, {
-      responseType: 'arraybuffer'
+      responseType: 'arraybuffer',
+      timeout
+    });
+    return response.data;
+  }
+
+  /**
+   * Export study as DICOM media ZIP (includes DICOMDIR when supported by Orthanc)
+   */
+  async exportStudyMedia(orthancStudyId, options = {}) {
+    const timeout = options.timeoutMs || this.config.timeout;
+    const response = await this.client.get(`/studies/${orthancStudyId}/media`, {
+      responseType: 'arraybuffer',
+      timeout
     });
     return response.data;
   }
