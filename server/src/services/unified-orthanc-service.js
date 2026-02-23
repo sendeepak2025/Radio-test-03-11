@@ -174,7 +174,21 @@ class UnifiedOrthancService {
   }
 
   /**
-   * Export study as ZIP archive
+   * Export study as ZIP archive (streaming version)
+   * Returns stream for better memory efficiency - USE THIS for exports
+   */
+  async exportStudyStream(orthancStudyId, options = {}) {
+    const timeout = options.timeoutMs || this.config.timeout;
+    const response = await this.client.get(`/studies/${orthancStudyId}/archive`, {
+      responseType: 'stream',  // ✅ Stream instead of buffer
+      timeout
+    });
+    return response.data;  // Returns readable stream
+  }
+
+  /**
+   * Export study as ZIP archive (buffer version)
+   * Returns arraybuffer - DEPRECATED, use exportStudyStream instead
    */
   async exportStudy(orthancStudyId, options = {}) {
     const timeout = options.timeoutMs || this.config.timeout;
@@ -186,7 +200,21 @@ class UnifiedOrthancService {
   }
 
   /**
-   * Export study as DICOM media ZIP (includes DICOMDIR when supported by Orthanc)
+   * Export study as DICOM media ZIP (streaming version)
+   * Returns stream - USE THIS for exports
+   */
+  async exportStudyMediaStream(orthancStudyId, options = {}) {
+    const timeout = options.timeoutMs || this.config.timeout;
+    const response = await this.client.get(`/studies/${orthancStudyId}/media`, {
+      responseType: 'stream',  // ✅ Stream instead of buffer
+      timeout
+    });
+    return response.data;  // Returns readable stream
+  }
+
+  /**
+   * Export study as DICOM media ZIP (buffer version)
+   * Returns arraybuffer - DEPRECATED, use exportStudyMediaStream instead
    */
   async exportStudyMedia(orthancStudyId, options = {}) {
     const timeout = options.timeoutMs || this.config.timeout;

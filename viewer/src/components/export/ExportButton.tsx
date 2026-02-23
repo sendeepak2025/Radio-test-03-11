@@ -34,51 +34,37 @@ export const ExportButton: React.FC<ExportButtonProps> = ({
     setAnchorEl(null)
 
     try {
+      // URL encode the ID to handle special characters like dots
+      const encodedId = encodeURIComponent(id)
+      
       const endpoint =
         type === 'patient'
-          ? `/api/export/patient/${id}`
-          : `/api/export/study/${id}`
+          ? `/api/export/patient/${encodedId}`
+          : `/api/export/study/${encodedId}`
 
       const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken')
       
-      const response = await fetch(`${endpoint}?format=${format}&includeImages=true`, {
-        credentials: 'include',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.message || `Export failed with status ${response.status}`)
-      }
-
-      const blob = await response.blob()
+      console.log('🔄 Starting direct browser download:', { type, id, encodedId, endpoint })
       
-      // Get filename from Content-Disposition header if available
-      const contentDisposition = response.headers.get('Content-Disposition')
-      let filename = `${type}-${id}.${format}`
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/i)
-        if (filenameMatch) {
-          filename = filenameMatch[1]
-        }
-      }
+      // Direct browser download using window.location
+      // This triggers native browser download without JavaScript blob handling
+      const downloadUrl = `${endpoint}?format=${format}&includeImages=true&token=${encodeURIComponent(token || '')}`
       
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      window.URL.revokeObjectURL(url)
-
-      alert('✅ Export completed successfully!')
+      console.log('📥 Triggering download:', downloadUrl)
+      
+      // Use window.location for direct download
+      window.location.href = downloadUrl
+      
+      console.log('✅ Download triggered successfully')
+      
+      // Reset button state after a delay
+      setTimeout(() => {
+        setExporting(false)
+      }, 3000)
+      
     } catch (error: any) {
-      console.error('Export error:', error)
+      console.error('❌ Export error:', error)
       alert(`❌ Export failed: ${error.message}`)
-    } finally {
       setExporting(false)
     }
   }

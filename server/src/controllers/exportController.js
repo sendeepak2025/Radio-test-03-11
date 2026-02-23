@@ -21,8 +21,8 @@ const ORTHANC_MEDIA_RETRY_TIMEOUT_MS = Number(
   process.env.EXPORT_ORTHANC_MEDIA_RETRY_TIMEOUT_MS || Math.max(ORTHANC_MEDIA_TIMEOUT_MS * 3, 300000)
 );
 const MAX_PREVIEW_FRAMES_PER_STUDY = Number(process.env.EXPORT_MAX_PREVIEW_FRAMES || 10);
-// Keep fallback disabled by default for speed/reliability in production.
-const EXPORT_FALLBACK_PER_INSTANCE = process.env.EXPORT_FALLBACK_PER_INSTANCE === 'true';
+// Enable fallback by default for reliability - can be disabled via env var
+const EXPORT_FALLBACK_PER_INSTANCE = process.env.EXPORT_FALLBACK_PER_INSTANCE !== 'false';
 const EXPORT_PREFER_MEDIA_ARCHIVE = process.env.EXPORT_PREFER_MEDIA_ARCHIVE !== 'false';
 const EXPORT_REQUIRE_DICOMDIR = process.env.EXPORT_REQUIRE_DICOMDIR === 'true';
 const EXPORT_MEDIA_TIMEOUT_RETRY = process.env.EXPORT_MEDIA_TIMEOUT_RETRY !== 'false';
@@ -242,7 +242,7 @@ async function appendStudyAssetsToArchive(archive, studies, instances, includeIm
     try {
       const foundStudy = await withTimeout(
         orthancService.findStudyByUID(study.studyInstanceUID, {
-          allowScanFallback: false,
+          allowScanFallback: true, // Enable fallback scan if /tools/find fails
           timeoutMs: ORTHANC_FETCH_TIMEOUT_MS,
         }),
         ORTHANC_FETCH_TIMEOUT_MS,
@@ -250,6 +250,7 @@ async function appendStudyAssetsToArchive(archive, studies, instances, includeIm
       );
 
       if (foundStudy?.orthancStudyId) {
+        console.log(`✅ Found study in Orthanc: ${study.studyInstanceUID} -> ${foundStudy.orthancStudyId}`);
         let archiveBuffer = null;
         let archiveName = studyFolder
           ? `${studyFolder}/orthanc_study_archive.zip`
@@ -262,40 +263,54 @@ async function appendStudyAssetsToArchive(archive, studies, instances, includeIm
 
         if (EXPORT_PREFER_MEDIA_ARCHIVE) {
           try {
-            archiveBuffer = await withTimeout(
-              orthancService.exportStudyMedia(foundStudy.orthancStudyId, {
+            // ✅ Use streaming version - no memory buffer
+            const orthancStream = await withTimeout(
+              orthancService.exportStudyMediaStream(foundStudy.orthancStudyId, {
                 timeoutMs: mediaTimeoutMs,
               }),
               mediaTimeoutMs,
-              'Orthanc study media export'
+              'Orthanc study media export (stream)'
             );
             archiveName = studyFolder
               ? `${studyFolder}/orthanc_study_media.zip`
               : 'orthanc_study_media.zip';
 
-            if (EXPORT_REQUIRE_DICOMDIR && !zipHasDicomDir(archiveBuffer)) {
-              throw new Error('Orthanc media export returned ZIP without DICOMDIR');
-            }
+            // ✅ Append stream directly to archive - no buffering
+            archive.append(orthancStream, { name: archiveName });
+            console.log(`✅ Streaming Orthanc media archive: ${archiveName}`);
+            continue;  // Skip to next study
+            
           } catch (mediaErr) {
-            // In strict DICOMDIR mode, a single timeout is too brittle for large studies.
-            // Retry once with a longer timeout before failing.
+            // Fallback to buffer version if streaming fails
             if (EXPORT_REQUIRE_DICOMDIR && EXPORT_MEDIA_TIMEOUT_RETRY && isTimeoutLikeError(mediaErr)) {
               console.warn(
-                `Orthanc media export timed out for ${study.studyInstanceUID}; retrying with extended timeout ${mediaRetryTimeoutMs}ms`
+                `Orthanc media stream timed out for ${study.studyInstanceUID}; retrying with buffer method`
               );
-              archiveBuffer = await withTimeout(
-                orthancService.exportStudyMedia(foundStudy.orthancStudyId, {
-                  timeoutMs: mediaRetryTimeoutMs,
-                }),
-                mediaRetryTimeoutMs,
-                'Orthanc study media export retry'
-              );
-              archiveName = studyFolder
-                ? `${studyFolder}/orthanc_study_media.zip`
-                : 'orthanc_study_media.zip';
+              try {
+                archiveBuffer = await withTimeout(
+                  orthancService.exportStudyMedia(foundStudy.orthancStudyId, {
+                    timeoutMs: mediaRetryTimeoutMs,
+                  }),
+                  mediaRetryTimeoutMs,
+                  'Orthanc study media export retry'
+                );
+                archiveName = studyFolder
+                  ? `${studyFolder}/orthanc_study_media.zip`
+                  : 'orthanc_study_media.zip';
 
-              if (EXPORT_REQUIRE_DICOMDIR && !zipHasDicomDir(archiveBuffer)) {
-                throw new Error('Orthanc media export retry returned ZIP without DICOMDIR');
+                if (EXPORT_REQUIRE_DICOMDIR && !zipHasDicomDir(archiveBuffer)) {
+                  throw new Error('Orthanc media export retry returned ZIP without DICOMDIR');
+                }
+              } catch (retryErr) {
+                if (EXPORT_REQUIRE_DICOMDIR) {
+                  throw new Error(
+                    `DICOMDIR-required export failed for study ${study.studyInstanceUID}: ${retryErr.message}`
+                  );
+                }
+                console.warn(
+                  `Orthanc media export retry failed for ${study.studyInstanceUID}:`,
+                  retryErr.message
+                );
               }
             } else if (EXPORT_REQUIRE_DICOMDIR) {
               throw new Error(
@@ -312,13 +327,34 @@ async function appendStudyAssetsToArchive(archive, studies, instances, includeIm
         }
 
         if (!archiveBuffer) {
-          archiveBuffer = await withTimeout(
-            orthancService.exportStudy(foundStudy.orthancStudyId, {
-              timeoutMs: ORTHANC_FETCH_TIMEOUT_MS,
-            }),
-            ORTHANC_FETCH_TIMEOUT_MS,
-            'Orthanc study archive export'
-          );
+          // ✅ Try streaming archive export
+          try {
+            const orthancStream = await withTimeout(
+              orthancService.exportStudyStream(foundStudy.orthancStudyId, {
+                timeoutMs: ORTHANC_FETCH_TIMEOUT_MS,
+              }),
+              ORTHANC_FETCH_TIMEOUT_MS,
+              'Orthanc study archive export (stream)'
+            );
+            archiveName = studyFolder
+              ? `${studyFolder}/orthanc_study_archive.zip`
+              : 'orthanc_study_archive.zip';
+            
+            // ✅ Append stream directly
+            archive.append(orthancStream, { name: archiveName });
+            console.log(`✅ Streaming Orthanc archive: ${archiveName}`);
+            continue;  // Skip to next study
+          } catch (streamErr) {
+            console.warn(`Streaming failed, falling back to buffer: ${streamErr.message}`);
+            // Fallback to buffer version
+            archiveBuffer = await withTimeout(
+              orthancService.exportStudy(foundStudy.orthancStudyId, {
+                timeoutMs: ORTHANC_FETCH_TIMEOUT_MS,
+              }),
+              ORTHANC_FETCH_TIMEOUT_MS,
+              'Orthanc study archive export'
+            );
+          }
         }
 
         if (archiveBuffer) {
@@ -328,6 +364,8 @@ async function appendStudyAssetsToArchive(archive, studies, instances, includeIm
       }
     } catch (err) {
       const normalizedError = normalizeExportError(err);
+      console.error(`❌ Orthanc export failed for study ${study.studyInstanceUID}:`, normalizedError.message);
+      
       if (EXPORT_REQUIRE_DICOMDIR) {
         if (normalizedError.message.startsWith('DICOMDIR-required export failed for study')) {
           throw normalizedError;
@@ -339,12 +377,12 @@ async function appendStudyAssetsToArchive(archive, studies, instances, includeIm
 
       if (EXPORT_FALLBACK_PER_INSTANCE) {
         console.warn(
-          `Orthanc archive/media export failed for ${study.studyInstanceUID}; per-instance fallback enabled:`,
+          `⚠️ Orthanc archive/media export failed for ${study.studyInstanceUID}; per-instance fallback enabled:`,
           normalizedError.message
         );
       } else {
         console.warn(
-          `Orthanc archive/media export failed for ${study.studyInstanceUID}; per-instance fallback disabled:`,
+          `⚠️ Orthanc archive/media export failed for ${study.studyInstanceUID}; per-instance fallback disabled:`,
           normalizedError.message
         );
       }
@@ -613,49 +651,58 @@ async function prepareBurnSourceFromExportZip(zipPath, tempDir) {
 }
 
 async function streamZipDownload(res, zipName, payload) {
-  res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
-  // Helpful when reverse proxies buffer long responses.
-  res.setHeader('X-Accel-Buffering', 'no');
+  try {
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
 
-  const archive = archiver('zip', { zlib: { level: 9 } });
+    // Use lower compression for faster streaming
+    const archive = archiver('zip', { zlib: { level: 1 } });
 
-  archive.on('warning', (err) => {
-    if (err.code !== 'ENOENT') {
-      console.warn('Archive warning:', err.message);
-    }
-  });
-
-  archive.on('error', (err) => {
-    console.error('Streaming archive error:', err.message);
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, message: 'Failed to stream export' });
-      return;
-    }
-    if (!res.writableEnded) {
-      res.destroy(err);
-    }
-  });
-
-  res.on('close', () => {
-    if (!res.writableEnded) {
-      try {
-        archive.abort();
-      } catch (e) {
-        // no-op
+    archive.on('error', (err) => {
+      console.error('❌ Archive error:', err);
+      if (!res.headersSent) {
+        res.status(500).end();
       }
-    }
-  });
+    });
 
-  archive.pipe(res);
-  archive.append(JSON.stringify(payload.exportData, null, 2), { name: payload.metadataJsonName });
-  await appendStudyAssetsToArchive(
-    archive,
-    payload.studies,
-    payload.instances,
-    payload.includeImages
-  );
-  await archive.finalize();
+    // Pipe immediately - browser gets data right away
+    archive.pipe(res);
+
+    console.log(`📦 Creating archive: ${zipName}`);
+
+    // Immediately add metadata - browser gets first chunk
+    archive.append(
+      JSON.stringify(payload.exportData, null, 2),
+      { name: payload.metadataJsonName }
+    );
+
+    // Stream assets in background - don't block
+    // This prevents connection idle timeout
+    setImmediate(async () => {
+      try {
+        await appendStudyAssetsToArchive(
+          archive,
+          payload.studies,
+          payload.instances,
+          payload.includeImages
+        );
+
+        console.log(`🔄 Finalizing archive: ${zipName}`);
+        await archive.finalize();
+        console.log(`✅ Archive finalized: ${zipName}`);
+      } catch (err) {
+        console.error('❌ Archive build error:', err);
+        archive.abort();
+        res.destroy();
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Streaming failed:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: 'Export failed' });
+    }
+  }
 }
 
 /**

@@ -393,6 +393,11 @@ async function startServer() {
       console.log(`   Test health: curl http://localhost:${port}/api/reports/health\n`);
     });
 
+    // Disable timeouts for streaming large files (exports, uploads)
+    httpServer.timeout = 0;
+    httpServer.keepAliveTimeout = 0;
+    httpServer.headersTimeout = 0;
+    console.log('⏱️  Server timeouts disabled for streaming support');
     // Initialize WebSocket service
     console.log('Initializing WebSocket service...');
     const { getWebSocketService } = require('./services/websocket-service');
