@@ -288,7 +288,10 @@ async function prepareDicomMediaFolder(
             console.log(
               `Exporting media for study ${studyInstanceUID} from Orthanc study ${orthancStudyId}...`
             );
-            const mediaBuffer = await orthancService.exportStudyMedia(orthancStudyId);
+            // Use longer timeout for ISO export (5 minutes)
+            const mediaBuffer = await orthancService.exportStudyMedia(orthancStudyId, {
+              timeoutMs: 300000 // 5 minutes
+            });
             const parsedZip = new AdmZip(Buffer.from(mediaBuffer));
             parsedZip.getEntries(); // validate ZIP structure
             mediaZip = parsedZip;
@@ -1617,6 +1620,7 @@ async function directBurnToCD(req, res) {
 
 /**
  * Create ISO image from DICOM media layout and stream to client for download.
+ * OPTIMIZED: Streams Orthanc media directly without buffering entire ZIP in memory
  */
 async function createIsoExport(req, res) {
   let tempDir = null;
@@ -1658,19 +1662,121 @@ async function createIsoExport(req, res) {
       });
     }
 
-    const prepared = await prepareDicomMediaFolder(
+    // Create temp directory
+    tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dicom-iso-'));
+    const mediaRoot = path.join(tempDir, 'DISC_ROOT');
+    await fs.promises.mkdir(mediaRoot, { recursive: true });
+
+    console.log(`📦 Creating ISO for ${targetType} ${targetId}...`);
+
+    // Get study data
+    const orthancService = getUnifiedOrthancService();
+    let studies = [];
+
+    if (targetType === 'patient') {
+      const patient = await Patient.findOne({ patientID: targetId }).lean();
+      if (!patient) {
+        throw new Error(`Patient ${targetId} not found`);
+      }
+      studies = await Study.find({ patientID: targetId }).lean();
+    } else {
+      const study = await Study.findOne({
+        $or: [{ studyInstanceUID: targetId }, { studyUID: targetId }],
+      }).lean();
+      if (!study) {
+        throw new Error(`Study ${targetId} not found`);
+      }
+      studies = [study];
+    }
+
+    if (studies.length === 0) {
+      throw new Error('No studies found');
+    }
+
+    // Export DICOM media from Orthanc directly to disc root
+    if (includeImages) {
+      for (const study of studies) {
+        const studyInstanceUID = study.studyInstanceUID || study.studyUID;
+        console.log(`✅ Exporting media for study ${studyInstanceUID}...`);
+
+        // Find study in Orthanc
+        const foundStudy = await orthancService.findStudyByUID(studyInstanceUID, {
+          allowScanFallback: true,
+          timeoutMs: 30000,
+        });
+
+        if (!foundStudy?.orthancStudyId) {
+          throw new Error(`Study ${studyInstanceUID} not found in Orthanc`);
+        }
+
+        // Export media with longer timeout
+        const mediaBuffer = await orthancService.exportStudyMedia(foundStudy.orthancStudyId, {
+          timeoutMs: 300000 // 5 minutes
+        });
+
+        // Extract media ZIP to disc root
+        const mediaZip = new AdmZip(Buffer.from(mediaBuffer));
+        mediaZip.extractAllTo(mediaRoot, false);
+        console.log(`✅ Extracted media for study ${studyInstanceUID}`);
+      }
+    }
+
+    // Add metadata
+    const metadata = {
+      exportDate: new Date().toISOString(),
       targetType,
       targetId,
+      studyCount: studies.length,
       includeImages,
-      includeViewer
-    );
-    tempDir = prepared.tempDir;
+      studies: studies.map(s => ({
+        studyInstanceUID: s.studyInstanceUID || s.studyUID,
+        studyDate: s.studyDate,
+        studyDescription: s.studyDescription,
+        modality: s.modality,
+      })),
+    };
 
+    await fs.promises.writeFile(
+      path.join(mediaRoot, 'EXPORT_INFO.json'),
+      JSON.stringify(metadata, null, 2)
+    );
+
+    // Add README
+    const readme = `DICOM Medical Imaging Export
+=============================
+
+Export Date: ${new Date().toISOString()}
+Type: ${targetType}
+Studies: ${studies.length}
+
+This disc contains medical imaging data in DICOM format with DICOMDIR structure.
+
+VIEWING:
+- Import to PACS using "Import from Media"
+- Use DICOM viewer software (OsiriX, Horos, RadiAnt, MicroDicom)
+
+IMPORTANT: Confidential medical information - handle per HIPAA regulations.
+`;
+
+    await fs.promises.writeFile(path.join(mediaRoot, 'README.txt'), readme);
+
+    // Add viewer if requested
+    if (includeViewer) {
+      console.log('📁 Adding viewer files...');
+      await addPortableDicomViewer(mediaRoot);
+    }
+
+    // Create ISO image
     const isoName = `${targetType}_${sanitizeFileSegment(targetId)}_dicom_media.iso`;
     const isoPath = path.join(tempDir, isoName);
-    await createIsoImageFromFolder(prepared.mediaRoot, isoPath, 'DICOM_MEDIA');
+    
+    console.log(`🔄 Creating ISO image: ${isoName}`);
+    await createIsoImageFromFolder(mediaRoot, isoPath, 'DICOM_MEDIA');
 
     const fileStat = await fs.promises.stat(isoPath);
+    console.log(`✅ ISO created: ${(fileStat.size / 1024 / 1024).toFixed(2)} MB`);
+
+    // Stream ISO to client
     res.setHeader('Content-Type', 'application/x-iso9660-image');
     res.setHeader('Content-Disposition', `attachment; filename="${isoName}"`);
     res.setHeader('Content-Length', String(fileStat.size));
@@ -1681,7 +1787,7 @@ async function createIsoExport(req, res) {
 
     const readStream = fs.createReadStream(isoPath);
     readStream.on('error', async (streamError) => {
-      console.error('ISO stream error:', streamError);
+      console.error('❌ ISO stream error:', streamError);
       if (!res.headersSent) {
         res.status(500).json({ success: false, message: 'Failed to stream ISO file' });
       } else {
@@ -1689,10 +1795,13 @@ async function createIsoExport(req, res) {
       }
       await cleanup();
     });
+    
     readStream.pipe(res);
+    console.log(`📤 Streaming ISO to client...`);
+    
   } catch (error) {
     await cleanup();
-    console.error('ISO export error:', error);
+    console.error('❌ ISO export error:', error);
     if (res.headersSent) {
       if (!res.writableEnded) {
         res.destroy(error);
