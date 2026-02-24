@@ -1709,15 +1709,30 @@ async function createIsoExport(req, res) {
           throw new Error(`Study ${studyInstanceUID} not found in Orthanc`);
         }
 
-        // Export media with longer timeout
-        const mediaBuffer = await orthancService.exportStudyMedia(foundStudy.orthancStudyId, {
+        // ✅ Stream media to temp file to avoid memory spike
+        const tempMediaZip = path.join(tempDir, `media_${studyInstanceUID}.zip`);
+        const mediaStream = await orthancService.exportStudyMediaStream(foundStudy.orthancStudyId, {
           timeoutMs: 300000 // 5 minutes
         });
 
+        // Write stream to file
+        const writeStream = fs.createWriteStream(tempMediaZip);
+        await new Promise((resolve, reject) => {
+          mediaStream.pipe(writeStream);
+          writeStream.on('finish', resolve);
+          writeStream.on('error', reject);
+          mediaStream.on('error', reject);
+        });
+
+        console.log(`✅ Downloaded media for study ${studyInstanceUID}`);
+
         // Extract media ZIP to disc root
-        const mediaZip = new AdmZip(Buffer.from(mediaBuffer));
+        const mediaZip = new AdmZip(tempMediaZip);
         mediaZip.extractAllTo(mediaRoot, false);
         console.log(`✅ Extracted media for study ${studyInstanceUID}`);
+
+        // Delete temp ZIP file
+        await fs.promises.unlink(tempMediaZip);
       }
     }
 

@@ -34,7 +34,6 @@ export const ExportButton: React.FC<ExportButtonProps> = ({
     setAnchorEl(null)
 
     try {
-      // URL encode the ID to handle special characters like dots
       const encodedId = encodeURIComponent(id)
       
       const endpoint =
@@ -44,23 +43,53 @@ export const ExportButton: React.FC<ExportButtonProps> = ({
 
       const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken')
       
-      console.log('🔄 Starting direct browser download:', { type, id, encodedId, endpoint })
+      console.log('🔄 Starting streaming download:', { type, id, endpoint })
       
-      // Direct browser download using window.location
-      // This triggers native browser download without JavaScript blob handling
-      const downloadUrl = `${endpoint}?format=${format}&includeImages=true&token=${encodeURIComponent(token || '')}`
+      // ✅ Use fetch API for proper streaming download
+      const response = await fetch(
+        `${endpoint}?format=${format}&includeImages=true`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.statusText}`)
+      }
+
+      // Get filename from Content-Disposition header
+      const contentDisposition = response.headers.get('Content-Disposition')
+      let filename = `${type}_${id}_export.${format}`
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="?(.+)"?/)
+        if (match) filename = match[1]
+      }
+
+      console.log('📥 Streaming response received, downloading:', filename)
+
+      // ✅ Stream response to blob - browser shows progress
+      const blob = await response.blob()
       
-      console.log('📥 Triggering download:', downloadUrl)
+      console.log('✅ Download complete, size:', blob.size, 'bytes')
+
+      // Trigger browser download
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
       
-      // Use window.location for direct download
-      window.location.href = downloadUrl
-      
-      console.log('✅ Download triggered successfully')
-      
-      // Reset button state after a delay
+      // Cleanup
       setTimeout(() => {
-        setExporting(false)
-      }, 3000)
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
+      }, 100)
+      
+      setExporting(false)
       
     } catch (error: any) {
       console.error('❌ Export error:', error)
