@@ -80,6 +80,13 @@ interface ViewerOptionStatus {
 interface DirectBurnViewerStatus {
   success: boolean;
   checkedAt?: string;
+  serverPlatform?: string;
+  directBurnSupported?: boolean;
+  directBurnMessage?: string;
+  burnDeviceHint?: string | null;
+  burnToolchain?: string | null;
+  viewerRunSupported?: boolean;
+  viewerRunMessage?: string;
   viewerInstalled: boolean;
   selectedViewer: {
     name: string;
@@ -192,6 +199,9 @@ const PatientsPage: React.FC = () => {
   const [viewerStatusError, setViewerStatusError] = useState<string | null>(null);
   const [viewerInstallLoading, setViewerInstallLoading] = useState(false);
   const [viewerRunLoading, setViewerRunLoading] = useState(false);
+  const directBurnUnavailable = viewerStatus?.directBurnSupported === false;
+  const viewerRunUnavailable = viewerStatus?.viewerRunSupported === false;
+  const isLinuxServer = viewerStatus?.serverPlatform === "linux";
 
   // Track cancelled burn task IDs to prevent stale async responses
   const cancelledBurnTaskIdsRef = useRef<Set<string>>(new Set());
@@ -283,6 +293,12 @@ const PatientsPage: React.FC = () => {
     if (!exportDialogOpen) return;
     loadViewerStatus();
   }, [exportDialogOpen]);
+
+  useEffect(() => {
+    if (exportMode === "direct-burn" && !includeImages) {
+      setIncludeImages(true);
+    }
+  }, [exportMode, includeImages]);
 
   // Keep burn progress moving in the UI while backend operation is running.
   useEffect(() => {
@@ -447,6 +463,13 @@ const PatientsPage: React.FC = () => {
   };
 
   const handleRunViewer = async () => {
+    if (viewerRunUnavailable) {
+      setError(
+        viewerStatus?.viewerRunMessage ||
+          "Viewer launch on server host is only supported on Windows servers."
+      );
+      return;
+    }
     try {
       setViewerRunLoading(true);
       const result = await runDirectBurnViewer();
@@ -691,6 +714,19 @@ const PatientsPage: React.FC = () => {
     
     // Prevent multiple clicks
     if (exporting) return;
+
+    if (
+      exportMode === "direct-burn" &&
+      viewerStatus &&
+      viewerStatus.directBurnSupported === false
+    ) {
+      setError(
+        viewerStatus.directBurnMessage ||
+          "Direct CD burn is not available on this server. Use Download ZIP (or ZIP + Burn for manual burn)."
+      );
+      setExportMode("download");
+      return;
+    }
 
     // For burn operations, create a task
     if (exportMode === "direct-burn" || exportMode === "burn-cd") {
@@ -1716,6 +1752,7 @@ const PatientsPage: React.FC = () => {
                 type="radio"
                 name="exportMode"
                 checked={exportMode === "direct-burn"}
+                disabled={directBurnUnavailable}
                 onChange={() => {
                   setExportMode("direct-burn");
                   setIncludeViewer(true);
@@ -1729,6 +1766,11 @@ const PatientsPage: React.FC = () => {
                 <p className="text-xs text-gray-500 mt-1">
                   Burns DICOM files directly to disc with proper DICOMDIR structure. No ZIP file created.
                 </p>
+                {directBurnUnavailable && (
+                  <p className="text-xs text-red-600 mt-1">
+                    Not available on this server ({viewerStatus.serverPlatform || "non-Windows"}).
+                  </p>
+                )}
               </div>
             </label>
             <label className="flex items-start gap-2 cursor-pointer">
@@ -1753,16 +1795,23 @@ const PatientsPage: React.FC = () => {
           {(exportMode === "burn-cd" || exportMode === "direct-burn") && (
             <div className="space-y-3">
               <Input
-                label="CD/DVD Drive Letter (Optional)"
-                placeholder="Example: D"
+                label={isLinuxServer ? "CD/DVD Device Path (Optional)" : "CD/DVD Drive Letter (Optional)"}
+                placeholder={isLinuxServer ? "Example: /dev/sr0" : "Example: D"}
                 value={cdDriveLetter}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                  setCdDriveLetter(e.target.value.toUpperCase())
-                }
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const nextValue = e.target.value;
+                  setCdDriveLetter(
+                    isLinuxServer || nextValue.includes("/")
+                      ? nextValue
+                      : nextValue.toUpperCase()
+                  );
+                }}
                 fullWidth
               />
               <p className="text-xs text-gray-500">
-                Leave blank for auto-detect. If burn fails, try specifying the drive letter.
+                {isLinuxServer
+                  ? "Leave blank for auto-detect (for example /dev/sr0). If burn fails, provide exact device path."
+                  : "Leave blank for auto-detect. If burn fails, try specifying the drive letter."}
               </p>
 
               {exportMode === "direct-burn" && (
@@ -1771,6 +1820,7 @@ const PatientsPage: React.FC = () => {
                   <ul className="list-disc list-inside text-xs text-blue-700 mt-1 space-y-1">
                     <li>Keep viewer option enabled for best recipient experience.</li>
                     <li>MicroDicom launches on Windows; Mac/Linux users can still open DICOMDIR in their own viewer.</li>
+                    {isLinuxServer && <li>On Linux, use device path format (for example <code>/dev/sr0</code>).</li>}
                     <li>For larger studies, use DVD media to avoid disc capacity errors.</li>
                   </ul>
                 </div>
@@ -1792,6 +1842,11 @@ const PatientsPage: React.FC = () => {
 
                   {!viewerStatusLoading && viewerStatus && (
                     <div className="space-y-1">
+                      {directBurnUnavailable && (
+                        <Badge variant="warning" size="sm">
+                          Direct burn unavailable on this server
+                        </Badge>
+                      )}
                       <Badge
                         variant={viewerStatus.viewerInstalled ? "success" : "warning"}
                         size="sm"
@@ -1810,6 +1865,25 @@ const PatientsPage: React.FC = () => {
                           Disc will include viewer download instructions instead.
                         </p>
                       )}
+                      {directBurnUnavailable && (
+                        <p className="text-xs text-red-600">
+                          {viewerStatus.directBurnMessage ||
+                            "Direct CD burn is not available on this server. Use ZIP download/manual burn."}
+                        </p>
+                      )}
+                      {!directBurnUnavailable && viewerStatus.burnDeviceHint && (
+                        <p className="text-xs text-gray-600">
+                          Detected burner device: <code>{viewerStatus.burnDeviceHint}</code>
+                        </p>
+                      )}
+                      {!directBurnUnavailable && viewerStatus.burnToolchain && (
+                        <p className="text-xs text-gray-600">
+                          Burn toolchain: <code>{viewerStatus.burnToolchain}</code>
+                        </p>
+                      )}
+                      <p className="text-xs text-gray-600">
+                        Recipient opens burned disc by running <code>OPEN_DICOM_VIEWER.bat</code> from disc root.
+                      </p>
                     </div>
                   )}
 
@@ -1834,13 +1908,13 @@ const PatientsPage: React.FC = () => {
                       variant="outline"
                       size="sm"
                       onClick={handleRunViewer}
-                      disabled={viewerRunLoading || !viewerStatus?.viewerInstalled}
+                      disabled={viewerRunLoading || !viewerStatus?.viewerInstalled || viewerRunUnavailable}
                     >
                       {viewerRunLoading ? "Launching..." : "Run Viewer"}
                     </Button>
                   </div>
                   <p className="text-xs text-gray-500">
-                    Run opens the viewer on the Windows server host session.
+                    {viewerStatus?.viewerRunMessage || "Run opens the viewer on the Windows server host session."}
                   </p>
                 </div>
               )}
@@ -1873,14 +1947,17 @@ const PatientsPage: React.FC = () => {
               id="includeImages"
               checked={includeImages}
               onChange={(e) => setIncludeImages(e.target.checked)}
+              disabled={exportMode === "direct-burn"}
               className="mt-1 h-5 w-5 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
             />
             <label htmlFor="includeImages" className="ml-3 cursor-pointer">
               <span className="text-base font-medium text-gray-700">
-                Include DICOM images and previews
+                Include DICOM images and previews {exportMode === "direct-burn" ? "(required)" : ""}
               </span>
               <span className="block text-sm text-gray-500">
-                Unchecking this will only export metadata (faster, smaller file)
+                {exportMode === "direct-burn"
+                  ? "Direct burn always includes full DICOM content for viewer compatibility."
+                  : "Unchecking this will only export metadata (faster, smaller file)"}
               </span>
             </label>
           </div>

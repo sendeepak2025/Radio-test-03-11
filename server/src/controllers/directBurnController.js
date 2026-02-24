@@ -367,7 +367,7 @@ ${shouldIncludeImages ? '- DICOMDIR: Index file for PACS systems\n- DICOM/: Fold
 VIEWING OPTIONS:
 1. Import to PACS: Use your PACS system's "Import from Media" function
 2. DICOM Viewer: Use software like OsiriX, Horos, RadiAnt, or MicroDicom
-3. Included Viewer: ${includeViewer ? 'MicroDicom portable viewer included in VIEWER folder' : 'No viewer included'}
+3. Included Viewer: ${includeViewer ? 'Double-click OPEN_DICOM_VIEWER.bat at disc root (or VIEWER\\\\Launch_Viewer.bat)' : 'No viewer included'}
 
 IMPORTANT:
 - This data is confidential medical information
@@ -426,17 +426,99 @@ async function addPortableDicomViewer(mediaRoot) {
       
       // Create launch script
       const launchScript = `@echo off
+setlocal EnableExtensions
 echo Starting ${viewer.name} DICOM Viewer...
 echo.
 echo Loading DICOM files from this disc...
 echo.
-start "" "%~dp0${viewer.exe}" "%~dp0..\\DICOMDIR"
+set "VIEWER_DIR=%~dp0"
+for %%I in ("%VIEWER_DIR%..") do set "DISC_ROOT=%%~fI"
+set "DICOMDIR_PATH=%DISC_ROOT%\\DICOMDIR"
+set "DICOM_FOLDER=%DISC_ROOT%\\DICOM"
+set "EXE_PATH="
+
+if exist "%VIEWER_DIR%${viewer.exe}" set "EXE_PATH=%VIEWER_DIR%${viewer.exe}"
+if "%EXE_PATH%"=="" if exist "%VIEWER_DIR%MicroDicom.exe" set "EXE_PATH=%VIEWER_DIR%MicroDicom.exe"
+if "%EXE_PATH%"=="" if exist "%VIEWER_DIR%mDicom.exe" set "EXE_PATH=%VIEWER_DIR%mDicom.exe"
+if "%EXE_PATH%"=="" if exist "%VIEWER_DIR%Weasis.exe" set "EXE_PATH=%VIEWER_DIR%Weasis.exe"
+
+if not exist "%DICOMDIR_PATH%" (
+  for /f "delims=" %%F in ('dir /b /s /a:-d "%DISC_ROOT%\\DICOMDIR" 2^>nul') do (
+    set "DICOMDIR_PATH=%%~fF"
+    goto :dicomdir_found
+  )
+)
+
+:dicomdir_found
+if "%EXE_PATH%"=="" (
+  echo ERROR: Viewer executable not found in VIEWER folder.
+  if exist "%VIEWER_DIR%INSTRUCTIONS.html" (
+    start "" "%VIEWER_DIR%INSTRUCTIONS.html"
+  )
+  echo.
+  pause
+  exit /b 1
+)
+
+if exist "%DICOMDIR_PATH%" (
+  start "" "%EXE_PATH%" "%DICOMDIR_PATH%"
+  exit /b 0
+)
+
+if exist "%DICOM_FOLDER%" (
+  echo WARNING: DICOMDIR not found. Opening DICOM folder directly.
+  start "" "%EXE_PATH%" "%DICOM_FOLDER%"
+  exit /b 0
+)
+
+echo ERROR: Could not find DICOMDIR or DICOM folder on this disc.
+if exist "%VIEWER_DIR%INSTRUCTIONS.html" (
+  start "" "%VIEWER_DIR%INSTRUCTIONS.html"
+)
+echo.
+pause
+exit /b 1
 `;
       await fs.promises.writeFile(path.join(viewerDir, 'Launch_Viewer.bat'), launchScript);
+
+      // Create root launcher for easier "double-click to open" flow
+      const rootLauncher = `@echo off
+setlocal EnableExtensions
+if exist "%~dp0VIEWER\\Launch_Viewer.bat" (
+  call "%~dp0VIEWER\\Launch_Viewer.bat"
+  if not errorlevel 1 exit /b 0
+)
+
+if exist "%~dp0VIEWER\\INSTRUCTIONS.html" (
+  start "" "%~dp0VIEWER\\INSTRUCTIONS.html"
+  exit /b 0
+)
+
+echo ERROR: Viewer launcher not found.
+echo Tried:
+echo   %~dp0VIEWER\\Launch_Viewer.bat
+echo   %~dp0VIEWER\\INSTRUCTIONS.html
+echo.
+pause
+exit /b 1
+`;
+      await fs.promises.writeFile(path.join(mediaRoot, 'OPEN_DICOM_VIEWER.bat'), rootLauncher);
+
+      const startHere = `DICOM DISC QUICK START
+======================
+
+1. Open this disc and double-click OPEN_DICOM_VIEWER.bat
+2. If blocked by Windows security, right-click and Run as administrator
+3. If still not opening, run VIEWER\\Launch_Viewer.bat directly
+
+If your system cannot run the included viewer, import DICOMDIR into your PACS
+or local DICOM viewer application.
+`;
+      await fs.promises.writeFile(path.join(mediaRoot, 'START_HERE.txt'), startHere);
       
       // Update autorun to use this viewer
       const autorun = `[autorun]
-open=VIEWER\\${viewer.exe}
+open=OPEN_DICOM_VIEWER.bat
 icon=VIEWER\\${viewer.exe}
 label=DICOM Medical Images
 action=Open ${viewer.name} DICOM Viewer
@@ -657,10 +739,35 @@ This allows you to choose which viewer to use and keeps the disc size smaller.
 </html>`;
 
     await fs.promises.writeFile(path.join(viewerDir, 'INSTRUCTIONS.html'), htmlInstructions);
+
+    const startHere = `DICOM DISC QUICK START
+======================
+
+No portable viewer is bundled on this disc.
+
+1. Open VIEWER\\INSTRUCTIONS.html for download links
+2. Install any DICOM viewer (MicroDicom, RadiAnt, Horos, Weasis)
+3. Open DICOMDIR from disc root in that viewer
+`;
+    await fs.promises.writeFile(path.join(mediaRoot, 'START_HERE.txt'), startHere);
+
+    // Root helper to open instructions with one click
+    const openInstructions = `@echo off
+setlocal EnableExtensions
+if exist "%~dp0VIEWER\\INSTRUCTIONS.html" (
+  start "" "%~dp0VIEWER\\INSTRUCTIONS.html"
+  exit /b 0
+)
+echo ERROR: INSTRUCTIONS.html not found.
+echo.
+pause
+exit /b 1
+`;
+    await fs.promises.writeFile(path.join(mediaRoot, 'OPEN_DICOM_VIEWER.bat'), openInstructions);
     
     // Create autorun that opens instructions
     const autorun = `[autorun]
-open=VIEWER\\INSTRUCTIONS.html
+open=OPEN_DICOM_VIEWER.bat
 icon=%SystemRoot%\\system32\\SHELL32.dll,23
 label=DICOM Medical Images
 action=View Instructions
@@ -690,6 +797,145 @@ async function copyDirectory(src, dest) {
   }
 }
 
+async function commandExists(commandName) {
+  const checker = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    await execFileAsync(checker, [commandName], { timeout: 10000, windowsHide: true });
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function firstAvailableCommand(commandCandidates) {
+  for (const candidate of commandCandidates) {
+    if (await commandExists(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function normalizeLinuxBurnDevice(deviceInput) {
+  const raw = String(deviceInput || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  if (raw.startsWith('/dev/')) {
+    return raw;
+  }
+
+  // Accept "sr0" style shorthand from UI and normalize.
+  if (/^[a-zA-Z0-9_-]+$/.test(raw)) {
+    return `/dev/${raw}`;
+  }
+
+  return raw;
+}
+
+function detectLinuxBurnDevice(preferredDevice = '') {
+  const normalizedPreferred = normalizeLinuxBurnDevice(preferredDevice);
+  if (normalizedPreferred) {
+    return fs.existsSync(normalizedPreferred) ? normalizedPreferred : null;
+  }
+
+  const commonDevicePaths = ['/dev/sr0', '/dev/cdrom', '/dev/dvd'];
+  for (const candidate of commonDevicePaths) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  try {
+    const devEntries = fs.readdirSync('/dev');
+    const srCandidate = devEntries.find((entry) => /^sr\d+$/i.test(entry));
+    if (srCandidate) {
+      const resolved = `/dev/${srCandidate}`;
+      if (fs.existsSync(resolved)) {
+        return resolved;
+      }
+    }
+  } catch (_error) {
+    // Best effort only.
+  }
+
+  return null;
+}
+
+async function getDirectBurnSupportStatus() {
+  if (process.platform === 'win32') {
+    return {
+      directBurnSupported: true,
+      directBurnMessage: 'Direct CD burn supported on Windows server',
+      burnDeviceHint: null,
+      burnToolchain: 'imapi2',
+      viewerRunSupported: true,
+      viewerRunMessage: 'Viewer launch supported on Windows server host',
+    };
+  }
+
+  if (process.platform !== 'linux') {
+    return {
+      directBurnSupported: false,
+      directBurnMessage: `Direct CD burn is not supported on platform ${process.platform}`,
+      burnDeviceHint: null,
+      burnToolchain: null,
+      viewerRunSupported: false,
+      viewerRunMessage: 'Viewer launch on server host is only supported on Windows servers',
+    };
+  }
+
+  const isoBuilder = await firstAvailableCommand(['xorriso', 'genisoimage', 'mkisofs']);
+  const burnTool = await firstAvailableCommand(['wodim', 'cdrecord', 'growisofs', 'xorriso']);
+  const burnDevice = detectLinuxBurnDevice('');
+
+  if (!isoBuilder) {
+    return {
+      directBurnSupported: false,
+      directBurnMessage:
+        'Direct CD burn requires Linux ISO tools. Install one of: xorriso, genisoimage, or mkisofs.',
+      burnDeviceHint: burnDevice,
+      burnToolchain: null,
+      viewerRunSupported: false,
+      viewerRunMessage: 'Viewer launch on server host is only supported on Windows servers',
+    };
+  }
+
+  if (!burnTool) {
+    return {
+      directBurnSupported: false,
+      directBurnMessage:
+        'Direct CD burn requires Linux burner tools. Install one of: wodim, cdrecord, growisofs, or xorriso.',
+      burnDeviceHint: burnDevice,
+      burnToolchain: isoBuilder,
+      viewerRunSupported: false,
+      viewerRunMessage: 'Viewer launch on server host is only supported on Windows servers',
+    };
+  }
+
+  if (!burnDevice) {
+    return {
+      directBurnSupported: false,
+      directBurnMessage:
+        'No Linux CD/DVD device found. Attach a burner and ensure /dev/sr0 (or /dev/cdrom) is available.',
+      burnDeviceHint: null,
+      burnToolchain: `${isoBuilder}+${burnTool}`,
+      viewerRunSupported: false,
+      viewerRunMessage: 'Viewer launch on server host is only supported on Windows servers',
+    };
+  }
+
+  return {
+    directBurnSupported: true,
+    directBurnMessage: `Direct CD burn supported on Linux (${isoBuilder}+${burnTool})`,
+    burnDeviceHint: burnDevice,
+    burnToolchain: `${isoBuilder}+${burnTool}`,
+    viewerRunSupported: false,
+    viewerRunMessage: 'Viewer launch on server host is only supported on Windows servers',
+  };
+}
+
 function extractBurnErrorMessage(rawOutput) {
   const output = String(rawOutput || '');
   const burnErrorMatch = output.match(/BURN_ERROR:\s*([^\r\n]+)/i);
@@ -702,13 +948,18 @@ function extractBurnErrorMessage(rawOutput) {
     return psErrorMatch[1].trim();
   }
 
+  const linuxToolErrorMatch = output.match(/(?:wodim|cdrecord|growisofs|xorriso):\s*([^\r\n]+)/i);
+  if (linuxToolErrorMatch?.[1]) {
+    return linuxToolErrorMatch[1].trim();
+  }
+
   return output.trim();
 }
 
-function mapBurnErrorToUserMessage(rawMessage, normalizedDriveLetter) {
+function mapBurnErrorToUserMessage(rawMessage, targetDriveOrDevice) {
   const message = String(rawMessage || '').trim();
   const lower = message.toLowerCase();
-  const driveDisplay = normalizedDriveLetter || 'the selected drive';
+  const driveDisplay = targetDriveOrDevice || 'the selected drive/device';
 
   if (!message) {
     return 'CD/DVD burn failed. Please try again with a blank disc.';
@@ -730,6 +981,10 @@ function mapBurnErrorToUserMessage(rawMessage, normalizedDriveLetter) {
     return `Drive ${driveDisplay} is not available for burning. Check the drive letter or leave it blank for auto-detect.`;
   }
 
+  if (lower.includes('device') && lower.includes('not found')) {
+    return `Burn device ${driveDisplay} was not found. Use a valid path like /dev/sr0 or leave blank for auto-detect.`;
+  }
+
   if (lower.includes('no cd/dvd burner found')) {
     return 'No CD/DVD burner was detected on the server. Use ZIP download or check the burner connection.';
   }
@@ -742,6 +997,31 @@ function mapBurnErrorToUserMessage(rawMessage, normalizedDriveLetter) {
     return 'Burning was blocked by system permissions. Run the server with burner access and try again.';
   }
 
+  if (
+    lower.includes('permission denied') ||
+    lower.includes('operation not permitted') ||
+    lower.includes('cannot open scsi driver')
+  ) {
+    return 'Burning was blocked by Linux permissions. Add the server user to the optical drive group (for example cdrom) and retry.';
+  }
+
+  if (
+    lower.includes('no medium found') ||
+    lower.includes('medium not present') ||
+    lower.includes('no disk /dev') ||
+    lower.includes('cannot load medium')
+  ) {
+    return `No writable disc detected in ${driveDisplay}. Insert a blank disc and try again.`;
+  }
+
+  if (lower.includes('is not blank') || lower.includes('already carries isofs')) {
+    return `The disc in ${driveDisplay} is not blank. Insert a blank/rewritable disc and retry.`;
+  }
+
+  if (lower.includes('input/output error') || lower.includes('write error')) {
+    return `The burner reported a write error on ${driveDisplay}. Try another blank disc and retry.`;
+  }
+
   if (lower.includes('0xc0aa') || lower.includes('imapi')) {
     return `The burner reported a media/hardware error on ${driveDisplay}. Try a different blank disc and retry.`;
   }
@@ -750,9 +1030,9 @@ function mapBurnErrorToUserMessage(rawMessage, normalizedDriveLetter) {
 }
 
 /**
- * Burn folder directly to CD/DVD using IMAPI2
+ * Burn folder directly to CD/DVD on Windows via IMAPI2.
  */
-async function burnFolderToDisc(sourcePath, driveLetter, volumeName = 'DICOM_MEDIA') {
+async function burnFolderToDiscWindows(sourcePath, driveLetter, volumeName = 'DICOM_MEDIA') {
   const normalizedDriveLetter = driveLetter
     ? `${String(driveLetter).trim().replace(':', '').toUpperCase()}:`
     : '';
@@ -857,7 +1137,7 @@ try {
     result = await execFileAsync(
       'powershell.exe',
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', powershellScript],
-      { timeout: 900000, windowsHide: false } // 15 minutes, show window for progress
+      { timeout: 900000, windowsHide: false }
     );
   } catch (execError) {
     const rawOutput = [
@@ -883,14 +1163,126 @@ try {
 }
 
 /**
+ * Burn folder directly to CD/DVD on Linux using mkisofs/genisoimage/xorriso + burner tools.
+ */
+async function burnFolderToDiscLinux(sourcePath, drivePathInput, volumeName = 'DICOM_MEDIA') {
+  const normalizedInput = normalizeLinuxBurnDevice(drivePathInput);
+  const devicePath = detectLinuxBurnDevice(normalizedInput);
+  const targetDisplay = normalizedInput || devicePath || '/dev/sr0';
+
+  if (!devicePath) {
+    if (normalizedInput) {
+      throw new Error(
+        `Burn device ${normalizedInput} was not found. Use a valid path like /dev/sr0 or leave blank for auto-detect.`
+      );
+    }
+    throw new Error(
+      'No Linux CD/DVD device found. Attach a burner and ensure /dev/sr0 (or /dev/cdrom) is available.'
+    );
+  }
+
+  const isoBuilder = await firstAvailableCommand(['xorriso', 'genisoimage', 'mkisofs']);
+  if (!isoBuilder) {
+    throw new Error(
+      'Missing Linux ISO tool. Install xorriso, genisoimage, or mkisofs to enable direct burn.'
+    );
+  }
+
+  const burnTool = await firstAvailableCommand(['wodim', 'cdrecord', 'growisofs', 'xorriso']);
+  if (!burnTool) {
+    throw new Error(
+      'Missing Linux burner tool. Install wodim, cdrecord, growisofs, or xorriso to enable direct burn.'
+    );
+  }
+
+  const tempIsoDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dicom-iso-'));
+  const isoPath = path.join(tempIsoDir, 'dicom_media.iso');
+  const safeVolumeName = String(volumeName || 'DICOM_MEDIA')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, '_')
+    .slice(0, 32);
+
+  try {
+    const isoArgs =
+      isoBuilder === 'xorriso'
+        ? ['-as', 'mkisofs', '-V', safeVolumeName, '-J', '-R', '-o', isoPath, sourcePath]
+        : ['-V', safeVolumeName, '-J', '-R', '-o', isoPath, sourcePath];
+
+    await execFileAsync(isoBuilder, isoArgs, { timeout: 600000 });
+
+    if (!fs.existsSync(isoPath)) {
+      throw new Error('Failed to create temporary ISO image for burning');
+    }
+
+    let burnResult;
+    if (burnTool === 'growisofs') {
+      burnResult = await execFileAsync(
+        'growisofs',
+        ['-dvd-compat', '-Z', `${devicePath}=${isoPath}`],
+        { timeout: 900000 }
+      );
+    } else if (burnTool === 'xorriso') {
+      burnResult = await execFileAsync(
+        'xorriso',
+        ['-as', 'cdrecord', `dev=${devicePath}`, '-v', isoPath],
+        { timeout: 900000 }
+      );
+    } else {
+      burnResult = await execFileAsync(
+        burnTool,
+        [`dev=${devicePath}`, '-v', '-eject', isoPath],
+        { timeout: 900000 }
+      );
+    }
+
+    return `${burnResult.stdout || ''}\n${burnResult.stderr || ''}`.trim();
+  } catch (execError) {
+    const rawOutput = [
+      execError?.stdout || '',
+      execError?.stderr || '',
+      execError?.message || '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const parsedError = extractBurnErrorMessage(rawOutput);
+    const userMessage = mapBurnErrorToUserMessage(parsedError, targetDisplay);
+    throw new Error(userMessage);
+  } finally {
+    try {
+      await fs.promises.rm(tempIsoDir, { recursive: true, force: true });
+    } catch (_cleanupError) {
+      // Ignore cleanup failure.
+    }
+  }
+}
+
+/**
+ * Burn folder directly to CD/DVD on supported server platforms.
+ */
+async function burnFolderToDisc(sourcePath, driveLetterOrDevice, volumeName = 'DICOM_MEDIA') {
+  if (process.platform === 'win32') {
+    return burnFolderToDiscWindows(sourcePath, driveLetterOrDevice, volumeName);
+  }
+
+  if (process.platform === 'linux') {
+    return burnFolderToDiscLinux(sourcePath, driveLetterOrDevice, volumeName);
+  }
+
+  throw new Error(`Direct CD burn is not supported on platform ${process.platform}`);
+}
+
+/**
  * Return current portable viewer availability on the server.
  */
 async function getViewerStatus(req, res) {
   try {
     const availability = getViewerAvailability();
+    const directBurnStatus = await getDirectBurnSupportStatus();
     return res.status(200).json({
       success: true,
       checkedAt: new Date().toISOString(),
+      serverPlatform: process.platform,
+      ...directBurnStatus,
       ...availability,
     });
   } catch (error) {
@@ -1077,10 +1469,13 @@ async function directBurnToCD(req, res) {
       return res.status(400).json({ success: false, message: 'targetId is required' });
     }
 
-    if (process.platform !== 'win32') {
+    const directBurnStatus = await getDirectBurnSupportStatus();
+    if (!directBurnStatus.directBurnSupported) {
       return res.status(400).json({
         success: false,
-        message: 'Direct CD burn is only supported on Windows servers',
+        message:
+          directBurnStatus.directBurnMessage ||
+          'Direct CD burn is not available on this server configuration',
       });
     }
 
