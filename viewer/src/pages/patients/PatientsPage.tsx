@@ -33,7 +33,7 @@ import {
   exportPatientData,
   exportStudyData,
   exportAndBurnToCD,
-  directBurnToCD,
+  createDicomIsoDownload,
   clearActiveBurns,
   getActiveBurnStatus,
   getDirectBurnViewerStatus,
@@ -81,6 +81,9 @@ interface DirectBurnViewerStatus {
   success: boolean;
   checkedAt?: string;
   serverPlatform?: string;
+  isoExportSupported?: boolean;
+  isoExportMessage?: string;
+  isoToolchain?: string | null;
   directBurnSupported?: boolean;
   directBurnMessage?: string;
   burnDeviceHint?: string | null;
@@ -190,8 +193,8 @@ const PatientsPage: React.FC = () => {
     id: string;
   } | null>(null);
   const [includeImages, setIncludeImages] = useState(true);
-  const [exportMode, setExportMode] = useState<"download" | "burn-cd" | "direct-burn">(
-    "download"
+  const [exportMode, setExportMode] = useState<"auto" | "download" | "burn-cd" | "direct-burn">(
+    "auto"
   );
   const [includeViewer, setIncludeViewer] = useState(true);
   const [viewerStatus, setViewerStatus] = useState<DirectBurnViewerStatus | null>(null);
@@ -199,7 +202,7 @@ const PatientsPage: React.FC = () => {
   const [viewerStatusError, setViewerStatusError] = useState<string | null>(null);
   const [viewerInstallLoading, setViewerInstallLoading] = useState(false);
   const [viewerRunLoading, setViewerRunLoading] = useState(false);
-  const directBurnUnavailable = viewerStatus?.directBurnSupported === false;
+  const isoExportUnavailable = viewerStatus?.isoExportSupported === false;
   const viewerRunUnavailable = viewerStatus?.viewerRunSupported === false;
   const isLinuxServer = viewerStatus?.serverPlatform === "linux";
 
@@ -715,21 +718,46 @@ const PatientsPage: React.FC = () => {
     // Prevent multiple clicks
     if (exporting) return;
 
+    let resolvedExportMode: "download" | "burn-cd" | "direct-burn" =
+      exportMode === "auto" ? "download" : exportMode;
+
+    if (exportMode === "auto") {
+      let latestViewerStatus = viewerStatus;
+
+      if (!latestViewerStatus) {
+        try {
+          latestViewerStatus = await getDirectBurnViewerStatus();
+          setViewerStatus(latestViewerStatus);
+        } catch (_error) {
+          latestViewerStatus = null;
+        }
+      }
+
+      if (latestViewerStatus?.isoExportSupported === false) {
+        resolvedExportMode = "download";
+        setSuccess("ISO export is unavailable on this server right now. Starting ZIP export automatically.");
+      } else {
+        resolvedExportMode = "direct-burn";
+      }
+    }
+
     if (
-      exportMode === "direct-burn" &&
+      resolvedExportMode === "direct-burn" &&
       viewerStatus &&
-      viewerStatus.directBurnSupported === false
+      viewerStatus.isoExportSupported === false
     ) {
       setError(
-        viewerStatus.directBurnMessage ||
-          "Direct CD burn is not available on this server. Use Download ZIP (or ZIP + Burn for manual burn)."
+        viewerStatus.isoExportMessage ||
+          "ISO export is not available on this server. Use Download ZIP instead."
       );
-      setExportMode("download");
+      if (exportMode !== "auto") {
+        setExportMode("download");
+      }
       return;
     }
 
-    // For burn operations, create a task
-    if (exportMode === "direct-burn" || exportMode === "burn-cd") {
+    // Legacy server burn operation
+    if (resolvedExportMode === "burn-cd") {
       const taskId = `burn-${Date.now()}`;
       const abortController = new AbortController();
       cancelledBurnTaskIdsRef.current.delete(taskId);
@@ -760,25 +788,13 @@ const PatientsPage: React.FC = () => {
             : t
         ));
         
-        let burnResult;
-        if (exportMode === "direct-burn") {
-          burnResult = await directBurnToCD({
-            targetType: exportTarget.type,
-            targetId: exportTarget.id,
-            includeImages,
-            includeViewer,
-            driveLetter: cdDriveLetter || undefined,
-            signal: abortController.signal,
-          });
-        } else {
-          burnResult = await exportAndBurnToCD({
-            targetType: exportTarget.type,
-            targetId: exportTarget.id,
-            includeImages,
-            driveLetter: cdDriveLetter || undefined,
-            signal: abortController.signal,
-          });
-        }
+        const burnResult = await exportAndBurnToCD({
+          targetType: exportTarget.type,
+          targetId: exportTarget.id,
+          includeImages,
+          driveLetter: cdDriveLetter || undefined,
+          signal: abortController.signal,
+        });
         
         // Ignore stale success updates for cancelled tasks
         if (cancelledBurnTaskIdsRef.current.has(taskId)) {
@@ -870,6 +886,32 @@ const PatientsPage: React.FC = () => {
       return;
     }
 
+    if (resolvedExportMode === "direct-burn") {
+      try {
+        setExporting(true);
+        setExportProgress(0);
+        setError(null);
+        setSuccess(null);
+
+        await createDicomIsoDownload({
+          targetType: exportTarget.type,
+          targetId: exportTarget.id,
+          includeImages: true,
+          includeViewer: exportMode === "auto" ? true : includeViewer,
+        });
+
+        setSuccess("ISO file downloaded successfully. You can burn this ISO to CD/DVD.");
+        setExportDialogOpen(false);
+        setExportTarget(null);
+      } catch (e: any) {
+        setError(e.message || "ISO export failed");
+      } finally {
+        setExporting(false);
+        setExportProgress(0);
+      }
+      return;
+    }
+
     // Regular download export
     try {
       setExporting(true);
@@ -892,7 +934,11 @@ const PatientsPage: React.FC = () => {
           setExportProgress
         );
       }
-      setSuccess("Export downloaded successfully.");
+      setSuccess(
+        exportMode === "auto"
+          ? "ZIP export downloaded (auto mode fallback)."
+          : "Export downloaded successfully."
+      );
 
       setExportDialogOpen(false);
       setExportTarget(null);
@@ -965,7 +1011,7 @@ const PatientsPage: React.FC = () => {
     setExportDialogOpen(false);
     setExportTarget(null);
     setIncludeImages(true);
-    setExportMode("download");
+    setExportMode("auto");
     setCdDriveLetter("");
     setIncludeViewer(true);
     setViewerStatus(null);
@@ -1722,7 +1768,7 @@ const PatientsPage: React.FC = () => {
         <div className="space-y-6">
           <Alert severity="info" icon={<FileDown />}>
             <p className="font-bold text-sm">
-              This export flow supports ZIP download and optional direct CD burn:
+              This export flow supports ZIP download, ISO creation, and optional server-side burn:
             </p>
             <ul className="list-disc list-inside text-sm mt-2 space-y-1 ml-4">
               <li>Complete metadata (JSON format)</li>
@@ -1735,6 +1781,23 @@ const PatientsPage: React.FC = () => {
 
           <div className="space-y-3">
             <p className="text-sm font-bold text-gray-800">Delivery Method</p>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="exportMode"
+                checked={exportMode === "auto"}
+                onChange={() => setExportMode("auto")}
+                className="mt-1"
+              />
+              <div className="flex-1">
+                <span className="text-sm text-gray-700 font-medium">
+                  Automatic (Best Available)
+                </span>
+                <p className="text-xs text-gray-500 mt-1">
+                  Creates downloadable ISO when available, otherwise falls back to ZIP download automatically.
+                </p>
+              </div>
+            </label>
             <label className="flex items-start gap-2 cursor-pointer">
               <input
                 type="radio"
@@ -1752,7 +1815,7 @@ const PatientsPage: React.FC = () => {
                 type="radio"
                 name="exportMode"
                 checked={exportMode === "direct-burn"}
-                disabled={directBurnUnavailable}
+                disabled={isoExportUnavailable}
                 onChange={() => {
                   setExportMode("direct-burn");
                   setIncludeViewer(true);
@@ -1761,14 +1824,15 @@ const PatientsPage: React.FC = () => {
               />
               <div className="flex-1">
                 <span className="text-sm text-gray-700 font-medium">
-                  Direct CD Burn (Recommended)
+                  Create ISO (Recommended)
                 </span>
                 <p className="text-xs text-gray-500 mt-1">
-                  Burns DICOM files directly to disc with proper DICOMDIR structure. No ZIP file created.
+                  Creates DICOM ISO with proper DICOMDIR structure so users can download and burn CD/DVD locally.
                 </p>
-                {directBurnUnavailable && (
+                {isoExportUnavailable && (
                   <p className="text-xs text-red-600 mt-1">
-                    Not available on this server ({viewerStatus.serverPlatform || "non-Windows"}).
+                    {viewerStatus?.isoExportMessage ||
+                      `Not available on this server (${viewerStatus?.serverPlatform || "unknown"}).`}
                   </p>
                 )}
               </div>
@@ -1794,34 +1858,37 @@ const PatientsPage: React.FC = () => {
 
           {(exportMode === "burn-cd" || exportMode === "direct-burn") && (
             <div className="space-y-3">
-              <Input
-                label={isLinuxServer ? "CD/DVD Device Path (Optional)" : "CD/DVD Drive Letter (Optional)"}
-                placeholder={isLinuxServer ? "Example: /dev/sr0" : "Example: D"}
-                value={cdDriveLetter}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                  const nextValue = e.target.value;
-                  setCdDriveLetter(
-                    isLinuxServer || nextValue.includes("/")
-                      ? nextValue
-                      : nextValue.toUpperCase()
-                  );
-                }}
-                fullWidth
-              />
-              <p className="text-xs text-gray-500">
-                {isLinuxServer
-                  ? "Leave blank for auto-detect (for example /dev/sr0). If burn fails, provide exact device path."
-                  : "Leave blank for auto-detect. If burn fails, try specifying the drive letter."}
-              </p>
+              {exportMode === "burn-cd" && (
+                <>
+                  <Input
+                    label={isLinuxServer ? "CD/DVD Device Path (Optional)" : "CD/DVD Drive Letter (Optional)"}
+                    placeholder={isLinuxServer ? "Example: /dev/sr0" : "Example: D"}
+                    value={cdDriveLetter}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                      const nextValue = e.target.value;
+                      setCdDriveLetter(
+                        isLinuxServer || nextValue.includes("/")
+                          ? nextValue
+                          : nextValue.toUpperCase()
+                      );
+                    }}
+                    fullWidth
+                  />
+                  <p className="text-xs text-gray-500">
+                    {isLinuxServer
+                      ? "Leave blank for auto-detect (for example /dev/sr0). If burn fails, provide exact device path."
+                      : "Leave blank for auto-detect. If burn fails, try specifying the drive letter."}
+                  </p>
+                </>
+              )}
 
               {exportMode === "direct-burn" && (
                 <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
-                  <p className="text-xs font-semibold text-blue-800">Compatibility Tips</p>
+                  <p className="text-xs font-semibold text-blue-800">ISO Export Notes</p>
                   <ul className="list-disc list-inside text-xs text-blue-700 mt-1 space-y-1">
-                    <li>Keep viewer option enabled for best recipient experience.</li>
-                    <li>MicroDicom launches on Windows; Mac/Linux users can still open DICOMDIR in their own viewer.</li>
-                    {isLinuxServer && <li>On Linux, use device path format (for example <code>/dev/sr0</code>).</li>}
-                    <li>For larger studies, use DVD media to avoid disc capacity errors.</li>
+                    <li>Creates a downloadable ISO image from DICOM media layout.</li>
+                    <li>ISO can be burned on any workstation using standard disc burning software.</li>
+                    <li>Keep viewer option enabled for best recipient experience on Windows.</li>
                   </ul>
                 </div>
               )}
@@ -1829,7 +1896,7 @@ const PatientsPage: React.FC = () => {
               {exportMode === "direct-burn" && (
                 <div className="bg-gray-50 border border-gray-200 rounded-md p-3 space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-gray-800">Server Viewer Status</p>
+                    <p className="text-xs font-semibold text-gray-800">Server ISO/Viewer Status</p>
                     <button
                       type="button"
                       onClick={loadViewerStatus}
@@ -1842,9 +1909,9 @@ const PatientsPage: React.FC = () => {
 
                   {!viewerStatusLoading && viewerStatus && (
                     <div className="space-y-1">
-                      {directBurnUnavailable && (
+                      {isoExportUnavailable && (
                         <Badge variant="warning" size="sm">
-                          Direct burn unavailable on this server
+                          ISO export unavailable on this server
                         </Badge>
                       )}
                       <Badge
@@ -1855,35 +1922,16 @@ const PatientsPage: React.FC = () => {
                           ? `Viewer ready: ${viewerStatus.selectedViewer?.name || "Installed"}`
                           : "Portable viewer not installed"}
                       </Badge>
-                      {viewerStatus.viewerInstalled ? (
+                      {!isoExportUnavailable && viewerStatus.isoToolchain && (
                         <p className="text-xs text-gray-600">
-                          Disc will include {viewerStatus.selectedViewer?.name} (
-                          {viewerStatus.selectedViewer?.size}).
-                        </p>
-                      ) : (
-                        <p className="text-xs text-gray-600">
-                          Disc will include viewer download instructions instead.
+                          ISO toolchain: <code>{viewerStatus.isoToolchain}</code>
                         </p>
                       )}
-                      {directBurnUnavailable && (
+                      {isoExportUnavailable && (
                         <p className="text-xs text-red-600">
-                          {viewerStatus.directBurnMessage ||
-                            "Direct CD burn is not available on this server. Use ZIP download/manual burn."}
+                          {viewerStatus.isoExportMessage || "ISO export is not available on this server."}
                         </p>
                       )}
-                      {!directBurnUnavailable && viewerStatus.burnDeviceHint && (
-                        <p className="text-xs text-gray-600">
-                          Detected burner device: <code>{viewerStatus.burnDeviceHint}</code>
-                        </p>
-                      )}
-                      {!directBurnUnavailable && viewerStatus.burnToolchain && (
-                        <p className="text-xs text-gray-600">
-                          Burn toolchain: <code>{viewerStatus.burnToolchain}</code>
-                        </p>
-                      )}
-                      <p className="text-xs text-gray-600">
-                        Recipient opens burned disc by running <code>OPEN_DICOM_VIEWER.bat</code> from disc root.
-                      </p>
                     </div>
                   )}
 
@@ -1918,7 +1966,7 @@ const PatientsPage: React.FC = () => {
                   </p>
                 </div>
               )}
-              
+
               {exportMode === "direct-burn" && (
                 <div className="flex items-start">
                   <input
@@ -1956,7 +2004,7 @@ const PatientsPage: React.FC = () => {
               </span>
               <span className="block text-sm text-gray-500">
                 {exportMode === "direct-burn"
-                  ? "Direct burn always includes full DICOM content for viewer compatibility."
+                  ? "ISO export always includes full DICOM content for viewer compatibility."
                   : "Unchecking this will only export metadata (faster, smaller file)"}
               </span>
             </label>
@@ -2018,8 +2066,10 @@ const PatientsPage: React.FC = () => {
               ? exportMode === "download"
                 ? `Downloading... ${exportProgress}%`
                 : "Processing..."
+              : exportMode === "auto"
+              ? "Export (Auto)"
               : exportMode === "direct-burn"
-              ? "Burn to CD/DVD"
+              ? "Create ISO"
               : exportMode === "burn-cd"
               ? "Export + Burn CD"
               : "Export Data"}

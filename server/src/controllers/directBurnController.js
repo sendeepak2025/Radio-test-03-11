@@ -863,6 +863,32 @@ function detectLinuxBurnDevice(preferredDevice = '') {
   return null;
 }
 
+function sanitizeFileSegment(value, fallback = 'export') {
+  return String(value || fallback)
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 120);
+}
+
+async function getIsoExportSupportStatus() {
+  const isoBuilder = await firstAvailableCommand(['xorriso', 'genisoimage', 'mkisofs']);
+
+  if (!isoBuilder) {
+    return {
+      isoExportSupported: false,
+      isoExportMessage:
+        'ISO export requires one of these tools on the server: xorriso, genisoimage, or mkisofs.',
+      isoToolchain: null,
+    };
+  }
+
+  return {
+    isoExportSupported: true,
+    isoExportMessage: `ISO export supported (${isoBuilder})`,
+    isoToolchain: isoBuilder,
+  };
+}
+
 async function getDirectBurnSupportStatus() {
   if (process.platform === 'win32') {
     return {
@@ -934,6 +960,33 @@ async function getDirectBurnSupportStatus() {
     viewerRunSupported: false,
     viewerRunMessage: 'Viewer launch on server host is only supported on Windows servers',
   };
+}
+
+async function createIsoImageFromFolder(sourcePath, isoPath, volumeName = 'DICOM_MEDIA') {
+  const isoBuilder = await firstAvailableCommand(['xorriso', 'genisoimage', 'mkisofs']);
+  if (!isoBuilder) {
+    throw new Error(
+      'ISO export tool not found. Install xorriso, genisoimage, or mkisofs on the server.'
+    );
+  }
+
+  const safeVolumeName = String(volumeName || 'DICOM_MEDIA')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]/g, '_')
+    .slice(0, 32);
+
+  const args =
+    isoBuilder === 'xorriso'
+      ? ['-as', 'mkisofs', '-V', safeVolumeName, '-J', '-R', '-o', isoPath, sourcePath]
+      : ['-V', safeVolumeName, '-J', '-R', '-o', isoPath, sourcePath];
+
+  await execFileAsync(isoBuilder, args, { timeout: 600000 });
+
+  if (!fs.existsSync(isoPath)) {
+    throw new Error('Failed to create ISO file');
+  }
+
+  return isoBuilder;
 }
 
 function extractBurnErrorMessage(rawOutput) {
@@ -1277,11 +1330,13 @@ async function burnFolderToDisc(sourcePath, driveLetterOrDevice, volumeName = 'D
 async function getViewerStatus(req, res) {
   try {
     const availability = getViewerAvailability();
+    const isoExportStatus = await getIsoExportSupportStatus();
     const directBurnStatus = await getDirectBurnSupportStatus();
     return res.status(200).json({
       success: true,
       checkedAt: new Date().toISOString(),
       serverPlatform: process.platform,
+      ...isoExportStatus,
       ...directBurnStatus,
       ...availability,
     });
@@ -1560,10 +1615,102 @@ async function directBurnToCD(req, res) {
   }
 }
 
+/**
+ * Create ISO image from DICOM media layout and stream to client for download.
+ */
+async function createIsoExport(req, res) {
+  let tempDir = null;
+  let cleanedUp = false;
+
+  const cleanup = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (!tempDir) return;
+    try {
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+    } catch (cleanupError) {
+      console.error('Failed to cleanup ISO temp directory:', cleanupError);
+    }
+  };
+
+  try {
+    const {
+      targetType,
+      targetId,
+      includeImages = true,
+      includeViewer = true,
+    } = req.body || {};
+
+    if (!['patient', 'study'].includes(targetType)) {
+      return res.status(400).json({ success: false, message: 'targetType must be patient or study' });
+    }
+    if (!targetId) {
+      return res.status(400).json({ success: false, message: 'targetId is required' });
+    }
+
+    const isoSupport = await getIsoExportSupportStatus();
+    if (!isoSupport.isoExportSupported) {
+      return res.status(400).json({
+        success: false,
+        message:
+          isoSupport.isoExportMessage ||
+          'ISO export is not available on this server configuration',
+      });
+    }
+
+    const prepared = await prepareDicomMediaFolder(
+      targetType,
+      targetId,
+      includeImages,
+      includeViewer
+    );
+    tempDir = prepared.tempDir;
+
+    const isoName = `${targetType}_${sanitizeFileSegment(targetId)}_dicom_media.iso`;
+    const isoPath = path.join(tempDir, isoName);
+    await createIsoImageFromFolder(prepared.mediaRoot, isoPath, 'DICOM_MEDIA');
+
+    const fileStat = await fs.promises.stat(isoPath);
+    res.setHeader('Content-Type', 'application/x-iso9660-image');
+    res.setHeader('Content-Disposition', `attachment; filename="${isoName}"`);
+    res.setHeader('Content-Length', String(fileStat.size));
+
+    res.on('finish', cleanup);
+    res.on('close', cleanup);
+    res.on('error', cleanup);
+
+    const readStream = fs.createReadStream(isoPath);
+    readStream.on('error', async (streamError) => {
+      console.error('ISO stream error:', streamError);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, message: 'Failed to stream ISO file' });
+      } else {
+        res.destroy(streamError);
+      }
+      await cleanup();
+    });
+    readStream.pipe(res);
+  } catch (error) {
+    await cleanup();
+    console.error('ISO export error:', error);
+    if (res.headersSent) {
+      if (!res.writableEnded) {
+        res.destroy(error);
+      }
+      return;
+    }
+    res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || 'ISO export failed',
+    });
+  }
+}
+
 module.exports = {
   getViewerStatus,
   installViewerOnServer,
   runViewerOnServer,
+  createIsoExport,
   directBurnToCD,
   prepareDicomMediaFolder,
   burnFolderToDisc,

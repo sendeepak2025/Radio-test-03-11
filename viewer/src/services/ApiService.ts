@@ -915,6 +915,44 @@ export const clearActiveBurns = async () => {
   return response.json()
 }
 
+export const createDicomIsoDownload = async ({
+  targetType,
+  targetId,
+  includeImages = true,
+  includeViewer = true,
+  signal,
+}: {
+  targetType: 'patient' | 'study'
+  targetId: string
+  includeImages?: boolean
+  includeViewer?: boolean
+  signal?: AbortSignal
+}) => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/create-iso`, {
+    method: 'POST',
+    credentials: 'include',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify({
+      targetType,
+      targetId,
+      includeImages,
+      includeViewer,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  await triggerDownloadFromResponse(response, `${targetType}_${targetId}_dicom_media.iso`)
+  return { success: true }
+}
+
 export const getActiveBurnStatus = async () => {
   const token = getAuthToken()
   const response = await fetch(`${BACKEND_URL}/api/export/burn-status`, {
@@ -1023,6 +1061,7 @@ export default {
   exportPatientData,
   exportStudyData,
   exportAndBurnToCD,
+  createDicomIsoDownload,
   exportAllData,
   getActiveBurnStatus,
   getDirectBurnViewerStatus,

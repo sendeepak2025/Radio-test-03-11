@@ -1,8 +1,8 @@
-# How to Include DICOM Viewer on Burned CDs
+# How to Include DICOM Viewer in ISO/CD Exports
 
 ## Quick Answer
 
-When you check "Include DICOM Viewer Software" during CD burning, the system will:
+When you check "Include DICOM Viewer Software" during ISO export, the system will:
 
 1. **If viewer is installed**: Copy the portable viewer to the disc
 2. **If viewer is NOT installed**: Create detailed instructions for downloading viewers
@@ -50,10 +50,10 @@ This will:
 
 1. Go to **Patients** page
 2. Click **Export** on any patient or study
-3. Select **"Direct CD Burn (Recommended)"**
+3. Select **"Create ISO (Recommended)"**
 4. ✅ Check **"Include DICOM Viewer Software"**
-5. Insert blank CD/DVD
-6. Click **"Burn to CD/DVD"**
+5. Click **"Create ISO"**
+6. Download the ISO and burn it to CD/DVD on any workstation
 
 ### What Gets Burned
 
@@ -267,11 +267,11 @@ To use a different viewer:
 
 ## Summary
 
-**To include viewer on burned CDs:**
+**To include viewer in ISO/disc exports:**
 
 1. **One-time setup**: Run `.\scripts\setup-dicom-viewer.ps1`
-2. **When burning**: Check "Include DICOM Viewer Software"
-3. **Result**: Disc contains viewer + images, ready to use
+2. **When exporting**: Check "Include DICOM Viewer Software"
+3. **Result**: ISO/disc contains viewer + images, ready to use
 
 **If you don't set up viewer:**
 - Disc will include detailed download instructions instead

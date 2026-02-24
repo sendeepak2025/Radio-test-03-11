@@ -174,6 +174,16 @@ router.post(
   directBurnController.runViewerOnServer
 );
 
+// Create ISO image download from DICOM media layout
+// POST /api/export/create-iso
+router.post(
+  '/create-iso',
+  authenticate,
+  rateLimit({ maxRequests: 20, windowMs: 300000 }),
+  express.json(),
+  directBurnController.createIsoExport
+);
+
 // Direct CD burn without ZIP (Windows server host)
 // POST /api/export/direct-burn
 router.post(

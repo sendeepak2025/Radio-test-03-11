@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-**"Include DICOM Viewer Software"** checkbox adds a portable DICOM viewer to the burned CD/DVD so recipients can view images immediately without installing software.
+**"Include DICOM Viewer Software"** checkbox adds a portable DICOM viewer to exported DICOM media (ISO/disc) so recipients can view images immediately without installing software.
 
 ## How It Works
 
@@ -30,7 +30,8 @@
                  │
                  ▼
         ┌────────────────┐
-        │ Burn to CD/DVD │
+        │ Create ISO     │
+        │ (download)     │
         └────────────────┘
 ```
 
@@ -67,11 +68,8 @@ cd server
 Export Dialog
 ├── Delivery Method
 │   ├── ○ Download ZIP file
-│   ├── ● Direct CD Burn (Recommended)  ← Select this
+│   ├── ● Create ISO (Recommended)      ← Select this
 │   └── ○ Export ZIP + Burn (Legacy)
-│
-├── CD/DVD Drive Letter
-│   └── [D] (optional)
 │
 └── ☑ Include DICOM Viewer Software  ← Check this
 ```
