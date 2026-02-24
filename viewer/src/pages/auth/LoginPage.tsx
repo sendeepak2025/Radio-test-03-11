@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Helmet } from "react-helmet-async";
 import { useAuth } from "../../hooks/useAuth";
@@ -21,6 +21,12 @@ const LoginPage: React.FC = () => {
   const [showPermissionPrompt, setShowPermissionPrompt] = useState(false);
 
   const from = (location.state as any)?.from?.pathname || "/dashboard";
+
+  useEffect(() => {
+    if (error) {
+      clearAuthError();
+    }
+  }, []);
 
   const handleInputChange =
     (field: keyof LoginCredentials) =>

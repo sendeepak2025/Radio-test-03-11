@@ -172,7 +172,7 @@ export const useSessionManagement = (
   useEffect(() => {
     if (!finalConfig.extendOnActivity) return
 
-    const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart']
+    const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'session-keepalive']
 
     activityEvents.forEach(event => {
       window.addEventListener(event, handleActivity, { passive: true })

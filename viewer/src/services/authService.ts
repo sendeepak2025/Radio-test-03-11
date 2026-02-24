@@ -6,6 +6,26 @@ import type {
   RefreshTokenResponse
 } from '../types/auth'
 
+const SAFE_HTTP_METHODS = new Set(['get', 'head', 'options'])
+
+const getCSRFTokenFromCookie = (): string | null => {
+  if (typeof document === 'undefined') {
+    return null
+  }
+
+  const cookiePrefix = 'XSRF-TOKEN='
+  const tokenCookie = document.cookie
+    .split('; ')
+    .find((cookie) => cookie.startsWith(cookiePrefix))
+
+  if (!tokenCookie) {
+    return null
+  }
+
+  const rawToken = decodeURIComponent(tokenCookie.substring(cookiePrefix.length))
+  return rawToken.split('.')[0] || null
+}
+
 // Polyfill for crypto.randomUUID if not available
 const generateUUID = (): string => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -21,6 +41,33 @@ const generateUUID = (): string => {
 
 class AuthService {
   private baseURL = '/auth'
+
+  private decodeJwtPayload(token: string): Record<string, any> | null {
+    try {
+      const payload = token.split('.')[1]
+      if (!payload) return null
+      return JSON.parse(atob(payload))
+    } catch {
+      return null
+    }
+  }
+
+  private isLikelyAccessToken(token: string): boolean {
+    const payload = this.decodeJwtPayload(token)
+    if (!payload || typeof payload !== 'object') {
+      return false
+    }
+
+    if (typeof payload.type === 'string') {
+      return payload.type === 'access'
+    }
+
+    return Boolean(
+      payload.username ||
+      payload.permissions ||
+      Array.isArray(payload.roles)
+    )
+  }
 
   async login(credentials: LoginCredentials): Promise<LoginResponse> {
     // Always call backend API
@@ -172,6 +219,13 @@ class AuthService {
     // Initialize auth token from storage on app start
     const token = this.getStoredToken()
     if (token) {
+      if (!this.isLikelyAccessToken(token)) {
+        this.clearStorage()
+        this.clearAuthToken()
+        console.warn('Ignoring stale non-access token found in accessToken storage')
+        return
+      }
+
       this.setAuthToken(token)
       console.log('🔄 Auth token restored from storage')
     }
@@ -190,6 +244,15 @@ axios.interceptors.request.use(
     const token = authService.getStoredToken()
     if (token && !config.headers['Authorization']) {
       config.headers['Authorization'] = `Bearer ${token}`
+    }
+
+    // Attach CSRF token for state-changing requests protected by double-submit cookie middleware.
+    const method = String(config.method || 'get').toLowerCase()
+    if (!SAFE_HTTP_METHODS.has(method) && !config.headers['X-XSRF-TOKEN']) {
+      const csrfToken = getCSRFTokenFromCookie()
+      if (csrfToken) {
+        config.headers['X-XSRF-TOKEN'] = csrfToken
+      }
     }
 
     // Add correlation ID for request tracking
@@ -280,3 +343,4 @@ axios.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+

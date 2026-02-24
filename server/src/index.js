@@ -94,6 +94,7 @@ app.use(doubleSubmitCookieCSRF({
     '/metrics', 
     '/auth/login', 
     '/auth/register', 
+    '/auth/refresh',
     '/auth/refresh-token', 
     '/api/orthanc-webhook',
     '/api/reports', // Exclude reporting API from CSRF (uses JWT auth)

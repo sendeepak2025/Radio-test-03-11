@@ -125,29 +125,8 @@ function App() {
 
 
 
-  useEffect(()=>{
-    // Function to get a specific cookie value
-function getCookie(name) {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop().split(';').shift();
-}
-
-  // console.log("📦 All cookies:", document.cookie);
 
 
-// Get refresh_token from cookies
-const refreshToken = getCookie('refresh_token');
-
-// If token exists, save it to localStorage with name "accessToken"
-if (refreshToken) {
-  localStorage.setItem('accessToken', refreshToken);
-  // console.log('✅ Refresh token saved as accessToken in localStorage');
-} else {
-  console.warn('⚠️ refresh_token not found in cookies');
-}
-
-  },[])
   // Session management with auto-timeout and token refresh
   const {
     status: sessionStatus,

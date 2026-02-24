@@ -261,7 +261,15 @@ class SessionMiddleware {
     const {
       windowMs = 15 * 60 * 1000, // 15 minutes
       maxRequests = 100,
-      keyGenerator = (req) => req.user?.id || this.getClientIp(req)
+      keyGenerator = (req) => {
+        const identity =
+          req.user?.id ||
+          req.user?.username ||
+          this.getClientIp(req);
+        const routeKey =
+          `${req.method}:${req.baseUrl || ''}${req.route?.path || req.path || ''}`;
+        return `${identity}:${routeKey}`;
+      }
     } = options;
 
     return (req, res, next) => {
@@ -271,7 +279,7 @@ class SessionMiddleware {
         
         // Get or create rate limit entry
         let entry = this.rateLimitStore.get(key);
-        if (!entry || now - entry.resetTime > windowMs) {
+        if (!entry || now > entry.resetTime) {
           entry = {
             count: 0,
             resetTime: now + windowMs

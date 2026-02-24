@@ -497,36 +497,131 @@ async function tryBurnZipToCdOnWindows(zipPath, driveLetter) {
 
   const powershellScript = `
 $ErrorActionPreference = "Stop"
-$zipPath = "${zipPath.replace(/\\/g, '\\\\')}"
-$targetDrive = "${normalizedDriveLetter}"
-$discMaster = New-Object -ComObject IMAPI2.MsftDiscMaster2
-if ($discMaster.Count -eq 0) { throw "No CD/DVD burner found." }
-$recorder = $null
-for ($i = 0; $i -lt $discMaster.Count; $i++) {
-  $candidate = New-Object -ComObject IMAPI2.MsftDiscRecorder2
-  $candidate.InitializeDiscRecorder($discMaster.Item($i))
-  if ($targetDrive -eq "" -or ($candidate.VolumePathNames -contains $targetDrive)) {
-    $recorder = $candidate
-    break
+try {
+  $zipPath = "${zipPath.replace(/\\/g, '\\\\')}"
+  $targetDrive = "${normalizedDriveLetter}"
+  
+  if (-not (Test-Path -LiteralPath $zipPath)) {
+    throw "ZIP file not found: $zipPath"
   }
+  
+  $discMaster = New-Object -ComObject IMAPI2.MsftDiscMaster2
+  if ($discMaster.Count -eq 0) {
+    throw "No CD/DVD burner found on this system."
+  }
+  
+  $recorder = $null
+  for ($i = 0; $i -lt $discMaster.Count; $i++) {
+    $candidate = New-Object -ComObject IMAPI2.MsftDiscRecorder2
+    $candidate.InitializeDiscRecorder($discMaster.Item($i))
+    
+    if ($targetDrive -eq "") {
+      $recorder = $candidate
+      break
+    } else {
+      $volumePaths = $candidate.VolumePathNames
+      foreach ($volPath in $volumePaths) {
+        if ($volPath -like "$targetDrive*") {
+          $recorder = $candidate
+          break
+        }
+      }
+      if ($recorder) { break }
+    }
+  }
+  
+  if ($null -eq $recorder) {
+    if ($targetDrive -eq "") {
+      throw "No CD/DVD recorder could be initialized."
+    } else {
+      throw "Drive $targetDrive not found or not available for burning."
+    }
+  }
+  
+  # Check if media is present and get detailed status
+  $format = New-Object -ComObject IMAPI2.MsftDiscFormat2Data
+  $format.Recorder = $recorder
+  $format.ForceOverwrite = \\$true
+  
+  if (-not $format.IsRecorderSupported($recorder)) {
+    throw "The selected recorder does not support data burning."
+  }
+  
+  # Get media status
+  Write-Host "Checking media status..."
+  try {
+    $mediaType = $recorder.CurrentMediaType
+    $mediaPresent = $recorder.MediaPresent
+    
+    Write-Host "  Media present: $mediaPresent"
+    Write-Host "  Media type: $mediaType"
+    
+    if (-not $mediaPresent) {
+      throw "No disc found in drive. Please insert a CD or DVD."
+    }
+    
+    # Check if media is supported
+    if (-not $format.IsCurrentMediaSupported($recorder)) {
+      # Get more details about why it's not supported
+      $mediaPhysicalType = $recorder.CurrentPhysicalMediaType
+      Write-Host "  Physical media type: $mediaPhysicalType"
+      
+      # Try to determine the issue
+      if ($mediaPhysicalType -eq 0) {
+        throw "Unknown media type. The disc may be damaged or incompatible."
+      } else {
+        # Media is present but not writable - could be finalized or full
+        Write-Host "  Attempting to use media anyway with ForceOverwrite..."
+        # Continue anyway - ForceOverwrite might handle it
+      }
+    }
+    
+    # Check available space
+    $freeSpace = $format.FreeSectorsOnMedia
+    Write-Host "  Free sectors: $freeSpace"
+    
+    if ($freeSpace -le 0) {
+      throw "Disc is full or finalized. Please use a blank or rewritable disc with available space."
+    }
+    
+  } catch {
+    # If we can't get media info, provide helpful error
+    $errorMsg = $_.Exception.Message
+    if ($errorMsg -like "*media*") {
+      throw "Media check failed: $errorMsg. Try using a different disc or ensure the disc is not write-protected."
+    } else {
+      throw $errorMsg
+    }
+  }
+  
+  $fileSystem = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
+  $fileSystem.ChooseImageDefaults($recorder)
+  $fileSystem.FileSystemsToCreate = 4
+  $fileSystem.VolumeName = "PACS_EXPORT"
+  $fileSystem.FreeMediaBlocks = $format.FreeSectorsOnMedia
+  
+  $adodb = New-Object -ComObject ADODB.Stream
+  $adodb.Type = 1
+  $adodb.Open()
+  $adodb.LoadFromFile($zipPath)
+  
+  $fileName = [System.IO.Path]::GetFileName($zipPath)
+  $fileSystem.Root.AddFile($fileName, $adodb)
+  
+  $image = $fileSystem.CreateResultImage()
+  
+  $burn = New-Object -ComObject IMAPI2.MsftDiscFormat2Data
+  $burn.Recorder = $recorder
+  $burn.ClientName = "ScanFlowAI"
+  $burn.ForceOverwrite = \\$true
+  $burn.Write($image.ImageStream)
+  
+  $adodb.Close()
+  Write-Output "BURN_SUCCESS"
+} catch {
+  Write-Output "BURN_ERROR: $($_.Exception.Message)"
+  exit 1
 }
-if ($null -eq $recorder) { throw "Requested drive not available: $targetDrive" }
-$fileSystem = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
-$fileSystem.ChooseImageDefaults($recorder)
-$fileSystem.FileSystemsToCreate = 4
-$fileSystem.VolumeName = "PACS_EXPORT"
-$adodb = New-Object -ComObject ADODB.Stream
-$adodb.Type = 1
-$adodb.Open()
-$adodb.LoadFromFile($zipPath)
-$fileSystem.Root.AddFile([System.IO.Path]::GetFileName($zipPath), $adodb)
-$image = $fileSystem.CreateResultImage()
-$burn = New-Object -ComObject IMAPI2.MsftDiscFormat2Data
-$burn.Recorder = $recorder
-$burn.ClientName = "ScanFlowAI"
-$burn.Write($image.ImageStream)
-$adodb.Close()
-Write-Output "BURN_SUCCESS"
 `.trim();
 
   const result = await execFileAsync(
@@ -536,7 +631,10 @@ Write-Output "BURN_SUCCESS"
   );
 
   if (!String(result.stdout || '').includes('BURN_SUCCESS')) {
-    throw new Error((result.stderr || result.stdout || 'CD burn command failed').trim());
+    const errorMsg = String(result.stdout || result.stderr || 'CD burn command failed')
+      .replace(/^BURN_ERROR:\s*/i, '')
+      .trim();
+    throw new Error(errorMsg);
   }
 }
 
@@ -559,33 +657,124 @@ async function tryBurnFolderToCdOnWindows(sourceFolderPath, driveLetter, volumeN
 
   const powershellScript = `
 $ErrorActionPreference = "Stop"
-$sourcePath = "${sourceFolderPath.replace(/\\/g, '\\\\')}"
-$targetDrive = "${normalizedDriveLetter}"
-$volumeName = "${String(volumeName).replace(/[^A-Za-z0-9_\\-]/g, '').slice(0, 32) || 'PACS_EXPORT'}"
-if (-not (Test-Path -LiteralPath $sourcePath)) { throw "Source folder not found: $sourcePath" }
-$discMaster = New-Object -ComObject IMAPI2.MsftDiscMaster2
-if ($discMaster.Count -eq 0) { throw "No CD/DVD burner found." }
-$recorder = $null
-for ($i = 0; $i -lt $discMaster.Count; $i++) {
-  $candidate = New-Object -ComObject IMAPI2.MsftDiscRecorder2
-  $candidate.InitializeDiscRecorder($discMaster.Item($i))
-  if ($targetDrive -eq "" -or ($candidate.VolumePathNames -contains $targetDrive)) {
-    $recorder = $candidate
-    break
+try {
+  $sourcePath = "${sourceFolderPath.replace(/\\/g, '\\\\')}"
+  $targetDrive = "${normalizedDriveLetter}"
+  $volumeName = "${String(volumeName).replace(/[^A-Za-z0-9_\\-]/g, '').slice(0, 32) || 'PACS_EXPORT'}"
+  
+  if (-not (Test-Path -LiteralPath $sourcePath)) {
+    throw "Source folder not found: $sourcePath"
   }
+  
+  $discMaster = New-Object -ComObject IMAPI2.MsftDiscMaster2
+  if ($discMaster.Count -eq 0) {
+    throw "No CD/DVD burner found on this system."
+  }
+  
+  $recorder = $null
+  for ($i = 0; $i -lt $discMaster.Count; $i++) {
+    $candidate = New-Object -ComObject IMAPI2.MsftDiscRecorder2
+    $candidate.InitializeDiscRecorder($discMaster.Item($i))
+    
+    if ($targetDrive -eq "") {
+      $recorder = $candidate
+      break
+    } else {
+      $volumePaths = $candidate.VolumePathNames
+      foreach ($volPath in $volumePaths) {
+        if ($volPath -like "$targetDrive*") {
+          $recorder = $candidate
+          break
+        }
+      }
+      if ($recorder) { break }
+    }
+  }
+  
+  if ($null -eq $recorder) {
+    if ($targetDrive -eq "") {
+      throw "No CD/DVD recorder could be initialized."
+    } else {
+      throw "Drive $targetDrive not found or not available for burning."
+    }
+  }
+  
+  # Check if media is present and get detailed status
+  $format = New-Object -ComObject IMAPI2.MsftDiscFormat2Data
+  $format.Recorder = $recorder
+  $format.ForceOverwrite = \\$true
+  
+  if (-not $format.IsRecorderSupported($recorder)) {
+    throw "The selected recorder does not support data burning."
+  }
+  
+  # Get media status
+  Write-Host "Checking media status..."
+  try {
+    $mediaType = $recorder.CurrentMediaType
+    $mediaPresent = $recorder.MediaPresent
+    
+    Write-Host "  Media present: $mediaPresent"
+    Write-Host "  Media type: $mediaType"
+    
+    if (-not $mediaPresent) {
+      throw "No disc found in drive. Please insert a CD or DVD."
+    }
+    
+    # Check if media is supported
+    if (-not $format.IsCurrentMediaSupported($recorder)) {
+      # Get more details about why it's not supported
+      $mediaPhysicalType = $recorder.CurrentPhysicalMediaType
+      Write-Host "  Physical media type: $mediaPhysicalType"
+      
+      # Try to determine the issue
+      if ($mediaPhysicalType -eq 0) {
+        throw "Unknown media type. The disc may be damaged or incompatible."
+      } else {
+        # Media is present but not writable - could be finalized or full
+        Write-Host "  Attempting to use media anyway with ForceOverwrite..."
+        # Continue anyway - ForceOverwrite might handle it
+      }
+    }
+    
+    # Check available space
+    $freeSpace = $format.FreeSectorsOnMedia
+    Write-Host "  Free sectors: $freeSpace"
+    
+    if ($freeSpace -le 0) {
+      throw "Disc is full or finalized. Please use a blank or rewritable disc with available space."
+    }
+    
+  } catch {
+    # If we can't get media info, provide helpful error
+    $errorMsg = $_.Exception.Message
+    if ($errorMsg -like "*media*") {
+      throw "Media check failed: $errorMsg. Try using a different disc or ensure the disc is not write-protected."
+    } else {
+      throw $errorMsg
+    }
+  }
+  
+  $fileSystem = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
+  $fileSystem.ChooseImageDefaults($recorder)
+  $fileSystem.FileSystemsToCreate = 4
+  $fileSystem.VolumeName = $volumeName
+  $fileSystem.FreeMediaBlocks = $format.FreeSectorsOnMedia
+  $fileSystem.Root.AddTree($sourcePath, $false)
+  
+  $image = $fileSystem.CreateResultImage()
+  
+  $burn = New-Object -ComObject IMAPI2.MsftDiscFormat2Data
+  $burn.Recorder = $recorder
+  $burn.ClientName = "ScanFlowAI"
+  $burn.ForceOverwrite = \\$true
+  $burn.Write($image.ImageStream)
+  
+  Write-Output "BURN_SUCCESS"
+} catch {
+  Write-Output "BURN_ERROR: $($_.Exception.Message)"
+  exit 1
 }
-if ($null -eq $recorder) { throw "Requested drive not available: $targetDrive" }
-$fileSystem = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
-$fileSystem.ChooseImageDefaults($recorder)
-$fileSystem.FileSystemsToCreate = 4
-$fileSystem.VolumeName = $volumeName
-$fileSystem.Root.AddTree($sourcePath, $false)
-$image = $fileSystem.CreateResultImage()
-$burn = New-Object -ComObject IMAPI2.MsftDiscFormat2Data
-$burn.Recorder = $recorder
-$burn.ClientName = "ScanFlowAI"
-$burn.Write($image.ImageStream)
-Write-Output "BURN_SUCCESS"
 `.trim();
 
   const result = await execFileAsync(
@@ -595,7 +784,10 @@ Write-Output "BURN_SUCCESS"
   );
 
   if (!String(result.stdout || '').includes('BURN_SUCCESS')) {
-    throw new Error((result.stderr || result.stdout || 'CD burn command failed').trim());
+    const errorMsg = String(result.stdout || result.stderr || 'CD burn command failed')
+      .replace(/^BURN_ERROR:\s*/i, '')
+      .trim();
+    throw new Error(errorMsg);
   }
 }
 
@@ -851,6 +1043,9 @@ async function exportAllData(req, res) {
  * Build ZIP and attempt direct CD burn (Windows only).
  */
 async function burnExportToCD(req, res) {
+  let tempDir = null;
+  let zipPath = null;
+
   try {
     const { targetType, targetId, includeImages = true, driveLetter } = req.body || {};
     if (!['patient', 'study'].includes(targetType)) {
@@ -866,6 +1061,9 @@ async function burnExportToCD(req, res) {
       includeImages: toBoolean(includeImages, true),
       exportedBy: req.user?.username || 'system',
     });
+
+    tempDir = zip.tempDir;
+    zipPath = zip.zipPath;
 
     const result = {
       success: true,
@@ -886,6 +1084,10 @@ async function burnExportToCD(req, res) {
     if (process.platform !== 'win32') {
       result.cdBurn.status = 'unsupported';
       result.cdBurn.message = 'Direct CD burn is currently supported only on Windows hosts.';
+      
+      // Cleanup temp files
+      await cleanupTempFiles(tempDir);
+      
       return res.status(200).json(result);
     }
 
@@ -905,15 +1107,38 @@ async function burnExportToCD(req, res) {
     } catch (error) {
       result.cdBurn.status = 'manual_required';
       result.cdBurn.message = `Direct burn failed: ${error.message}`;
+    } finally {
+      // Always cleanup temp files after burn attempt
+      await cleanupTempFiles(tempDir);
     }
 
     return res.status(200).json(result);
   } catch (error) {
     console.error('CD burn export error:', error);
+    
+    // Cleanup on error
+    if (tempDir) {
+      await cleanupTempFiles(tempDir);
+    }
+    
     res.status(error.statusCode || 500).json({
       success: false,
       message: error.message || 'CD export failed',
     });
+  }
+}
+
+/**
+ * Cleanup temporary files and directories
+ */
+async function cleanupTempFiles(tempDir) {
+  if (!tempDir) return;
+  
+  try {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    console.log(`Cleaned up temp directory: ${tempDir}`);
+  } catch (error) {
+    console.error(`Failed to cleanup temp directory ${tempDir}:`, error.message);
   }
 }
 

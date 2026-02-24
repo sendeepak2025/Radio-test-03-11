@@ -34,7 +34,16 @@ const extractFilenameFromDisposition = (contentDisposition: string | null): stri
 const parseErrorMessage = async (response: Response): Promise<string> => {
   try {
     const payload = await response.json()
-    return payload?.message || payload?.error || `Request failed (${response.status})`
+    const baseMessage = payload?.message || payload?.error || `Request failed (${response.status})`
+    const retryAfterHeader = response.headers.get('Retry-After')
+    const retryAfterPayload = payload?.retryAfter
+    const retryAfter = Number(retryAfterPayload ?? retryAfterHeader)
+
+    if (response.status === 429 && Number.isFinite(retryAfter) && retryAfter > 0) {
+      return `${baseMessage}. Try again in ${Math.ceil(retryAfter)}s.`
+    }
+
+    return baseMessage
   } catch {
     return `Request failed (${response.status})`
   }
@@ -815,16 +824,19 @@ export const exportAndBurnToCD = async ({
   targetId,
   includeImages = true,
   driveLetter,
+  signal,
 }: {
   targetType: 'patient' | 'study'
   targetId: string
   includeImages?: boolean
   driveLetter?: string
+  signal?: AbortSignal
 }) => {
   const token = getAuthToken()
   const response = await fetch(`${BACKEND_URL}/api/export/burn`, {
     method: 'POST',
     credentials: 'include',
+    signal,
     headers: {
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
@@ -836,6 +848,136 @@ export const exportAndBurnToCD = async ({
       burnToCd: true,
       driveLetter,
     }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  return response.json()
+}
+
+export const directBurnToCD = async ({
+  targetType,
+  targetId,
+  includeImages = true,
+  includeViewer = true,
+  driveLetter,
+  signal,
+}: {
+  targetType: 'patient' | 'study'
+  targetId: string
+  includeImages?: boolean
+  includeViewer?: boolean
+  driveLetter?: string
+  signal?: AbortSignal
+}) => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/direct-burn`, {
+    method: 'POST',
+    credentials: 'include',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify({
+      targetType,
+      targetId,
+      includeImages,
+      includeViewer,
+      driveLetter,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  return response.json()
+}
+
+export const clearActiveBurns = async () => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/clear-burns`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  return response.json()
+}
+
+export const getActiveBurnStatus = async () => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/burn-status`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  return response.json()
+}
+
+export const getDirectBurnViewerStatus = async () => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/viewer-status`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  return response.json()
+}
+
+export const installDirectBurnViewer = async (forceReinstall: boolean = false) => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/viewer-install`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify({ forceReinstall }),
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  return response.json()
+}
+
+export const runDirectBurnViewer = async () => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/viewer-run`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify({}),
   })
 
   if (!response.ok) {
@@ -882,6 +1024,10 @@ export default {
   exportStudyData,
   exportAndBurnToCD,
   exportAllData,
+  getActiveBurnStatus,
+  getDirectBurnViewerStatus,
+  installDirectBurnViewer,
+  runDirectBurnViewer,
   // Follow-up API
   getFollowUps: async (filters = {}) => {
     const response = await apiCall('/api/follow-ups', {

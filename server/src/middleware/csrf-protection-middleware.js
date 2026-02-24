@@ -46,6 +46,7 @@ function csrfProtectionMiddleware(options = {}) {
       '/metrics',
       '/api/auth/login',
       '/api/auth/register',
+      '/auth/refresh',
       '/api/auth/refresh-token',
       '/api/orthanc-webhook',
       '/api/reports/',  // Allow report export endpoints
@@ -125,6 +126,7 @@ function doubleSubmitCookieCSRF(options = {}) {
       '/api/worklist/force-create-test', // ✅ WORKLIST EMPTY FIX: Allow test endpoint
       '/auth/login',
       '/auth/register',
+      '/auth/refresh',
       '/auth/refresh-token'
     ],
     excludeMethods = ['GET', 'HEAD', 'OPTIONS'],

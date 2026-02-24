@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import {
   Users,
   Plus,
@@ -33,11 +33,18 @@ import {
   exportPatientData,
   exportStudyData,
   exportAndBurnToCD,
+  directBurnToCD,
+  clearActiveBurns,
+  getActiveBurnStatus,
+  getDirectBurnViewerStatus,
+  installDirectBurnViewer,
+  runDirectBurnViewer,
 } from "../../services/ApiService";
 
 import { Alert } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/Button";
+import BurnStatusPanel from "../../components/BurnStatusPanel";
 import { Card, CardBody, CardFooter } from "../../components/ui/Card";
 import { Input } from "../../components/ui/Input";
 import { Modal, ModalFooter } from "../../components/ui/Modal";
@@ -61,6 +68,39 @@ interface PatientStudyItem {
   numberOfInstances: number;
   studyDescription?: string;
   studyDate?: string;
+}
+
+interface ViewerOptionStatus {
+  name: string;
+  exe: string;
+  size: string;
+  available: boolean;
+}
+
+interface DirectBurnViewerStatus {
+  success: boolean;
+  checkedAt?: string;
+  viewerInstalled: boolean;
+  selectedViewer: {
+    name: string;
+    exe: string;
+    size: string;
+  } | null;
+  viewers: ViewerOptionStatus[];
+  message?: string;
+}
+
+interface ActiveBurnState {
+  phase?: string;
+  progress?: number;
+  message?: string;
+  studyInstanceUID?: string;
+}
+
+interface ActiveBurnStatusResponse {
+  success: boolean;
+  inProgress: boolean;
+  burn?: ActiveBurnState | null;
 }
 
 // -------- DatePicker Wrapper (simple HTML date) --------
@@ -143,8 +183,35 @@ const PatientsPage: React.FC = () => {
     id: string;
   } | null>(null);
   const [includeImages, setIncludeImages] = useState(true);
-  const [exportMode, setExportMode] = useState<"download" | "burn-cd">(
+  const [exportMode, setExportMode] = useState<"download" | "burn-cd" | "direct-burn">(
     "download"
+  );
+  const [includeViewer, setIncludeViewer] = useState(true);
+  const [viewerStatus, setViewerStatus] = useState<DirectBurnViewerStatus | null>(null);
+  const [viewerStatusLoading, setViewerStatusLoading] = useState(false);
+  const [viewerStatusError, setViewerStatusError] = useState<string | null>(null);
+  const [viewerInstallLoading, setViewerInstallLoading] = useState(false);
+  const [viewerRunLoading, setViewerRunLoading] = useState(false);
+
+  // Track cancelled burn task IDs to prevent stale async responses
+  const cancelledBurnTaskIdsRef = useRef<Set<string>>(new Set());
+  
+  // Burn task tracking
+  const [burnTasks, setBurnTasks] = useState<Array<{
+    id: string;
+    targetType: 'patient' | 'study';
+    targetId: string;
+    targetName?: string;
+    status: 'preparing' | 'burning' | 'completed' | 'failed' | 'cancelled';
+    progress: number;
+    message: string;
+    startTime: number;
+    endTime?: number;
+    error?: string;
+    abortController?: AbortController;
+  }>>([]);
+  const hasActiveBurnTask = burnTasks.some(
+    (task) => task.status === "preparing" || task.status === "burning"
   );
   const [cdDriveLetter, setCdDriveLetter] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -197,6 +264,199 @@ const PatientsPage: React.FC = () => {
     };
     loadPatients();
   }, []);
+
+  const loadViewerStatus = async () => {
+    try {
+      setViewerStatusLoading(true);
+      setViewerStatusError(null);
+      const status = await getDirectBurnViewerStatus();
+      setViewerStatus(status);
+    } catch (e: any) {
+      setViewerStatusError(e.message || "Failed to check viewer availability");
+      setViewerStatus(null);
+    } finally {
+      setViewerStatusLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!exportDialogOpen) return;
+    loadViewerStatus();
+  }, [exportDialogOpen]);
+
+  // Keep burn progress moving in the UI while backend operation is running.
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const now = Date.now();
+      setBurnTasks((prev) => {
+        let changed = false;
+        const next = prev.map((task) => {
+          const elapsedSec = Math.floor((now - task.startTime) / 1000);
+
+          if (
+            (task.status === "preparing" || task.status === "burning") &&
+            elapsedSec > 30 * 60
+          ) {
+            changed = true;
+            return {
+              ...task,
+              status: "failed" as const,
+              message: "Burn timed out",
+              error: "Burn operation timed out after 30 minutes. Please check disc/drive and retry.",
+              endTime: now,
+            };
+          }
+
+          if (task.status === "preparing") {
+            const targetProgress = Math.min(20, 5 + Math.floor(elapsedSec / 2));
+            if (targetProgress > task.progress) {
+              changed = true;
+              return {
+                ...task,
+                progress: targetProgress,
+                message: "Preparing export...",
+              };
+            }
+            return task;
+          }
+
+          if (task.status === "burning") {
+            // Keep synthetic progress conservative; server-reported phase updates will move it further.
+            const targetProgress = Math.min(85, 25 + Math.floor(elapsedSec / 8));
+            const nextMessage =
+              elapsedSec > 240
+                ? "Processing in PACS/burner... still working"
+                : elapsedSec > 120
+                ? "Burning to disc... this can take several minutes"
+                : "Burning to disc...";
+
+            if (targetProgress > task.progress || task.message !== nextMessage) {
+              changed = true;
+              return {
+                ...task,
+                progress: Math.max(task.progress, targetProgress),
+                message: nextMessage,
+              };
+            }
+          }
+
+          return task;
+        });
+
+        return changed ? next : prev;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  // Sync live burn phase from backend so UI reflects real server state.
+  useEffect(() => {
+    if (!hasActiveBurnTask) {
+      return;
+    }
+
+    let disposed = false;
+
+    const syncBurnStatus = async () => {
+      try {
+        const status: ActiveBurnStatusResponse = await getActiveBurnStatus();
+        if (disposed || !status?.inProgress || !status.burn) {
+          return;
+        }
+
+        const phase = String(status.burn.phase || '').toLowerCase();
+        let fallbackProgress = 35;
+        let fallbackMessage = 'Processing burn request...';
+
+        if (phase === 'preparing') {
+          fallbackProgress = 15;
+          fallbackMessage = 'Preparing DICOM media...';
+        } else if (phase === 'exporting_media') {
+          fallbackProgress = 45;
+          fallbackMessage = 'Fetching DICOM media from PACS...';
+        } else if (phase === 'burning') {
+          fallbackProgress = 75;
+          fallbackMessage = 'Writing files to disc...';
+        } else if (phase === 'finalizing') {
+          fallbackProgress = 95;
+          fallbackMessage = 'Finalizing disc...';
+        }
+
+        const progressFromServer = Number(status.burn.progress);
+        const nextProgress =
+          Number.isFinite(progressFromServer)
+            ? Math.max(0, Math.min(100, progressFromServer))
+            : fallbackProgress;
+        const nextMessage = status.burn.message || fallbackMessage;
+
+        setBurnTasks((prev) =>
+          prev.map((task) =>
+            task.status === "preparing" || task.status === "burning"
+              ? {
+                  ...task,
+                  progress: Math.max(task.progress, nextProgress),
+                  message: nextMessage,
+                }
+              : task
+          )
+        );
+      } catch (_error) {
+        // Best-effort polling only; keep local progress simulation running.
+      }
+    };
+
+    syncBurnStatus();
+    const pollId = window.setInterval(syncBurnStatus, 2500);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(pollId);
+    };
+  }, [hasActiveBurnTask]);
+
+  // Keep auth session alive while burn is actively running to avoid forced logout mid-burn.
+  useEffect(() => {
+    if (!hasActiveBurnTask) {
+      return;
+    }
+
+    window.dispatchEvent(new Event("session-keepalive"));
+    const keepAliveIntervalId = window.setInterval(() => {
+      window.dispatchEvent(new Event("session-keepalive"));
+    }, 30000);
+
+    return () => window.clearInterval(keepAliveIntervalId);
+  }, [hasActiveBurnTask]);
+
+  const handleInstallViewer = async () => {
+    try {
+      setViewerInstallLoading(true);
+      setViewerStatusError(null);
+      const forceReinstall = Boolean(viewerStatus?.viewerInstalled);
+      const result = await installDirectBurnViewer(forceReinstall);
+      setSuccess(result?.message || "Viewer installation completed.");
+      await loadViewerStatus();
+    } catch (e: any) {
+      const message = e.message || "Viewer installation failed";
+      setViewerStatusError(message);
+      setError(message);
+    } finally {
+      setViewerInstallLoading(false);
+    }
+  };
+
+  const handleRunViewer = async () => {
+    try {
+      setViewerRunLoading(true);
+      const result = await runDirectBurnViewer();
+      setSuccess(result?.message || "Viewer launched.");
+    } catch (e: any) {
+      setError(e.message || "Failed to launch viewer");
+    } finally {
+      setViewerRunLoading(false);
+    }
+  };
 
   // Selected patient object
   const selectedPatient = useMemo(
@@ -428,48 +688,175 @@ const PatientsPage: React.FC = () => {
 
   const handleExportConfirm = async () => {
     if (!exportTarget) return;
+    
+    // Prevent multiple clicks
+    if (exporting) return;
 
+    // For burn operations, create a task
+    if (exportMode === "direct-burn" || exportMode === "burn-cd") {
+      const taskId = `burn-${Date.now()}`;
+      const abortController = new AbortController();
+      cancelledBurnTaskIdsRef.current.delete(taskId);
+      
+      const newTask = {
+        id: taskId,
+        targetType: exportTarget.type,
+        targetId: exportTarget.id,
+        targetName: exportTarget.type === 'patient' 
+          ? `Patient ${exportTarget.id}` 
+          : `Study ${exportTarget.id}`,
+        status: 'preparing' as const,
+        progress: 0,
+        message: 'Preparing export...',
+        startTime: Date.now(),
+        abortController,
+      };
+      
+      setBurnTasks(prev => [...prev, newTask]);
+      setExportDialogOpen(false);
+      setExportTarget(null);
+      
+      try {
+        // Update progress
+        setBurnTasks(prev => prev.map(t => 
+          t.id === taskId 
+            ? { ...t, status: 'burning' as const, progress: 25, message: 'Burning to disc...' }
+            : t
+        ));
+        
+        let burnResult;
+        if (exportMode === "direct-burn") {
+          burnResult = await directBurnToCD({
+            targetType: exportTarget.type,
+            targetId: exportTarget.id,
+            includeImages,
+            includeViewer,
+            driveLetter: cdDriveLetter || undefined,
+            signal: abortController.signal,
+          });
+        } else {
+          burnResult = await exportAndBurnToCD({
+            targetType: exportTarget.type,
+            targetId: exportTarget.id,
+            includeImages,
+            driveLetter: cdDriveLetter || undefined,
+            signal: abortController.signal,
+          });
+        }
+        
+        // Ignore stale success updates for cancelled tasks
+        if (cancelledBurnTaskIdsRef.current.has(taskId)) {
+          return;
+        }
+        
+        // Update to completed
+        if (burnResult?.success || burnResult?.cdBurn?.status === "completed") {
+          setBurnTasks(prev => prev.map(t => 
+            t.id === taskId 
+              ? { 
+                  ...t, 
+                  status: 'completed' as const, 
+                  progress: 100, 
+                  message: 'Burn completed successfully',
+                  endTime: Date.now()
+                }
+              : t
+          ));
+          setSuccess("CD burn completed successfully!");
+          cancelledBurnTaskIdsRef.current.delete(taskId);
+        } else {
+          throw new Error(burnResult?.message || burnResult?.cdBurn?.message || "Burn failed");
+        }
+      } catch (e: any) {
+        const errorMsg = e.message || "Export failed";
+        const isAbortError =
+          e?.name === "AbortError" ||
+          errorMsg.toLowerCase().includes("aborted") ||
+          errorMsg.toLowerCase().includes("cancel");
+        const wasCancelled = cancelledBurnTaskIdsRef.current.has(taskId) || isAbortError;
+
+        if (wasCancelled) {
+          setBurnTasks(prev => prev.map(t =>
+            t.id === taskId
+              ? {
+                  ...t,
+                  status: 'cancelled' as const,
+                  message: 'Cancelled by user',
+                  endTime: Date.now()
+                }
+              : t
+          ));
+          cancelledBurnTaskIdsRef.current.delete(taskId);
+          return;
+        }
+
+        if (errorMsg.includes("Too many requests")) {
+          // Keep UI clean for fast-rejected rate-limit attempts
+          setBurnTasks(prev => prev.filter(t => t.id !== taskId));
+          cancelledBurnTaskIdsRef.current.delete(taskId);
+          if (errorMsg.includes("Try again in")) {
+            setError(errorMsg);
+          } else {
+            setError("Too many burn requests. Please wait a few minutes before trying again.");
+          }
+          return;
+        }
+        
+        // Update to failed
+        setBurnTasks(prev => prev.map(t => 
+          t.id === taskId 
+            ? { 
+                ...t, 
+                status: 'failed' as const, 
+                progress: 0, 
+                message: 'Burn failed',
+                error: errorMsg,
+                endTime: Date.now()
+            }
+          : t
+        ));
+        cancelledBurnTaskIdsRef.current.delete(taskId);
+        
+        // Handle specific error cases
+        if (errorMsg.includes("already in progress")) {
+          setError("A burn operation is already in progress. Please wait for it to complete before starting another.");
+        } else if (errorMsg.includes("No writable media")) {
+          setError("Please insert a blank CD/DVD into the drive and try again.");
+        } else if (errorMsg.includes("No CD/DVD burner found")) {
+          setError("No CD/DVD burner detected on the server. Use Download ZIP instead.");
+        } else if (errorMsg.includes("Drive") && errorMsg.includes("not found")) {
+          setError(`${errorMsg}. Try leaving the drive letter blank for auto-detection.`);
+        } else {
+          setError(errorMsg);
+        }
+      }
+      
+      return;
+    }
+
+    // Regular download export
     try {
       setExporting(true);
       setExportProgress(0);
       setError(null);
       setSuccess(null);
 
-      if (exportMode === "burn-cd") {
-        const burnResult = await exportAndBurnToCD({
-          targetType: exportTarget.type,
-          targetId: exportTarget.id,
+      if (exportTarget.type === "patient") {
+        await exportPatientData(
+          exportTarget.id,
           includeImages,
-          driveLetter: cdDriveLetter || undefined,
-        });
-
-        const burnMessage =
-          burnResult?.cdBurn?.status === "completed"
-            ? "CD burn completed successfully."
-            : burnResult?.cdBurn?.message ||
-              "Export prepared. Direct burn was not completed.";
-
-        setSuccess(
-          `${burnMessage} ZIP: ${burnResult?.export?.zipFileName || "prepared"}`
+          "zip",
+          setExportProgress
         );
       } else {
-        if (exportTarget.type === "patient") {
-          await exportPatientData(
-            exportTarget.id,
-            includeImages,
-            "zip",
-            setExportProgress
-          );
-        } else {
-          await exportStudyData(
-            exportTarget.id,
-            includeImages,
-            "zip",
-            setExportProgress
-          );
-        }
-        setSuccess("Export downloaded successfully.");
+        await exportStudyData(
+          exportTarget.id,
+          includeImages,
+          "zip",
+          setExportProgress
+        );
       }
+      setSuccess("Export downloaded successfully.");
 
       setExportDialogOpen(false);
       setExportTarget(null);
@@ -480,6 +867,63 @@ const PatientsPage: React.FC = () => {
       setExportProgress(0);
     }
   };
+  
+  const handleCancelBurn = (taskId: string) => {
+    cancelledBurnTaskIdsRef.current.add(taskId);
+    const task = burnTasks.find(t => t.id === taskId);
+    if (task && (task.status === 'preparing' || task.status === 'burning')) {
+      // Abort the request
+      task.abortController?.abort();
+      
+      // Update status
+      setBurnTasks(prev => prev.map(t => 
+        t.id === taskId 
+          ? { 
+              ...t, 
+              status: 'cancelled' as const, 
+              message: 'Cancelled by user',
+              endTime: Date.now()
+            }
+          : t
+      ));
+      setError(null);
+    }
+  };
+  
+  const handleDismissBurn = (taskId: string) => {
+    cancelledBurnTaskIdsRef.current.delete(taskId);
+    setBurnTasks(prev => {
+      return prev.filter(t => t.id !== taskId);
+    });
+  };
+  
+  const handleClearAllBurns = async () => {
+    // Cancel all active burns first
+    const activeBurnsCount = burnTasks.filter(t => 
+      t.status === 'preparing' || t.status === 'burning'
+    ).length;
+    
+    if (activeBurnsCount > 0) {
+      burnTasks.forEach(task => {
+        if (task.status === 'preparing' || task.status === 'burning') {
+          cancelledBurnTaskIdsRef.current.add(task.id);
+          task.abortController?.abort();
+        }
+      });
+    }
+    
+    // Clear backend tracking
+    try {
+      await clearActiveBurns();
+    } catch (error) {
+      // Continue anyway - still clear UI
+    }
+    
+    // Clear all tasks from UI
+    setBurnTasks([]);
+    cancelledBurnTaskIdsRef.current.clear();
+    setError(null);
+  };
 
   const handleExportClose = () => {
     setExportDialogOpen(false);
@@ -487,6 +931,12 @@ const PatientsPage: React.FC = () => {
     setIncludeImages(true);
     setExportMode("download");
     setCdDriveLetter("");
+    setIncludeViewer(true);
+    setViewerStatus(null);
+    setViewerStatusError(null);
+    setViewerStatusLoading(false);
+    setViewerInstallLoading(false);
+    setViewerRunLoading(false);
     setExportProgress(0);
   };
 
@@ -1265,18 +1715,43 @@ const PatientsPage: React.FC = () => {
               <input
                 type="radio"
                 name="exportMode"
+                checked={exportMode === "direct-burn"}
+                onChange={() => {
+                  setExportMode("direct-burn");
+                  setIncludeViewer(true);
+                }}
+                className="mt-1"
+              />
+              <div className="flex-1">
+                <span className="text-sm text-gray-700 font-medium">
+                  Direct CD Burn (Recommended)
+                </span>
+                <p className="text-xs text-gray-500 mt-1">
+                  Burns DICOM files directly to disc with proper DICOMDIR structure. No ZIP file created.
+                </p>
+              </div>
+            </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="exportMode"
                 checked={exportMode === "burn-cd"}
                 onChange={() => setExportMode("burn-cd")}
                 className="mt-1"
               />
-              <span className="text-sm text-gray-700">
-                Export and attempt direct CD burn (Windows server host only)
-              </span>
+              <div className="flex-1">
+                <span className="text-sm text-gray-700">
+                  Export ZIP + Burn (Legacy)
+                </span>
+                <p className="text-xs text-gray-500 mt-1">
+                  Creates ZIP file first, then burns. Slower but provides backup file.
+                </p>
+              </div>
             </label>
           </div>
 
-          {exportMode === "burn-cd" && (
-            <div>
+          {(exportMode === "burn-cd" || exportMode === "direct-burn") && (
+            <div className="space-y-3">
               <Input
                 label="CD/DVD Drive Letter (Optional)"
                 placeholder="Example: D"
@@ -1286,9 +1761,109 @@ const PatientsPage: React.FC = () => {
                 }
                 fullWidth
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Leave blank for auto-detect. If direct burn fails, ZIP file is still prepared for manual burn.
+              <p className="text-xs text-gray-500">
+                Leave blank for auto-detect. If burn fails, try specifying the drive letter.
               </p>
+
+              {exportMode === "direct-burn" && (
+                <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+                  <p className="text-xs font-semibold text-blue-800">Compatibility Tips</p>
+                  <ul className="list-disc list-inside text-xs text-blue-700 mt-1 space-y-1">
+                    <li>Keep viewer option enabled for best recipient experience.</li>
+                    <li>MicroDicom launches on Windows; Mac/Linux users can still open DICOMDIR in their own viewer.</li>
+                    <li>For larger studies, use DVD media to avoid disc capacity errors.</li>
+                  </ul>
+                </div>
+              )}
+
+              {exportMode === "direct-burn" && (
+                <div className="bg-gray-50 border border-gray-200 rounded-md p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-gray-800">Server Viewer Status</p>
+                    <button
+                      type="button"
+                      onClick={loadViewerStatus}
+                      disabled={viewerStatusLoading}
+                      className="text-xs text-blue-600 hover:text-blue-700 disabled:text-gray-400"
+                    >
+                      {viewerStatusLoading ? "Checking..." : "Refresh"}
+                    </button>
+                  </div>
+
+                  {!viewerStatusLoading && viewerStatus && (
+                    <div className="space-y-1">
+                      <Badge
+                        variant={viewerStatus.viewerInstalled ? "success" : "warning"}
+                        size="sm"
+                      >
+                        {viewerStatus.viewerInstalled
+                          ? `Viewer ready: ${viewerStatus.selectedViewer?.name || "Installed"}`
+                          : "Portable viewer not installed"}
+                      </Badge>
+                      {viewerStatus.viewerInstalled ? (
+                        <p className="text-xs text-gray-600">
+                          Disc will include {viewerStatus.selectedViewer?.name} (
+                          {viewerStatus.selectedViewer?.size}).
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-600">
+                          Disc will include viewer download instructions instead.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {!viewerStatusLoading && viewerStatusError && (
+                    <p className="text-xs text-red-600">{viewerStatusError}</p>
+                  )}
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleInstallViewer}
+                      disabled={viewerInstallLoading || viewerStatusLoading}
+                    >
+                      {viewerInstallLoading
+                        ? "Installing..."
+                        : viewerStatus?.viewerInstalled
+                        ? "Reinstall Viewer"
+                        : "Download & Install Viewer"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRunViewer}
+                      disabled={viewerRunLoading || !viewerStatus?.viewerInstalled}
+                    >
+                      {viewerRunLoading ? "Launching..." : "Run Viewer"}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Run opens the viewer on the Windows server host session.
+                  </p>
+                </div>
+              )}
+              
+              {exportMode === "direct-burn" && (
+                <div className="flex items-start">
+                  <input
+                    type="checkbox"
+                    id="includeViewer"
+                    checked={includeViewer}
+                    onChange={(e) => setIncludeViewer(e.target.checked)}
+                    className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  />
+                  <label htmlFor="includeViewer" className="ml-3 cursor-pointer">
+                    <span className="text-sm font-medium text-gray-700">
+                      Include DICOM Viewer Software
+                    </span>
+                    <span className="block text-xs text-gray-500">
+                      Enabled by default. Adds MicroDicom (if installed) or viewer instructions for recipients.
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
           )}
 
@@ -1366,6 +1941,8 @@ const PatientsPage: React.FC = () => {
               ? exportMode === "download"
                 ? `Downloading... ${exportProgress}%`
                 : "Processing..."
+              : exportMode === "direct-burn"
+              ? "Burn to CD/DVD"
               : exportMode === "burn-cd"
               ? "Export + Burn CD"
               : "Export Data"}
@@ -1397,6 +1974,14 @@ const PatientsPage: React.FC = () => {
           <p className="text-sm">{success}</p>
         </Alert>
       )}
+      
+      {/* Burn Status Panel */}
+      <BurnStatusPanel
+        tasks={burnTasks}
+        onCancel={handleCancelBurn}
+        onDismiss={handleDismissBurn}
+        onClearAll={handleClearAllBurns}
+      />
     </>
   );
 };
