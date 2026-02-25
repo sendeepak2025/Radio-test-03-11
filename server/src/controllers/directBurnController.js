@@ -2090,11 +2090,6 @@ async function createIsoExport(req, res) {
       });
     }
 
-    // Create temp directory
-    tempDir = await createManagedTempDir('dicom-iso-');
-    const mediaRoot = path.join(tempDir, 'DISC_ROOT');
-    await fs.promises.mkdir(mediaRoot, { recursive: true });
-
     console.log(`Creating ISO for ${targetType} ${exportTargetId}...`);
 
     // Get study data
@@ -2162,6 +2157,12 @@ async function createIsoExport(req, res) {
       progress: 15,
       message: 'Preparing temporary workspace...',
     });
+
+    // Allocate temp workspace only for the actual export request.
+    // validateOnly checks should not consume disk or leave empty folders behind.
+    tempDir = await createManagedTempDir('dicom-iso-');
+    const mediaRoot = path.join(tempDir, 'DISC_ROOT');
+    await fs.promises.mkdir(mediaRoot, { recursive: true });
 
     let studiesWithMedia = 0;
     const streamZipExtractor = shouldIncludeImages ? await getStreamZipExtractorCommand() : null;

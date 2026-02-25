@@ -123,6 +123,8 @@ interface ActiveIsoState {
   targetId?: string;
   statusCode?: number;
   completedAt?: string;
+  startTime?: number;
+  updatedAt?: string;
 }
 
 interface ActiveIsoStatusResponse {
@@ -928,7 +930,9 @@ const PatientsPage: React.FC = () => {
       const sleep = (ms: number) =>
         new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
-      const waitForIsoCompletion = async (): Promise<{
+      const waitForIsoCompletion = async (
+        requestStartedAt: number
+      ): Promise<{
         sawInProgress: boolean;
         completed: boolean;
       }> => {
@@ -947,12 +951,34 @@ const PatientsPage: React.FC = () => {
           }
 
           const isoState = isoStatus?.iso || null;
+          const isoStartTime = Number(isoState?.startTime);
+          const isoUpdatedAtTime = isoState?.updatedAt
+            ? Date.parse(String(isoState.updatedAt))
+            : Number.NaN;
+          const isoStatusTimestamp = Number.isFinite(isoStartTime) && isoStartTime > 0
+            ? isoStartTime
+            : isoUpdatedAtTime;
+          const isCurrentRequestStatus =
+            !isoState ||
+            (Number.isFinite(isoStatusTimestamp) &&
+              isoStatusTimestamp >= requestStartedAt - 2000);
           const phase = String(isoState?.phase || "").toLowerCase();
           const isoInProgress = Boolean(
             isoState?.inProgress !== undefined ? isoState.inProgress : isoStatus?.inProgress
           );
           const isTerminalFailure =
             phase === "failed" || phase === "aborted" || phase === "cancelled";
+
+          if (isoState && !isCurrentRequestStatus) {
+            const elapsedMs = Date.now() - startedAt;
+            setExportProgress((prev) => Math.min(20, Math.max(prev, 8)));
+            setExportProgressMessage("Waiting for server to start this ISO request...");
+            if (elapsedMs >= startupGraceMs && !sawInProgress) {
+              return { sawInProgress: false, completed: false };
+            }
+            await sleep(pollIntervalMs);
+            continue;
+          }
 
           if (isoInProgress) {
             sawInProgress = true;
@@ -1001,6 +1027,7 @@ const PatientsPage: React.FC = () => {
         setExportProgressMessage("Submitting ISO export request...");
         setError(null);
         setSuccess(null);
+        const requestStartedAt = Date.now();
 
         await createDicomIsoDownload({
           targetType: exportTarget.type,
@@ -1011,7 +1038,7 @@ const PatientsPage: React.FC = () => {
         });
 
         setExportProgressMessage("ISO request accepted. Preparing data on server...");
-        const isoResult = await waitForIsoCompletion();
+        const isoResult = await waitForIsoCompletion(requestStartedAt);
 
         if (!isoResult.sawInProgress) {
           throw new Error(
