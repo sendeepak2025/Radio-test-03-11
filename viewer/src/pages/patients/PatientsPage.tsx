@@ -115,11 +115,14 @@ interface ActiveBurnStatusResponse {
 }
 
 interface ActiveIsoState {
+  inProgress?: boolean;
   phase?: string;
   progress?: number;
   message?: string;
   targetType?: string;
   targetId?: string;
+  statusCode?: number;
+  completedAt?: string;
 }
 
 interface ActiveIsoStatusResponse {
@@ -943,21 +946,39 @@ const PatientsPage: React.FC = () => {
             // Status endpoint can fail transiently; keep polling.
           }
 
-          if (isoStatus?.inProgress) {
+          const isoState = isoStatus?.iso || null;
+          const phase = String(isoState?.phase || "").toLowerCase();
+          const isoInProgress = Boolean(
+            isoState?.inProgress !== undefined ? isoState.inProgress : isoStatus?.inProgress
+          );
+          const isTerminalFailure =
+            phase === "failed" || phase === "aborted" || phase === "cancelled";
+
+          if (isoInProgress) {
             sawInProgress = true;
-            const progressFromServer = Number(isoStatus.iso?.progress);
+            const progressFromServer = Number(isoState?.progress);
             if (Number.isFinite(progressFromServer) && progressFromServer > 0) {
               setExportProgress(Math.max(8, Math.min(99, Math.round(progressFromServer))));
             } else {
               setExportProgress((prev) => Math.min(99, Math.max(prev + 1, 10)));
             }
             setExportProgressMessage(
-              isoStatus.iso?.message || "Preparing ISO export on server..."
+              isoState?.message || "Preparing ISO export on server..."
             );
-          } else if (sawInProgress) {
+          } else if (isTerminalFailure) {
+            throw new Error(
+              isoState?.message ||
+                "ISO export failed on server. Check server logs and retry."
+            );
+          } else if (phase === "completed") {
             setExportProgress(100);
-            setExportProgressMessage("ISO stream completed. Check your browser downloads.");
+            setExportProgressMessage(
+              isoState?.message || "ISO response completed. Check your browser downloads."
+            );
             return { sawInProgress: true, completed: true };
+          } else if (sawInProgress && !isoState) {
+            // If status already expired from cache, do not assume success.
+            return { sawInProgress: true, completed: false };
           } else {
             const elapsedMs = Date.now() - startedAt;
             setExportProgress((prev) => Math.min(20, Math.max(prev, 8)));
@@ -1000,14 +1021,13 @@ const PatientsPage: React.FC = () => {
 
         if (isoResult.completed) {
           setSuccess("ISO export completed and browser download is ready.");
+          setExportDialogOpen(false);
+          setExportTarget(null);
         } else {
-          setSuccess(
-            "ISO export is still running in background. Check browser Downloads and avoid starting another ISO export right now."
+          setError(
+            "Could not confirm ISO download completion. Check browser download history and retry if needed."
           );
         }
-
-        setExportDialogOpen(false);
-        setExportTarget(null);
       } catch (e: any) {
         const errorMsg = e?.message || "ISO export failed";
         if (errorMsg.toLowerCase().includes("already in progress")) {

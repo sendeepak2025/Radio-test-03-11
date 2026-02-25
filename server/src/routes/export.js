@@ -9,6 +9,9 @@ const { rateLimit } = require('../middleware/session-middleware');
 // Track active burn operations to prevent concurrent burns
 const activeBurns = new Map();
 const activeIsoExports = new Map();
+const isoStatusCleanupTimers = new Map();
+const ISO_ACTIVE_TIMEOUT_MS = 45 * 60 * 1000; // 45 minutes
+const ISO_STATUS_RETENTION_MS = 10 * 60 * 1000; // keep final status for UI polling
 
 const getRequestPayload = (req) => (req.method === 'GET' ? req.query || {} : req.body || {});
 
@@ -30,6 +33,28 @@ const toBoolean = (value, defaultValue = false) => {
     return false;
   }
   return defaultValue;
+};
+
+const clearIsoStatusCleanup = (userId) => {
+  const timer = isoStatusCleanupTimers.get(userId);
+  if (!timer) return;
+  clearTimeout(timer);
+  isoStatusCleanupTimers.delete(userId);
+};
+
+const scheduleIsoStatusCleanup = (userId, delayMs = ISO_STATUS_RETENTION_MS) => {
+  clearIsoStatusCleanup(userId);
+  const timer = setTimeout(() => {
+    const current = activeIsoExports.get(userId);
+    if (current && current.inProgress === false) {
+      activeIsoExports.delete(userId);
+    }
+    isoStatusCleanupTimers.delete(userId);
+  }, delayMs);
+  if (typeof timer.unref === 'function') {
+    timer.unref();
+  }
+  isoStatusCleanupTimers.set(userId, timer);
 };
 
 // Middleware to prevent concurrent burns per user
@@ -107,8 +132,9 @@ const preventConcurrentIsoExports = (req, res, next) => {
   }
 
   const userId = req.user?.id || req.user?.username || 'anonymous';
+  const existing = activeIsoExports.get(userId);
 
-  if (activeIsoExports.has(userId)) {
+  if (existing?.inProgress) {
     return res.status(429).json({
       success: false,
       message:
@@ -117,7 +143,9 @@ const preventConcurrentIsoExports = (req, res, next) => {
     });
   }
 
+  clearIsoStatusCleanup(userId);
   activeIsoExports.set(userId, {
+    inProgress: true,
     startTime: Date.now(),
     targetType: payload?.targetType,
     targetId: payload?.targetId,
@@ -136,33 +164,96 @@ const preventConcurrentIsoExports = (req, res, next) => {
     activeIsoExports.set(userId, {
       ...current,
       ...updates,
+      inProgress:
+        updates.inProgress !== undefined ? Boolean(updates.inProgress) : current.inProgress !== false,
       updatedAt: new Date().toISOString(),
     });
-  };
 
-  let cleanedUp = false;
-  const timeoutId = setTimeout(() => {
-    if (activeIsoExports.has(userId)) {
-      console.warn(`ISO export timeout for user ${userId}, cleaning up`);
-      activeIsoExports.delete(userId);
+    const latest = activeIsoExports.get(userId);
+    if (latest && latest.inProgress === false) {
+      scheduleIsoStatusCleanup(userId);
     }
-  }, 45 * 60 * 1000); // 45 minutes
-
-  const cleanupIsoState = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    clearTimeout(timeoutId);
-    activeIsoExports.delete(userId);
   };
 
-  res.on('finish', cleanupIsoState);
-  res.on('close', cleanupIsoState);
-  res.on('error', cleanupIsoState);
+  let finalized = false;
+  const timeoutId = setTimeout(() => {
+    const current = activeIsoExports.get(userId);
+    if (current?.inProgress) {
+      console.warn(`ISO export timeout for user ${userId}`);
+      activeIsoExports.set(userId, {
+        ...current,
+        inProgress: false,
+        phase: 'failed',
+        message: 'ISO export timed out on server.',
+        progress: Math.max(0, Math.min(99, Number(current.progress) || 0)),
+        statusCode: 504,
+        completedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      scheduleIsoStatusCleanup(userId);
+    }
+  }, ISO_ACTIVE_TIMEOUT_MS);
+  if (typeof timeoutId.unref === 'function') {
+    timeoutId.unref();
+  }
+
+  const finalizeIsoState = (trigger) => {
+    if (finalized) return;
+    finalized = true;
+    clearTimeout(timeoutId);
+
+    const current = activeIsoExports.get(userId);
+    if (!current) {
+      return;
+    }
+
+    const statusCode = Number(res.statusCode) || 0;
+    const responseOk = statusCode >= 200 && statusCode < 300;
+    const closedEarly = trigger === 'close' && !res.writableEnded;
+    const currentPhase = String(current.phase || '').toLowerCase();
+
+    let nextPhase = currentPhase;
+    let nextMessage = current.message || '';
+
+    if (closedEarly) {
+      nextPhase = 'aborted';
+      nextMessage = 'ISO export connection closed before completion.';
+    } else if (trigger === 'error') {
+      nextPhase = 'failed';
+      nextMessage = nextMessage || 'ISO export failed while sending response.';
+    } else if (!responseOk) {
+      nextPhase = currentPhase === 'failed' ? 'failed' : 'failed';
+      nextMessage = nextMessage || `ISO export failed (${statusCode || 'unknown status'}).`;
+    } else if (!['failed', 'aborted', 'cancelled'].includes(currentPhase)) {
+      nextPhase = 'completed';
+      nextMessage = 'ISO export response completed. Check browser downloads.';
+    }
+
+    activeIsoExports.set(userId, {
+      ...current,
+      inProgress: false,
+      phase: nextPhase || 'completed',
+      message: nextMessage,
+      progress:
+        nextPhase === 'completed'
+          ? 100
+          : Math.max(0, Math.min(99, Number(current.progress) || 0)),
+      statusCode,
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    scheduleIsoStatusCleanup(userId);
+  };
+
+  res.on('finish', () => finalizeIsoState('finish'));
+  res.on('close', () => finalizeIsoState('close'));
+  res.on('error', () => finalizeIsoState('error'));
 
   const originalJson = res.json.bind(res);
   res.json = function(data) {
-    cleanupIsoState();
-    return originalJson(data);
+    const response = originalJson(data);
+    finalizeIsoState('json');
+    return response;
   };
 
   next();
@@ -177,6 +268,7 @@ router.post(
     const userId = req.user?.id || req.user?.username || 'anonymous';
     activeBurns.delete(userId);
     activeIsoExports.delete(userId);
+    clearIsoStatusCleanup(userId);
     res.json({ success: true, message: 'Active burns and ISO exports cleared' });
   }
 );
@@ -206,7 +298,7 @@ router.get(
     const iso = activeIsoExports.get(userId) || null;
     res.json({
       success: true,
-      inProgress: Boolean(iso),
+      inProgress: Boolean(iso?.inProgress),
       iso,
     });
   }
