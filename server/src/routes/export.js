@@ -8,6 +8,29 @@ const { rateLimit } = require('../middleware/session-middleware');
 
 // Track active burn operations to prevent concurrent burns
 const activeBurns = new Map();
+const activeIsoExports = new Map();
+
+const getRequestPayload = (req) => (req.method === 'GET' ? req.query || {} : req.body || {});
+
+const toBoolean = (value, defaultValue = false) => {
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+    return false;
+  }
+  return defaultValue;
+};
 
 // Middleware to prevent concurrent burns per user
 const preventConcurrentBurns = (req, res, next) => {
@@ -75,6 +98,76 @@ const preventConcurrentBurns = (req, res, next) => {
   next();
 };
 
+// Middleware to prevent concurrent ISO exports per user (except validate-only checks)
+const preventConcurrentIsoExports = (req, res, next) => {
+  const payload = getRequestPayload(req);
+  const validateOnly = toBoolean(payload?.validateOnly, false);
+  if (validateOnly) {
+    return next();
+  }
+
+  const userId = req.user?.id || req.user?.username || 'anonymous';
+
+  if (activeIsoExports.has(userId)) {
+    return res.status(429).json({
+      success: false,
+      message:
+        'An ISO export is already in progress. Please wait for the current export to finish before starting another.',
+      inProgress: true,
+    });
+  }
+
+  activeIsoExports.set(userId, {
+    startTime: Date.now(),
+    targetType: payload?.targetType,
+    targetId: payload?.targetId,
+    phase: 'preparing',
+    progress: 5,
+    message: 'Initializing ISO export request...',
+    updatedAt: new Date().toISOString(),
+  });
+
+  req.updateIsoState = (updates = {}) => {
+    const current = activeIsoExports.get(userId);
+    if (!current) {
+      return;
+    }
+
+    activeIsoExports.set(userId, {
+      ...current,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  let cleanedUp = false;
+  const timeoutId = setTimeout(() => {
+    if (activeIsoExports.has(userId)) {
+      console.warn(`ISO export timeout for user ${userId}, cleaning up`);
+      activeIsoExports.delete(userId);
+    }
+  }, 45 * 60 * 1000); // 45 minutes
+
+  const cleanupIsoState = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    clearTimeout(timeoutId);
+    activeIsoExports.delete(userId);
+  };
+
+  res.on('finish', cleanupIsoState);
+  res.on('close', cleanupIsoState);
+  res.on('error', cleanupIsoState);
+
+  const originalJson = res.json.bind(res);
+  res.json = function(data) {
+    cleanupIsoState();
+    return originalJson(data);
+  };
+
+  next();
+};
+
 // Clear active burns for a user (for cleanup)
 router.post(
   '/clear-burns',
@@ -83,7 +176,8 @@ router.post(
   (req, res) => {
     const userId = req.user?.id || req.user?.username || 'anonymous';
     activeBurns.delete(userId);
-    res.json({ success: true, message: 'Active burns cleared' });
+    activeIsoExports.delete(userId);
+    res.json({ success: true, message: 'Active burns and ISO exports cleared' });
   }
 );
 
@@ -98,6 +192,22 @@ router.get(
       success: true,
       inProgress: Boolean(burn),
       burn,
+    });
+  }
+);
+
+// Get active ISO export status for current user
+router.get(
+  '/iso-status',
+  authenticate,
+  rateLimit({ maxRequests: 60, windowMs: 60000 }),
+  (req, res) => {
+    const userId = req.user?.id || req.user?.username || 'anonymous';
+    const iso = activeIsoExports.get(userId) || null;
+    res.json({
+      success: true,
+      inProgress: Boolean(iso),
+      iso,
     });
   }
 );
@@ -180,6 +290,7 @@ router.get(
   '/create-iso',
   authenticate,
   rateLimit({ maxRequests: 20, windowMs: 300000 }),
+  preventConcurrentIsoExports,
   directBurnController.createIsoExport
 );
 
@@ -190,6 +301,7 @@ router.post(
   authenticate,
   rateLimit({ maxRequests: 20, windowMs: 300000 }),
   express.json(),
+  preventConcurrentIsoExports,
   directBurnController.createIsoExport
 );
 

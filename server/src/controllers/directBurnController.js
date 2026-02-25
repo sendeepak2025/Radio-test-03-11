@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { pipeline } = require('stream');
 const { promisify } = require('util');
 const axios = require('axios');
@@ -14,6 +14,7 @@ const execFileAsync = promisify(execFile);
 const pipelineAsync = promisify(pipeline);
 const MICRODICOM_DOWNLOADS_PAGE_URL = 'https://www.microdicom.com/downloads.html';
 const MICRODICOM_SITE_ORIGIN = 'https://www.microdicom.com';
+let streamZipExtractorCommandPromise = null;
 
 /**
  * Direct CD/DVD burn without creating ZIP file first
@@ -249,6 +250,7 @@ async function prepareDicomMediaFolder(
     }
 
     let studiesWithMedia = 0;
+    const streamZipExtractor = shouldIncludeImages ? await getStreamZipExtractorCommand() : null;
 
     // For each study, get the DICOM media from Orthanc
     if (shouldIncludeImages) {
@@ -276,10 +278,15 @@ async function prepareDicomMediaFolder(
           continue;
         }
 
-        let mediaZip = null;
+        let mediaPrepared = false;
         let lastExportError = null;
 
         for (const orthancStudyId of candidateOrthancStudyIds) {
+          const safeStudySegment = sanitizeFileSegment(studyInstanceUID, 'study');
+          const safeOrthancSegment = sanitizeFileSegment(orthancStudyId, 'orthanc');
+          const tempMediaZip = path.join(tempDir, `media_${safeStudySegment}_${safeOrthancSegment}.zip`);
+          const overwriteExisting = studiesWithMedia > 0;
+
           try {
             reportProgress({
               phase: 'exporting_media',
@@ -290,13 +297,56 @@ async function prepareDicomMediaFolder(
             console.log(
               `Exporting media for study ${studyInstanceUID} from Orthanc study ${orthancStudyId}...`
             );
-            // Use longer timeout for ISO export (5 minutes)
-            const mediaBuffer = await orthancService.exportStudyMedia(orthancStudyId, {
-              timeoutMs: 300000 // 5 minutes
-            });
-            const parsedZip = new AdmZip(Buffer.from(mediaBuffer));
-            parsedZip.getEntries(); // validate ZIP structure
-            mediaZip = parsedZip;
+
+            let extractedFromStream = false;
+
+            if (streamZipExtractor) {
+              try {
+                const mediaStream = await orthancService.exportStudyMediaStream(orthancStudyId, {
+                  timeoutMs: 300000,
+                });
+                const streamResult = await extractZipStreamToFolderWithCommand(
+                  streamZipExtractor,
+                  mediaStream,
+                  mediaRoot,
+                  { tempRoot: tempDir, overwrite: overwriteExisting }
+                );
+                extractedFromStream = streamResult.used;
+                if (streamResult.used) {
+                  console.log(
+                    `Extracted PACS media stream directly using ${streamResult.tool} for study ${studyInstanceUID}`
+                  );
+                }
+              } catch (streamExtractError) {
+                console.warn(
+                  `Stream media extraction failed for study ${studyInstanceUID} (${orthancStudyId}), retrying file-based extraction: ${streamExtractError.message}`
+                );
+              }
+            }
+
+            if (!extractedFromStream) {
+              try {
+                const mediaStream = await orthancService.exportStudyMediaStream(orthancStudyId, {
+                  timeoutMs: 300000,
+                });
+                await pipelineAsync(mediaStream, fs.createWriteStream(tempMediaZip));
+                const mediaZip = new AdmZip(tempMediaZip);
+                mediaZip.getEntries(); // validate ZIP structure
+                mediaZip.extractAllTo(mediaRoot, overwriteExisting);
+              } catch (streamError) {
+                console.warn(
+                  `Stream media export failed for study ${studyInstanceUID} (${orthancStudyId}), retrying buffered export: ${streamError.message}`
+                );
+                const mediaBuffer = await orthancService.exportStudyMedia(orthancStudyId, {
+                  timeoutMs: 300000,
+                });
+                const mediaZip = new AdmZip(Buffer.from(mediaBuffer));
+                mediaZip.getEntries(); // validate ZIP structure
+                mediaZip.extractAllTo(mediaRoot, overwriteExisting);
+              }
+            }
+
+            mediaPrepared = true;
             break;
           } catch (error) {
             const normalizedErrorMessage =
@@ -308,10 +358,14 @@ async function prepareDicomMediaFolder(
             console.warn(
               `Failed media export for study ${studyInstanceUID} with Orthanc study ${orthancStudyId}: ${normalizedErrorMessage}`
             );
+          } finally {
+            if (fs.existsSync(tempMediaZip)) {
+              await fs.promises.unlink(tempMediaZip).catch(() => {});
+            }
           }
         }
 
-        if (!mediaZip) {
+        if (!mediaPrepared) {
           throw new Error(
             `Failed to export DICOM media for study ${studyInstanceUID}: ${
               lastExportError?.message || 'unknown error'
@@ -319,7 +373,6 @@ async function prepareDicomMediaFolder(
           );
         }
 
-        mediaZip.extractAllTo(mediaRoot, studiesWithMedia > 0);
         studiesWithMedia++;
         reportProgress({
           phase: 'exporting_media',
@@ -910,6 +963,114 @@ async function firstAvailableCommand(commandCandidates) {
     }
   }
   return null;
+}
+
+async function getStreamZipExtractorCommand() {
+  if (process.platform !== 'linux') {
+    return null;
+  }
+
+  if (!streamZipExtractorCommandPromise) {
+    streamZipExtractorCommandPromise = firstAvailableCommand(['bsdtar', 'unzip']);
+  }
+
+  return streamZipExtractorCommandPromise;
+}
+
+async function mergeDirectoryContents(sourceDir, targetDir, overwrite = true) {
+  await fs.promises.mkdir(targetDir, { recursive: true });
+  const entries = await fs.promises.readdir(sourceDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+
+    if (entry.isDirectory()) {
+      await mergeDirectoryContents(sourcePath, targetPath, overwrite);
+      await fs.promises.rm(sourcePath, { recursive: true, force: true }).catch(() => {});
+      continue;
+    }
+
+    if (overwrite) {
+      await fs.promises.rm(targetPath, { recursive: true, force: true }).catch(() => {});
+    } else if (fs.existsSync(targetPath)) {
+      continue;
+    }
+
+    await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+    try {
+      await fs.promises.rename(sourcePath, targetPath);
+    } catch (renameError) {
+      if (renameError?.code !== 'EXDEV') {
+        throw renameError;
+      }
+      await pipelineAsync(fs.createReadStream(sourcePath), fs.createWriteStream(targetPath));
+      await fs.promises.rm(sourcePath, { force: true }).catch(() => {});
+    }
+  }
+}
+
+async function extractZipStreamToFolderWithCommand(
+  extractorCommand,
+  zipStream,
+  destinationDir,
+  options = {}
+) {
+  if (!extractorCommand || typeof zipStream?.pipe !== 'function') {
+    return { used: false, tool: null };
+  }
+
+  const tempRoot = options.tempRoot || os.tmpdir();
+  await fs.promises.mkdir(tempRoot, { recursive: true });
+  const stagingDir = await fs.promises.mkdtemp(path.join(tempRoot, 'media-stream-'));
+  const overwrite = options.overwrite !== false;
+
+  try {
+    const args =
+      extractorCommand === 'bsdtar'
+        ? ['-xpf', '-', '-C', stagingDir]
+        : ['-o', '-qq', '-d', stagingDir, '-'];
+
+    const child = spawn(extractorCommand, args, {
+      stdio: ['pipe', 'ignore', 'pipe'],
+      windowsHide: true,
+    });
+
+    const stderrChunks = [];
+    child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
+
+    const closePromise = new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        const stderrOutput = Buffer.concat(stderrChunks).toString('utf8').trim();
+        const reason =
+          stderrOutput ||
+          (signal ? `${extractorCommand} terminated by signal ${signal}` : `${extractorCommand} exit code ${code}`);
+        reject(new Error(reason));
+      });
+    });
+
+    try {
+      await pipelineAsync(zipStream, child.stdin);
+    } catch (pipeError) {
+      child.stdin.destroy();
+      if (!child.killed) {
+        child.kill('SIGTERM');
+      }
+      await closePromise.catch(() => {});
+      throw pipeError;
+    }
+
+    await closePromise;
+    await mergeDirectoryContents(stagingDir, destinationDir, overwrite);
+    return { used: true, tool: extractorCommand };
+  } finally {
+    await fs.promises.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 function toBoolean(value, defaultValue = true) {
@@ -1834,6 +1995,11 @@ async function directBurnToCD(req, res) {
 async function createIsoExport(req, res) {
   let tempDir = null;
   let cleanedUp = false;
+  const updateIsoState = (updates = {}) => {
+    if (typeof req.updateIsoState === 'function') {
+      req.updateIsoState(updates);
+    }
+  };
 
   const cleanup = async () => {
     if (cleanedUp) return;
@@ -1847,6 +2013,12 @@ async function createIsoExport(req, res) {
   };
 
   try {
+    updateIsoState({
+      phase: 'validating',
+      progress: 8,
+      message: 'Validating ISO export request...',
+    });
+
     const payload = req.method === 'GET' ? req.query || {} : req.body || {};
     const targetType = payload.targetType;
     const targetId = payload.targetId;
@@ -1920,14 +2092,39 @@ async function createIsoExport(req, res) {
       });
     }
 
+    updateIsoState({
+      phase: 'preparing',
+      progress: 15,
+      message: 'Preparing temporary workspace...',
+    });
+
     let studiesWithMedia = 0;
+    const streamZipExtractor = shouldIncludeImages ? await getStreamZipExtractorCommand() : null;
 
     // Export DICOM media from Orthanc directly to disc root
     if (shouldIncludeImages) {
       const orthancService = getUnifiedOrthancService();
+      updateIsoState({
+        phase: 'exporting',
+        progress: 25,
+        message: 'Exporting DICOM media from PACS...',
+      });
 
-      for (const study of studies) {
+      for (const [studyIndex, study] of studies.entries()) {
         const studyInstanceUID = getStudyInstanceUID(study) || 'unknown-study';
+        const studyOrdinal = studyIndex + 1;
+        const studyProgressBase = 25;
+        const studyProgressSpan = 45;
+        const studyProgress = Math.min(
+          70,
+          studyProgressBase + Math.round((studyOrdinal / Math.max(studies.length, 1)) * studyProgressSpan)
+        );
+
+        updateIsoState({
+          phase: 'exporting',
+          progress: Math.max(26, studyProgress - 10),
+          message: `Exporting study ${studyOrdinal}/${studies.length} from PACS...`,
+        });
         const candidateOrthancStudyIds = [];
         const storedOrthancStudyId = getStoredOrthancStudyId(study);
 
@@ -1954,37 +2151,70 @@ async function createIsoExport(req, res) {
           const safeStudySegment = sanitizeFileSegment(studyInstanceUID, 'study');
           const safeOrthancSegment = sanitizeFileSegment(orthancStudyId, 'orthanc');
           const tempMediaZip = path.join(tempDir, `media_${safeStudySegment}_${safeOrthancSegment}.zip`);
+          const overwriteExisting = studiesWithMedia > 0;
 
           try {
             console.log(
               `Exporting media for study ${studyInstanceUID} from Orthanc study ${orthancStudyId}...`
             );
 
-            // Prefer streaming media export; fall back to buffered export if stream fails.
-            try {
-              const mediaStream = await orthancService.exportStudyMediaStream(orthancStudyId, {
-                timeoutMs: 300000,
-              });
-              await pipelineAsync(mediaStream, fs.createWriteStream(tempMediaZip));
+            let extractedFromStream = false;
+            if (streamZipExtractor) {
+              try {
+                const mediaStream = await orthancService.exportStudyMediaStream(orthancStudyId, {
+                  timeoutMs: 300000,
+                });
+                const streamResult = await extractZipStreamToFolderWithCommand(
+                  streamZipExtractor,
+                  mediaStream,
+                  mediaRoot,
+                  { tempRoot: tempDir, overwrite: overwriteExisting }
+                );
+                extractedFromStream = streamResult.used;
+                if (streamResult.used) {
+                  console.log(
+                    `Extracted PACS media stream directly using ${streamResult.tool} for study ${studyInstanceUID}`
+                  );
+                }
+              } catch (streamExtractError) {
+                console.warn(
+                  `Stream media extraction failed for study ${studyInstanceUID} (${orthancStudyId}), retrying file-based extraction: ${streamExtractError.message}`
+                );
+              }
+            }
 
-              const mediaZip = new AdmZip(tempMediaZip);
-              mediaZip.getEntries(); // validate ZIP structure
-              mediaZip.extractAllTo(mediaRoot, studiesWithMedia > 0);
-            } catch (streamError) {
-              console.warn(
-                `Stream media export failed for study ${studyInstanceUID} (${orthancStudyId}), retrying buffered export: ${streamError.message}`
-              );
-              const mediaBuffer = await orthancService.exportStudyMedia(orthancStudyId, {
-                timeoutMs: 300000,
-              });
-              const mediaZip = new AdmZip(Buffer.from(mediaBuffer));
-              mediaZip.getEntries(); // validate ZIP structure
-              mediaZip.extractAllTo(mediaRoot, studiesWithMedia > 0);
+            if (!extractedFromStream) {
+              // Prefer streaming media export; fall back to buffered export if stream fails.
+              try {
+                const mediaStream = await orthancService.exportStudyMediaStream(orthancStudyId, {
+                  timeoutMs: 300000,
+                });
+                await pipelineAsync(mediaStream, fs.createWriteStream(tempMediaZip));
+
+                const mediaZip = new AdmZip(tempMediaZip);
+                mediaZip.getEntries(); // validate ZIP structure
+                mediaZip.extractAllTo(mediaRoot, overwriteExisting);
+              } catch (streamError) {
+                console.warn(
+                  `Stream media export failed for study ${studyInstanceUID} (${orthancStudyId}), retrying buffered export: ${streamError.message}`
+                );
+                const mediaBuffer = await orthancService.exportStudyMedia(orthancStudyId, {
+                  timeoutMs: 300000,
+                });
+                const mediaZip = new AdmZip(Buffer.from(mediaBuffer));
+                mediaZip.getEntries(); // validate ZIP structure
+                mediaZip.extractAllTo(mediaRoot, overwriteExisting);
+              }
             }
 
             studiesWithMedia += 1;
             studyExported = true;
             console.log(`Prepared study media ${studiesWithMedia}/${studies.length} for ISO`);
+            updateIsoState({
+              phase: 'exporting',
+              progress: studyProgress,
+              message: `Prepared study ${studiesWithMedia}/${studies.length} for ISO`,
+            });
             break;
           } catch (error) {
             const normalizedErrorMessage =
@@ -2063,6 +2293,11 @@ IMPORTANT: Confidential medical information - handle per HIPAA regulations.
     // Add viewer if requested
     if (includeViewer) {
       console.log('Adding viewer files...');
+      updateIsoState({
+        phase: 'preparing',
+        progress: 74,
+        message: 'Adding viewer files to export...',
+      });
       await addPortableDicomViewer(mediaRoot);
     }
 
@@ -2071,10 +2306,20 @@ IMPORTANT: Confidential medical information - handle per HIPAA regulations.
     const isoPath = path.join(tempDir, isoName);
 
     console.log(`Creating ISO image: ${isoName}`);
+    updateIsoState({
+      phase: 'creating-iso',
+      progress: 82,
+      message: 'Creating ISO image file...',
+    });
     await createIsoImageFromFolder(mediaRoot, isoPath, 'DICOM_MEDIA');
 
     const fileStat = await fs.promises.stat(isoPath);
     console.log(`ISO created: ${(fileStat.size / 1024 / 1024).toFixed(2)} MB`);
+    updateIsoState({
+      phase: 'streaming',
+      progress: 95,
+      message: 'Streaming ISO to browser download...',
+    });
 
     // Stream ISO to client
     res.setHeader('Content-Type', 'application/x-iso9660-image');
@@ -2123,6 +2368,11 @@ IMPORTANT: Confidential medical information - handle per HIPAA regulations.
     console.log('Streaming ISO to client...');
 
   } catch (error) {
+    updateIsoState({
+      phase: 'failed',
+      progress: 0,
+      message: error?.message || 'ISO export failed',
+    });
     await cleanup();
     console.error('ISO export error:', error);
     if (res.headersSent) {

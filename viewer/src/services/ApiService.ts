@@ -1013,6 +1013,23 @@ export const getActiveBurnStatus = async () => {
   return response.json()
 }
 
+export const getActiveIsoStatus = async () => {
+  const token = getAuthToken()
+  const response = await fetch(`${BACKEND_URL}/api/export/iso-status`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response))
+  }
+
+  return response.json()
+}
+
 export const getDirectBurnViewerStatus = async () => {
   const token = getAuthToken()
   const response = await fetch(`${BACKEND_URL}/api/export/viewer-status`, {
@@ -1107,6 +1124,7 @@ export default {
   createDicomIsoDownload,
   exportAllData,
   getActiveBurnStatus,
+  getActiveIsoStatus,
   getDirectBurnViewerStatus,
   installDirectBurnViewer,
   runDirectBurnViewer,

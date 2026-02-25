@@ -36,6 +36,7 @@ import {
   createDicomIsoDownload,
   clearActiveBurns,
   getActiveBurnStatus,
+  getActiveIsoStatus,
   getDirectBurnViewerStatus,
   installDirectBurnViewer,
   runDirectBurnViewer,
@@ -111,6 +112,20 @@ interface ActiveBurnStatusResponse {
   success: boolean;
   inProgress: boolean;
   burn?: ActiveBurnState | null;
+}
+
+interface ActiveIsoState {
+  phase?: string;
+  progress?: number;
+  message?: string;
+  targetType?: string;
+  targetId?: string;
+}
+
+interface ActiveIsoStatusResponse {
+  success: boolean;
+  inProgress: boolean;
+  iso?: ActiveIsoState | null;
 }
 
 // -------- DatePicker Wrapper (simple HTML date) --------
@@ -231,6 +246,8 @@ const PatientsPage: React.FC = () => {
   const [cdDriveLetter, setCdDriveLetter] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportProgressMessage, setExportProgressMessage] = useState("");
+  const [activeExportMode, setActiveExportMode] = useState<"download" | "direct-burn" | null>(null);
 
   // Filters
   const [searchTerm, setSearchTerm] = useState("");
@@ -905,9 +922,62 @@ const PatientsPage: React.FC = () => {
     }
 
     if (resolvedExportMode === "direct-burn") {
+      const sleep = (ms: number) =>
+        new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+      const waitForIsoCompletion = async (): Promise<{
+        sawInProgress: boolean;
+        completed: boolean;
+      }> => {
+        const pollIntervalMs = 1500;
+        const maxWaitMs = 45 * 60 * 1000;
+        const startupGraceMs = 20 * 1000;
+        const startedAt = Date.now();
+        let sawInProgress = false;
+
+        while (Date.now() - startedAt < maxWaitMs) {
+          let isoStatus: ActiveIsoStatusResponse | null = null;
+          try {
+            isoStatus = await getActiveIsoStatus();
+          } catch (_statusError) {
+            // Status endpoint can fail transiently; keep polling.
+          }
+
+          if (isoStatus?.inProgress) {
+            sawInProgress = true;
+            const progressFromServer = Number(isoStatus.iso?.progress);
+            if (Number.isFinite(progressFromServer) && progressFromServer > 0) {
+              setExportProgress(Math.max(8, Math.min(99, Math.round(progressFromServer))));
+            } else {
+              setExportProgress((prev) => Math.min(99, Math.max(prev + 1, 10)));
+            }
+            setExportProgressMessage(
+              isoStatus.iso?.message || "Preparing ISO export on server..."
+            );
+          } else if (sawInProgress) {
+            setExportProgress(100);
+            setExportProgressMessage("ISO stream completed. Check your browser downloads.");
+            return { sawInProgress: true, completed: true };
+          } else {
+            const elapsedMs = Date.now() - startedAt;
+            setExportProgress((prev) => Math.min(20, Math.max(prev, 8)));
+            setExportProgressMessage("Waiting for browser download request to start...");
+            if (elapsedMs >= startupGraceMs) {
+              return { sawInProgress: false, completed: false };
+            }
+          }
+
+          await sleep(pollIntervalMs);
+        }
+
+        return { sawInProgress, completed: false };
+      };
+
       try {
+        setActiveExportMode("direct-burn");
         setExporting(true);
-        setExportProgress(0);
+        setExportProgress(5);
+        setExportProgressMessage("Submitting ISO export request...");
         setError(null);
         setSuccess(null);
 
@@ -916,42 +986,77 @@ const PatientsPage: React.FC = () => {
           targetId: exportTarget.id,
           includeImages: true,
           includeViewer: exportMode === "auto" ? true : includeViewer,
-          onProgress: (percent) => setExportProgress(percent),
           useNativeDownload: true,
         });
 
-        setSuccess("ISO download has started in your browser. Server is preparing the file and download will begin automatically.");
+        setExportProgressMessage("ISO request accepted. Preparing data on server...");
+        const isoResult = await waitForIsoCompletion();
+
+        if (!isoResult.sawInProgress) {
+          throw new Error(
+            "Download request did not start. Please allow downloads/pop-ups for this site and try again."
+          );
+        }
+
+        if (isoResult.completed) {
+          setSuccess("ISO export completed and browser download is ready.");
+        } else {
+          setSuccess(
+            "ISO export is still running in background. Check browser Downloads and avoid starting another ISO export right now."
+          );
+        }
+
         setExportDialogOpen(false);
         setExportTarget(null);
       } catch (e: any) {
-        setError(e.message || "ISO export failed");
+        const errorMsg = e?.message || "ISO export failed";
+        if (errorMsg.toLowerCase().includes("already in progress")) {
+          setError(
+            "An ISO export is already in progress. Please wait for it to finish before starting another."
+          );
+        } else if (errorMsg.toLowerCase().includes("too many requests")) {
+          setError("Too many ISO export requests. Please wait and try again.");
+        } else {
+          setError(errorMsg);
+        }
       } finally {
         setExporting(false);
         setExportProgress(0);
+        setExportProgressMessage("");
+        setActiveExportMode(null);
       }
       return;
     }
 
     // Regular download export
     try {
+      setActiveExportMode("download");
       setExporting(true);
       setExportProgress(0);
+      setExportProgressMessage("Preparing ZIP download...");
       setError(null);
       setSuccess(null);
+
+      const updateZipProgress = (progress: number) => {
+        setExportProgress(progress);
+        setExportProgressMessage(
+          progress >= 100 ? "Finalizing ZIP download..." : "Downloading ZIP export..."
+        );
+      };
 
       if (exportTarget.type === "patient") {
         await exportPatientData(
           exportTarget.id,
           includeImages,
           "zip",
-          setExportProgress
+          updateZipProgress
         );
       } else {
         await exportStudyData(
           exportTarget.id,
           includeImages,
           "zip",
-          setExportProgress
+          updateZipProgress
         );
       }
       setSuccess(
@@ -967,6 +1072,8 @@ const PatientsPage: React.FC = () => {
     } finally {
       setExporting(false);
       setExportProgress(0);
+      setExportProgressMessage("");
+      setActiveExportMode(null);
     }
   };
   
@@ -1040,7 +1147,12 @@ const PatientsPage: React.FC = () => {
     setViewerInstallLoading(false);
     setViewerRunLoading(false);
     setExportProgress(0);
+    setExportProgressMessage("");
+    setActiveExportMode(null);
   };
+
+  const inProgressMode =
+    activeExportMode || (exportMode === "auto" ? "download" : exportMode);
 
   // ===================== RENDER =========================
   return (
@@ -2054,11 +2166,11 @@ const PatientsPage: React.FC = () => {
             </div>
           )}
 
-          {exporting && exportMode === "download" && (
+          {exporting && (inProgressMode === "download" || inProgressMode === "direct-burn") && (
             <div className="space-y-2">
               <div className="flex justify-between items-center text-sm">
                 <span className="font-medium text-gray-700">
-                  Download Progress
+                  {inProgressMode === "direct-burn" ? "ISO Export Progress" : "Download Progress"}
                 </span>
                 <span className="font-semibold text-primary-700">
                   {exportProgress}%
@@ -2070,6 +2182,12 @@ const PatientsPage: React.FC = () => {
                   style={{ width: `${exportProgress}%` }}
                 />
               </div>
+              <p className="text-xs text-gray-600">
+                {exportProgressMessage ||
+                  (inProgressMode === "direct-burn"
+                    ? "Preparing ISO on server..."
+                    : "Downloading export...")}
+              </p>
             </div>
           )}
         </div>
@@ -2090,8 +2208,10 @@ const PatientsPage: React.FC = () => {
             startIcon={<FileDown className="w-4 h-4" />}
           >
             {exporting
-              ? exportMode === "download"
+              ? inProgressMode === "download"
                 ? `Downloading... ${exportProgress}%`
+                : inProgressMode === "direct-burn"
+                ? `Preparing ISO... ${exportProgress}%`
                 : "Processing..."
               : exportMode === "auto"
               ? "Export (Auto)"
