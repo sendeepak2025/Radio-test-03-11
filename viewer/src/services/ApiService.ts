@@ -937,6 +937,7 @@ export const createDicomIsoDownload = async ({
   const token = getAuthToken()
   const exportTargetId = orthancStudyId || targetId
   const safeFileType = targetType === 'orthanc-study' ? 'study' : targetType
+  const requestNonce = Date.now().toString()
 
   // Browser-native download avoids buffering the entire ISO in JS memory.
   // Keep POST + fetch fallback when caller needs AbortSignal control.
@@ -946,6 +947,7 @@ export const createDicomIsoDownload = async ({
       targetId: exportTargetId,
       includeImages: String(includeImages),
       includeViewer: String(includeViewer),
+      _ts: requestNonce,
     })
     if (orthancStudyId) {
       params.set('orthancStudyId', orthancStudyId)
@@ -956,12 +958,15 @@ export const createDicomIsoDownload = async ({
     const validationResponse = await fetch(validationUrl, {
       method: 'GET',
       credentials: 'include',
+      cache: 'no-store',
       headers: {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
         ...(token && { Authorization: `Bearer ${token}` }),
       },
     })
 
-    if (validationResponse.ok) {
+    if (validationResponse.ok || validationResponse.status === 304) {
       const downloadUrl = `${BACKEND_URL}/api/export/create-iso?${params.toString()}`
       await downloadWithProgress(
         downloadUrl,
@@ -1023,13 +1028,28 @@ export const getActiveBurnStatus = async () => {
 
 export const getActiveIsoStatus = async () => {
   const token = getAuthToken()
-  const response = await fetch(`${BACKEND_URL}/api/export/iso-status`, {
+  const buildStatusUrl = () => `${BACKEND_URL}/api/export/iso-status?_ts=${Date.now()}`
+  const requestOptions: RequestInit = {
     method: 'GET',
     credentials: 'include',
+    cache: 'no-store',
     headers: {
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
       ...(token && { Authorization: `Bearer ${token}` }),
     },
-  })
+  }
+
+  let response = await fetch(buildStatusUrl(), requestOptions)
+
+  // Some proxies incorrectly return 304 for dynamic status endpoints.
+  // Retry once with a fresh cache-busting URL.
+  if (response.status === 304) {
+    response = await fetch(buildStatusUrl(), {
+      ...requestOptions,
+      cache: 'reload',
+    })
+  }
 
   if (!response.ok) {
     throw new Error(await parseErrorMessage(response))

@@ -2015,6 +2015,20 @@ async function createIsoExport(req, res) {
     }
   };
 
+  // Prevent intermediary/browser cache from serving stale 304 on dynamic export routes.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+  res.setHeader('Vary', 'Authorization, Cookie');
+  if (req.headers['if-none-match']) {
+    delete req.headers['if-none-match'];
+  }
+  if (req.headers['if-modified-since']) {
+    delete req.headers['if-modified-since'];
+  }
+  res.removeHeader('ETag');
+
   const cleanup = async () => {
     if (cleanedUp) return;
     cleanedUp = true;

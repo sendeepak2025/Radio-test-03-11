@@ -35,6 +35,30 @@ const toBoolean = (value, defaultValue = false) => {
   return defaultValue;
 };
 
+const applyNoStoreHeaders = (res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+  res.setHeader('Vary', 'Authorization, Cookie');
+};
+
+const noStoreResponse = (_req, res, next) => {
+  applyNoStoreHeaders(res);
+  next();
+};
+
+const stripConditionalRequestHeaders = (req, _res, next) => {
+  // Prevent 304 responses on dynamic export/status endpoints.
+  if (req.headers['if-none-match']) {
+    delete req.headers['if-none-match'];
+  }
+  if (req.headers['if-modified-since']) {
+    delete req.headers['if-modified-since'];
+  }
+  next();
+};
+
 const clearIsoStatusCleanup = (userId) => {
   const timer = isoStatusCleanupTimers.get(userId);
   if (!timer) return;
@@ -294,7 +318,9 @@ router.get(
   '/iso-status',
   authenticate,
   rateLimit({ maxRequests: 60, windowMs: 60000 }),
+  stripConditionalRequestHeaders,
   (req, res) => {
+    applyNoStoreHeaders(res);
     const userId = req.user?.id || req.user?.username || 'anonymous';
     const iso = activeIsoExports.get(userId) || null;
     res.json({
@@ -386,6 +412,8 @@ router.get(
   '/create-iso',
   authenticate,
   rateLimit({ maxRequests: 20, windowMs: 300000 }),
+  stripConditionalRequestHeaders,
+  noStoreResponse,
   preventConcurrentIsoExports,
   directBurnController.createIsoExport
 );
@@ -399,6 +427,8 @@ router.post(
   authenticate,
   rateLimit({ maxRequests: 20, windowMs: 300000 }),
   express.json(),
+  stripConditionalRequestHeaders,
+  noStoreResponse,
   preventConcurrentIsoExports,
   directBurnController.createIsoExport
 );
