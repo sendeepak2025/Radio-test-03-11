@@ -1189,6 +1189,20 @@ async function createManagedTempDir(prefix) {
   );
 }
 
+function buildStudyFromOrthancTags(orthancStudyId, tags = {}) {
+  const studyInstanceUID = String(tags?.StudyInstanceUID || '').trim() || orthancStudyId;
+  const modality = tags?.ModalitiesInStudy || tags?.Modality || null;
+  return {
+    orthancStudyId,
+    studyInstanceUID,
+    studyUID: studyInstanceUID,
+    studyDate: tags?.StudyDate || null,
+    studyDescription: tags?.StudyDescription || tags?.Description || null,
+    modality,
+    orthancTags: tags,
+  };
+}
+
 function normalizeLinuxBurnDevice(deviceInput) {
   const raw = String(deviceInput || '').trim();
   if (!raw) {
@@ -2020,18 +2034,36 @@ async function createIsoExport(req, res) {
     });
 
     const payload = req.method === 'GET' ? req.query || {} : req.body || {};
-    const targetType = payload.targetType;
-    const targetId = payload.targetId;
+    const targetType = String(payload.targetType || '').trim().toLowerCase();
+    const targetId = String(payload.targetId || '').trim();
+    const orthancStudyId = String(payload.orthancStudyId || '').trim();
+    const directOrthancTargetId = orthancStudyId || targetId;
+    const isDirectOrthancStudyExport =
+      targetType === 'orthanc-study' || (targetType === 'study' && Boolean(orthancStudyId));
+    const exportTargetId = isDirectOrthancStudyExport ? directOrthancTargetId : targetId;
     const includeImages = toBoolean(payload.includeImages, true);
     const includeViewer = toBoolean(payload.includeViewer, true);
     const validateOnly = toBoolean(payload.validateOnly, false);
     const shouldIncludeImages = includeImages !== false;
 
-    if (!['patient', 'study'].includes(targetType)) {
-      return res.status(400).json({ success: false, message: 'targetType must be patient or study' });
+    if (!['patient', 'study', 'orthanc-study'].includes(targetType)) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'targetType must be patient, study, or orthanc-study' });
     }
-    if (!targetId) {
-      return res.status(400).json({ success: false, message: 'targetId is required' });
+
+    if (targetType === 'patient' && orthancStudyId) {
+      return res.status(400).json({
+        success: false,
+        message: 'orthancStudyId can only be used with targetType study or orthanc-study',
+      });
+    }
+
+    if (!exportTargetId) {
+      const fieldMessage = isDirectOrthancStudyExport
+        ? 'targetId or orthancStudyId is required'
+        : 'targetId is required';
+      return res.status(400).json({ success: false, message: fieldMessage });
     }
 
     const isoSupport = await getIsoExportSupportStatus();
@@ -2049,12 +2081,30 @@ async function createIsoExport(req, res) {
     const mediaRoot = path.join(tempDir, 'DISC_ROOT');
     await fs.promises.mkdir(mediaRoot, { recursive: true });
 
-    console.log(`Creating ISO for ${targetType} ${targetId}...`);
+    console.log(`Creating ISO for ${targetType} ${exportTargetId}...`);
 
     // Get study data
     let studies = [];
 
-    if (targetType === 'patient') {
+    if (isDirectOrthancStudyExport) {
+      const orthancService = getUnifiedOrthancService();
+      const orthancIdForExport = directOrthancTargetId;
+      let orthancTags = null;
+      try {
+        orthancTags = await orthancService.getStudyTags(orthancIdForExport);
+      } catch (orthancError) {
+        const statusCode = Number(orthancError?.response?.status) || 0;
+        if (statusCode === 404) {
+          throw new Error(`Orthanc study ${orthancIdForExport} not found`);
+        }
+        throw new Error(
+          `Failed to fetch Orthanc study ${orthancIdForExport}: ${
+            orthancError?.message || 'unknown PACS error'
+          }`
+        );
+      }
+      studies = [buildStudyFromOrthancTags(orthancIdForExport, orthancTags || {})];
+    } else if (targetType === 'patient') {
       const patient = await Patient.findOne({ patientID: targetId }).lean();
       if (!patient) {
         throw new Error(`Patient ${targetId} not found`);
@@ -2085,7 +2135,8 @@ async function createIsoExport(req, res) {
         success: true,
         message: 'ISO export validation passed',
         targetType,
-        targetId,
+        targetId: exportTargetId,
+        orthancStudyId: isDirectOrthancStudyExport ? directOrthancTargetId : undefined,
         includeImages: shouldIncludeImages,
         includeViewer,
         studyCount: studies.length,
@@ -2251,7 +2302,8 @@ async function createIsoExport(req, res) {
     const metadata = {
       exportDate: new Date().toISOString(),
       targetType,
-      targetId,
+      targetId: exportTargetId,
+      orthancStudyId: isDirectOrthancStudyExport ? directOrthancTargetId : undefined,
       studyCount: studies.length,
       studiesWithMedia,
       includeImages: shouldIncludeImages,
@@ -2274,6 +2326,7 @@ async function createIsoExport(req, res) {
 
 Export Date: ${new Date().toISOString()}
 Type: ${targetType}
+ID: ${exportTargetId}
 Studies: ${studies.length}
 
 This disc contains medical imaging data in DICOM format.
@@ -2302,7 +2355,7 @@ IMPORTANT: Confidential medical information - handle per HIPAA regulations.
     }
 
     // Create ISO image
-    const isoName = `${targetType}_${sanitizeFileSegment(targetId)}_dicom_media.iso`;
+    const isoName = `${targetType}_${sanitizeFileSegment(exportTargetId)}_dicom_media.iso`;
     const isoPath = path.join(tempDir, isoName);
 
     console.log(`Creating ISO image: ${isoName}`);

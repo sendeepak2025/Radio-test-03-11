@@ -148,7 +148,8 @@ const preventConcurrentIsoExports = (req, res, next) => {
     inProgress: true,
     startTime: Date.now(),
     targetType: payload?.targetType,
-    targetId: payload?.targetId,
+    targetId: payload?.targetId || payload?.orthancStudyId,
+    orthancStudyId: payload?.orthancStudyId || null,
     phase: 'preparing',
     progress: 5,
     message: 'Initializing ISO export request...',
@@ -378,6 +379,9 @@ router.post(
 
 // Create ISO image download from DICOM media layout
 // GET /api/export/create-iso?targetType=study&targetId=...&includeImages=true&includeViewer=true
+// Direct Orthanc option:
+// GET /api/export/create-iso?targetType=orthanc-study&targetId=<orthancStudyId>
+// or GET /api/export/create-iso?targetType=study&targetId=<studyUID>&orthancStudyId=<orthancStudyId>
 router.get(
   '/create-iso',
   authenticate,
@@ -388,6 +392,8 @@ router.get(
 
 // Create ISO image download from DICOM media layout
 // POST /api/export/create-iso
+// Direct Orthanc option body:
+// { "targetType": "orthanc-study", "targetId": "<orthancStudyId>" }
 router.post(
   '/create-iso',
   authenticate,

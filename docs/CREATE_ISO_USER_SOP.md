@@ -153,3 +153,11 @@ Before user starts:
 4. Server platform and ISO toolchain status shown in UI.
 5. Exact error message text.
 6. Approximate study size/number of instances.
+
+## 11) Direct Orthanc Study ISO (Admin/API)
+
+If a study exists in Orthanc but is not yet synced in local DB, admins can export directly by Orthanc study ID:
+
+1. `GET /api/export/create-iso?targetType=orthanc-study&targetId=<orthancStudyId>&includeImages=true&includeViewer=true`
+2. Or with POST body:
+   `{"targetType":"orthanc-study","targetId":"<orthancStudyId>","includeImages":true,"includeViewer":true}`

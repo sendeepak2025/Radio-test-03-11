@@ -918,14 +918,16 @@ export const clearActiveBurns = async () => {
 export const createDicomIsoDownload = async ({
   targetType,
   targetId,
+  orthancStudyId,
   includeImages = true,
   includeViewer = true,
   onProgress,
   useNativeDownload = true,
   signal,
 }: {
-  targetType: 'patient' | 'study'
+  targetType: 'patient' | 'study' | 'orthanc-study'
   targetId: string
+  orthancStudyId?: string
   includeImages?: boolean
   includeViewer?: boolean
   onProgress?: (percent: number) => void
@@ -933,16 +935,21 @@ export const createDicomIsoDownload = async ({
   signal?: AbortSignal
 }) => {
   const token = getAuthToken()
+  const exportTargetId = orthancStudyId || targetId
+  const safeFileType = targetType === 'orthanc-study' ? 'study' : targetType
 
   // Browser-native download avoids buffering the entire ISO in JS memory.
   // Keep POST + fetch fallback when caller needs AbortSignal control.
   if (!signal && useNativeDownload) {
     const params = new URLSearchParams({
       targetType,
-      targetId,
+      targetId: exportTargetId,
       includeImages: String(includeImages),
       includeViewer: String(includeViewer),
     })
+    if (orthancStudyId) {
+      params.set('orthancStudyId', orthancStudyId)
+    }
     const validationParams = new URLSearchParams(params)
     validationParams.set('validateOnly', 'true')
     const validationUrl = `${BACKEND_URL}/api/export/create-iso?${validationParams.toString()}`
@@ -959,7 +966,7 @@ export const createDicomIsoDownload = async ({
       await downloadWithProgress(
         downloadUrl,
         token,
-        `${targetType}_${targetId}_dicom_media.iso`,
+        `${safeFileType}_${exportTargetId}_dicom_media.iso`,
         onProgress,
         true
       )
@@ -982,7 +989,8 @@ export const createDicomIsoDownload = async ({
     },
     body: JSON.stringify({
       targetType,
-      targetId,
+      targetId: exportTargetId,
+      orthancStudyId: orthancStudyId || undefined,
       includeImages,
       includeViewer,
     }),
@@ -992,7 +1000,7 @@ export const createDicomIsoDownload = async ({
     throw new Error(await parseErrorMessage(response))
   }
 
-  await triggerDownloadFromResponse(response, `${targetType}_${targetId}_dicom_media.iso`)
+  await triggerDownloadFromResponse(response, `${safeFileType}_${exportTargetId}_dicom_media.iso`)
   return { success: true }
 }
 
