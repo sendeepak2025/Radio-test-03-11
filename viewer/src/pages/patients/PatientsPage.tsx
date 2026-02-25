@@ -205,6 +205,8 @@ const PatientsPage: React.FC = () => {
   const isoExportUnavailable = viewerStatus?.isoExportSupported === false;
   const viewerRunUnavailable = viewerStatus?.viewerRunSupported === false;
   const isLinuxServer = viewerStatus?.serverPlatform === "linux";
+  const isWindowsServer = viewerStatus?.serverPlatform === "win32";
+  const legacyBurnUnavailable = Boolean(viewerStatus && !isWindowsServer);
 
   // Track cancelled burn task IDs to prevent stale async responses
   const cancelledBurnTaskIdsRef = useRef<Set<string>>(new Set());
@@ -302,6 +304,13 @@ const PatientsPage: React.FC = () => {
       setIncludeImages(true);
     }
   }, [exportMode, includeImages]);
+
+  useEffect(() => {
+    if (!viewerStatus || exportMode !== "burn-cd") return;
+    if (viewerStatus.serverPlatform !== "win32") {
+      setExportMode("direct-burn");
+    }
+  }, [viewerStatus, exportMode]);
 
   // Keep burn progress moving in the UI while backend operation is running.
   useEffect(() => {
@@ -753,6 +762,15 @@ const PatientsPage: React.FC = () => {
       if (exportMode !== "auto") {
         setExportMode("download");
       }
+      return;
+    }
+
+    if (resolvedExportMode === "burn-cd" && legacyBurnUnavailable) {
+      const platform = viewerStatus?.serverPlatform || "this";
+      setError(
+        `Legacy server burn is only available on Windows servers. ${platform} server should use Create ISO (Recommended).`
+      );
+      setExportMode("direct-burn");
       return;
     }
 
@@ -1842,16 +1860,23 @@ const PatientsPage: React.FC = () => {
                 type="radio"
                 name="exportMode"
                 checked={exportMode === "burn-cd"}
+                disabled={legacyBurnUnavailable}
                 onChange={() => setExportMode("burn-cd")}
                 className="mt-1"
               />
               <div className="flex-1">
                 <span className="text-sm text-gray-700">
-                  Export ZIP + Burn (Legacy)
+                  Export ZIP + Burn (Legacy, Windows Only)
                 </span>
                 <p className="text-xs text-gray-500 mt-1">
                   Creates ZIP file first, then burns. Slower but provides backup file.
                 </p>
+                {legacyBurnUnavailable && (
+                  <p className="text-xs text-red-600 mt-1">
+                    Legacy server burn is unavailable on {viewerStatus?.serverPlatform || "this"} server.
+                    Use Create ISO (Recommended).
+                  </p>
+                )}
               </div>
             </label>
           </div>
