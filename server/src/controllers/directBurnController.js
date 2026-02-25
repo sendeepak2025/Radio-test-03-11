@@ -206,7 +206,7 @@ async function prepareDicomMediaFolder(
     }
   };
 
-  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dicom-burn-'));
+  const tempDir = await createManagedTempDir('dicom-burn-');
   const mediaRoot = path.join(tempDir, 'DISC_ROOT');
   await fs.promises.mkdir(mediaRoot, { recursive: true });
 
@@ -915,6 +915,112 @@ function toBoolean(value, defaultValue = true) {
   return String(value).toLowerCase() !== 'false';
 }
 
+function getPreferredTempBaseDirs() {
+  const preferred = [
+    process.env.DICOM_EXPORT_TEMP_DIR,
+    process.env.EXPORT_TEMP_DIR,
+    process.env.TMPDIR,
+    path.join(__dirname, '../../tmp'),
+    process.platform === 'linux' ? '/var/tmp' : null,
+    os.tmpdir(),
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+  const seen = new Set();
+  const unique = [];
+  for (const candidate of preferred) {
+    const normalized = path.resolve(candidate);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    unique.push(normalized);
+  }
+
+  return unique;
+}
+
+async function cleanupStaleTempFolders(baseDir, maxAgeMs = 12 * 60 * 60 * 1000) {
+  const managedPrefixes = ['dicom-iso-', 'dicom-burn-', 'microdicom-install-'];
+  let removedCount = 0;
+  const now = Date.now();
+
+  try {
+    const entries = await fs.promises.readdir(baseDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (!managedPrefixes.some((prefix) => entry.name.startsWith(prefix))) continue;
+
+      const fullPath = path.join(baseDir, entry.name);
+      try {
+        const stats = await fs.promises.stat(fullPath);
+        if (now - stats.mtimeMs < maxAgeMs) continue;
+        await fs.promises.rm(fullPath, { recursive: true, force: true });
+        removedCount += 1;
+      } catch (_entryError) {
+        // Best effort cleanup only.
+      }
+    }
+  } catch (_scanError) {
+    // Best effort cleanup only.
+  }
+
+  return removedCount;
+}
+
+function buildNoSpaceTempError(baseDir, originalError) {
+  const error = new Error(
+    `Server temporary storage is full (${baseDir}). Free space on the server or set DICOM_EXPORT_TEMP_DIR to a larger volume, then retry.`
+  );
+  error.code = 'ENOSPC';
+  error.statusCode = 507;
+  error.cause = originalError;
+  return error;
+}
+
+function isNoSpaceError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return error?.code === 'ENOSPC' || message.includes('no space left on device');
+}
+
+async function createManagedTempDir(prefix) {
+  const baseDirs = getPreferredTempBaseDirs();
+  let firstNoSpaceError = null;
+
+  for (const baseDir of baseDirs) {
+    try {
+      await fs.promises.mkdir(baseDir, { recursive: true });
+      await cleanupStaleTempFolders(baseDir);
+      return await fs.promises.mkdtemp(path.join(baseDir, prefix));
+    } catch (error) {
+      if (isNoSpaceError(error)) {
+        firstNoSpaceError = firstNoSpaceError || buildNoSpaceTempError(baseDir, error);
+
+        // Try one aggressive cleanup pass on this location, then retry once.
+        try {
+          await cleanupStaleTempFolders(baseDir, 60 * 1000);
+          return await fs.promises.mkdtemp(path.join(baseDir, prefix));
+        } catch (retryError) {
+          if (!isNoSpaceError(retryError)) {
+            throw retryError;
+          }
+        }
+        continue;
+      }
+
+      // For permission or other filesystem errors, continue to next candidate dir.
+      continue;
+    }
+  }
+
+  if (firstNoSpaceError) {
+    throw firstNoSpaceError;
+  }
+
+  throw new Error(
+    `Unable to allocate temporary export directory. Checked: ${baseDirs.join(', ')}`
+  );
+}
+
 function normalizeLinuxBurnDevice(deviceInput) {
   const raw = String(deviceInput || '').trim();
   if (!raw) {
@@ -1347,7 +1453,7 @@ async function burnFolderToDiscLinux(sourcePath, drivePathInput, volumeName = 'D
     );
   }
 
-  const tempIsoDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dicom-iso-'));
+  const tempIsoDir = await createManagedTempDir('dicom-iso-');
   const isoPath = path.join(tempIsoDir, 'dicom_media.iso');
   const safeVolumeName = String(volumeName || 'DICOM_MEDIA')
     .toUpperCase()
@@ -1469,7 +1575,7 @@ async function installViewerOnServer(req, res) {
 
   try {
     const viewerDir = path.join(__dirname, '../../resources/microdicom-portable');
-    tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'microdicom-install-'));
+    tempDir = await createManagedTempDir('microdicom-install-');
     const zipPath = path.join(tempDir, 'microdicom-portable.zip');
 
     const downloadUrl = await resolveLatestMicroDicomPortableUrl();
@@ -1739,6 +1845,7 @@ async function createIsoExport(req, res) {
     const targetId = payload.targetId;
     const includeImages = toBoolean(payload.includeImages, true);
     const includeViewer = toBoolean(payload.includeViewer, true);
+    const validateOnly = toBoolean(payload.validateOnly, false);
     const shouldIncludeImages = includeImages !== false;
 
     if (!['patient', 'study'].includes(targetType)) {
@@ -1759,7 +1866,7 @@ async function createIsoExport(req, res) {
     }
 
     // Create temp directory
-    tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dicom-iso-'));
+    tempDir = await createManagedTempDir('dicom-iso-');
     const mediaRoot = path.join(tempDir, 'DISC_ROOT');
     await fs.promises.mkdir(mediaRoot, { recursive: true });
 
@@ -1792,6 +1899,18 @@ async function createIsoExport(req, res) {
       throw new Error(
         'ISO export currently supports one study per image export. Select a study export or use ZIP download for multi-study exports.'
       );
+    }
+
+    if (validateOnly) {
+      return res.status(200).json({
+        success: true,
+        message: 'ISO export validation passed',
+        targetType,
+        targetId,
+        includeImages: shouldIncludeImages,
+        includeViewer,
+        studyCount: studies.length,
+      });
     }
 
     let studiesWithMedia = 0;
@@ -1960,6 +2079,24 @@ IMPORTANT: Confidential medical information - handle per HIPAA regulations.
     res.on('error', cleanup);
 
     const readStream = fs.createReadStream(isoPath);
+    let isoFileUnlinked = false;
+    const unlinkIsoFile = async () => {
+      if (isoFileUnlinked) return;
+      isoFileUnlinked = true;
+      try {
+        await fs.promises.unlink(isoPath);
+      } catch (_unlinkError) {
+        // Best effort only; temp directory cleanup still runs.
+      }
+    };
+
+    // On Linux/Unix, unlinking an open file keeps stream alive while avoiding disk leftovers.
+    readStream.on('open', async () => {
+      if (process.platform !== 'win32') {
+        await unlinkIsoFile();
+      }
+    });
+
     readStream.on('error', async (streamError) => {
       console.error('ISO stream error:', streamError);
       if (!res.headersSent) {
@@ -1968,6 +2105,11 @@ IMPORTANT: Confidential medical information - handle per HIPAA regulations.
         res.destroy(streamError);
       }
       await cleanup();
+    });
+
+    readStream.on('close', async () => {
+      // For Windows, delete ISO once stream handle closes.
+      await unlinkIsoFile();
     });
 
     readStream.pipe(res);

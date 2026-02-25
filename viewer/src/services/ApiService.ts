@@ -943,15 +943,33 @@ export const createDicomIsoDownload = async ({
       includeImages: String(includeImages),
       includeViewer: String(includeViewer),
     })
-    const downloadUrl = `${BACKEND_URL}/api/export/create-iso?${params.toString()}`
-    await downloadWithProgress(
-      downloadUrl,
-      token,
-      `${targetType}_${targetId}_dicom_media.iso`,
-      onProgress,
-      true
-    )
-    return { success: true }
+    const validationParams = new URLSearchParams(params)
+    validationParams.set('validateOnly', 'true')
+    const validationUrl = `${BACKEND_URL}/api/export/create-iso?${validationParams.toString()}`
+    const validationResponse = await fetch(validationUrl, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    })
+
+    if (validationResponse.ok) {
+      const downloadUrl = `${BACKEND_URL}/api/export/create-iso?${params.toString()}`
+      await downloadWithProgress(
+        downloadUrl,
+        token,
+        `${targetType}_${targetId}_dicom_media.iso`,
+        onProgress,
+        true
+      )
+      return { success: true }
+    }
+
+    // Backward compatibility: live backend might not yet expose GET /create-iso.
+    if (validationResponse.status !== 404 && validationResponse.status !== 405) {
+      throw new Error(await parseErrorMessage(validationResponse))
+    }
   }
 
   const response = await fetch(`${BACKEND_URL}/api/export/create-iso`, {
