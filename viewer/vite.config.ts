@@ -5,7 +5,20 @@ import viteCompression from 'vite-plugin-compression'
 import { visualizer } from 'rollup-plugin-visualizer'
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  const parsedHmrPort = Number(process.env.VITE_HMR_PORT)
+  const parsedHmrClientPort = Number(process.env.VITE_HMR_CLIENT_PORT)
+  const hmrConfig =
+    mode === 'production'
+      ? false
+      : {
+          ...(process.env.VITE_HMR_HOST ? { host: process.env.VITE_HMR_HOST } : {}),
+          ...(process.env.VITE_HMR_PROTOCOL ? { protocol: process.env.VITE_HMR_PROTOCOL as 'ws' | 'wss' } : {}),
+          ...(Number.isFinite(parsedHmrPort) ? { port: parsedHmrPort } : {}),
+          ...(Number.isFinite(parsedHmrClientPort) ? { clientPort: parsedHmrClientPort } : {}),
+        }
+
+  return ({
   plugins: [
     react(),
     // Gzip compression
@@ -73,11 +86,8 @@ export default defineConfig(({ mode }) => ({
       'scanflowai.com',
       'wwww.scanflowai.com'
     ],
-    hmr: {
-      // In production, disable HMR WebSocket or use proper domain
-      port: process.env.NODE_ENV === 'production' ? false : 3011,
-      host: process.env.NODE_ENV === 'production' ? false : 'localhost'
-    },
+    // Do not hardcode localhost HMR; remote devices must use current host.
+    hmr: hmrConfig,
     proxy: {
       '/api': {
         target: 'http://localhost:8001',
@@ -205,4 +215,5 @@ export default defineConfig(({ mode }) => ({
     setupFiles: ['./src/test/setup.ts'],
     css: true,
   },
-}))
+  })
+})

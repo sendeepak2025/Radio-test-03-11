@@ -367,7 +367,7 @@ Studies: ${studies.length}
 This disc contains medical imaging data in DICOM format.
 
 DICOM FILES:
-${shouldIncludeImages ? '- DICOMDIR: Index file for PACS systems\n- DICOM/: Folder containing DICOM image files' : '- DICOM image export disabled (metadata-only burn)'}
+${shouldIncludeImages ? '- DICOMDIR: Index file for PACS systems\n- IMAGES/: Folder containing DICOM image files' : '- DICOM image export disabled (metadata-only burn)'}
 
 VIEWING OPTIONS:
 1. Import to PACS: Use your PACS system's "Import from Media" function
@@ -439,6 +439,7 @@ echo.
 set "VIEWER_DIR=%~dp0"
 for %%I in ("%VIEWER_DIR%..") do set "DISC_ROOT=%%~fI"
 set "DICOMDIR_PATH=%DISC_ROOT%\\DICOMDIR"
+set "IMAGES_FOLDER=%DISC_ROOT%\\IMAGES"
 set "DICOM_FOLDER=%DISC_ROOT%\\DICOM"
 set "EXE_PATH="
 
@@ -470,13 +471,19 @@ if exist "%DICOMDIR_PATH%" (
   exit /b 0
 )
 
+if exist "%IMAGES_FOLDER%" (
+  echo WARNING: DICOMDIR not found. Opening IMAGES folder directly.
+  start "" "%EXE_PATH%" "%IMAGES_FOLDER%"
+  exit /b 0
+)
+
 if exist "%DICOM_FOLDER%" (
-  echo WARNING: DICOMDIR not found. Opening DICOM folder directly.
+  echo WARNING: DICOMDIR not found. Opening legacy DICOM folder directly.
   start "" "%EXE_PATH%" "%DICOM_FOLDER%"
   exit /b 0
 )
 
-echo ERROR: Could not find DICOMDIR or DICOM folder on this disc.
+echo ERROR: Could not find DICOMDIR, IMAGES, or DICOM folder on this disc.
 if exist "%VIEWER_DIR%INSTRUCTIONS.html" (
   start "" "%VIEWER_DIR%INSTRUCTIONS.html"
 )
@@ -626,7 +633,7 @@ Index File: DICOMDIR (at disc root)
 DISC CONTENTS:
 
 DICOMDIR - Index file for PACS systems and viewers
-DICOM/ - Folder containing DICOM image files (.dcm)
+IMAGES/ - Folder containing DICOM image files (often without extensions)
 EXPORT_INFO.json - Metadata about this export
 README.txt - General information
 VIEWER/ - This folder with instructions
@@ -2042,7 +2049,7 @@ Studies: ${studies.length}
 This disc contains medical imaging data in DICOM format.
 
 DICOM FILES:
-${shouldIncludeImages ? '- DICOMDIR: Index file for PACS systems\n- DICOM/: Folder containing DICOM image files' : '- DICOM image export disabled (metadata-only export)'}
+${shouldIncludeImages ? '- DICOMDIR: Index file for PACS systems\n- IMAGES/: Folder containing DICOM image files' : '- DICOM image export disabled (metadata-only export)'}
 
 VIEWING:
 - Import to PACS using "Import from Media"
