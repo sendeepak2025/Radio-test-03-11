@@ -920,15 +920,40 @@ export const createDicomIsoDownload = async ({
   targetId,
   includeImages = true,
   includeViewer = true,
+  onProgress,
+  useNativeDownload = true,
   signal,
 }: {
   targetType: 'patient' | 'study'
   targetId: string
   includeImages?: boolean
   includeViewer?: boolean
+  onProgress?: (percent: number) => void
+  useNativeDownload?: boolean
   signal?: AbortSignal
 }) => {
   const token = getAuthToken()
+
+  // Browser-native download avoids buffering the entire ISO in JS memory.
+  // Keep POST + fetch fallback when caller needs AbortSignal control.
+  if (!signal && useNativeDownload) {
+    const params = new URLSearchParams({
+      targetType,
+      targetId,
+      includeImages: String(includeImages),
+      includeViewer: String(includeViewer),
+    })
+    const downloadUrl = `${BACKEND_URL}/api/export/create-iso?${params.toString()}`
+    await downloadWithProgress(
+      downloadUrl,
+      token,
+      `${targetType}_${targetId}_dicom_media.iso`,
+      onProgress,
+      true
+    )
+    return { success: true }
+  }
+
   const response = await fetch(`${BACKEND_URL}/api/export/create-iso`, {
     method: 'POST',
     credentials: 'include',

@@ -175,6 +175,15 @@ router.post(
 );
 
 // Create ISO image download from DICOM media layout
+// GET /api/export/create-iso?targetType=study&targetId=...&includeImages=true&includeViewer=true
+router.get(
+  '/create-iso',
+  authenticate,
+  rateLimit({ maxRequests: 20, windowMs: 300000 }),
+  directBurnController.createIsoExport
+);
+
+// Create ISO image download from DICOM media layout
 // POST /api/export/create-iso
 router.post(
   '/create-iso',

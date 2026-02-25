@@ -916,9 +916,11 @@ const PatientsPage: React.FC = () => {
           targetId: exportTarget.id,
           includeImages: true,
           includeViewer: exportMode === "auto" ? true : includeViewer,
+          onProgress: (percent) => setExportProgress(percent),
+          useNativeDownload: true,
         });
 
-        setSuccess("ISO file downloaded successfully. You can burn this ISO to CD/DVD.");
+        setSuccess("ISO download has started in your browser. Server is preparing the file and download will begin automatically.");
         setExportDialogOpen(false);
         setExportTarget(null);
       } catch (e: any) {

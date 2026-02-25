@@ -905,6 +905,16 @@ async function firstAvailableCommand(commandCandidates) {
   return null;
 }
 
+function toBoolean(value, defaultValue = true) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+  return String(value).toLowerCase() !== 'false';
+}
+
 function normalizeLinuxBurnDevice(deviceInput) {
   const raw = String(deviceInput || '').trim();
   if (!raw) {
@@ -1724,12 +1734,11 @@ async function createIsoExport(req, res) {
   };
 
   try {
-    const {
-      targetType,
-      targetId,
-      includeImages = true,
-      includeViewer = true,
-    } = req.body || {};
+    const payload = req.method === 'GET' ? req.query || {} : req.body || {};
+    const targetType = payload.targetType;
+    const targetId = payload.targetId;
+    const includeImages = toBoolean(payload.includeImages, true);
+    const includeViewer = toBoolean(payload.includeViewer, true);
     const shouldIncludeImages = includeImages !== false;
 
     if (!['patient', 'study'].includes(targetType)) {
