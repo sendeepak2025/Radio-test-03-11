@@ -15,6 +15,7 @@ const pipelineAsync = promisify(pipeline);
 const MICRODICOM_DOWNLOADS_PAGE_URL = 'https://www.microdicom.com/downloads.html';
 const MICRODICOM_SITE_ORIGIN = 'https://www.microdicom.com';
 let streamZipExtractorCommandPromise = null;
+let fileZipExtractorCommandPromise = null;
 
 /**
  * Direct CD/DVD burn without creating ZIP file first
@@ -251,6 +252,12 @@ async function prepareDicomMediaFolder(
 
     let studiesWithMedia = 0;
     const streamZipExtractor = shouldIncludeImages ? await getStreamZipExtractorCommand() : null;
+    const fileZipExtractor = shouldIncludeImages ? await getFileZipExtractorCommand() : null;
+    if (shouldIncludeImages && !streamZipExtractor) {
+      console.warn(
+        'bsdtar not found on server; using temporary ZIP fallback for media extraction. Install libarchive-tools for direct stream extraction.'
+      );
+    }
 
     // For each study, get the DICOM media from Orthanc
     if (shouldIncludeImages) {
@@ -330,9 +337,27 @@ async function prepareDicomMediaFolder(
                   timeoutMs: 300000,
                 });
                 await pipelineAsync(mediaStream, fs.createWriteStream(tempMediaZip));
-                const mediaZip = new AdmZip(tempMediaZip);
-                mediaZip.getEntries(); // validate ZIP structure
-                mediaZip.extractAllTo(mediaRoot, overwriteExisting);
+                let extractedFromFileCommand = false;
+                if (fileZipExtractor) {
+                  const fileResult = await extractZipFileToFolderWithCommand(
+                    fileZipExtractor,
+                    tempMediaZip,
+                    mediaRoot,
+                    { tempRoot: tempDir, overwrite: overwriteExisting }
+                  );
+                  extractedFromFileCommand = fileResult.used;
+                  if (fileResult.used) {
+                    console.log(
+                      `Extracted PACS media ZIP using ${fileResult.tool} for study ${studyInstanceUID}`
+                    );
+                  }
+                }
+
+                if (!extractedFromFileCommand) {
+                  const mediaZip = new AdmZip(tempMediaZip);
+                  mediaZip.getEntries(); // validate ZIP structure
+                  mediaZip.extractAllTo(mediaRoot, overwriteExisting);
+                }
               } catch (streamError) {
                 console.warn(
                   `Stream media export failed for study ${studyInstanceUID} (${orthancStudyId}), retrying buffered export: ${streamError.message}`
@@ -971,10 +996,24 @@ async function getStreamZipExtractorCommand() {
   }
 
   if (!streamZipExtractorCommandPromise) {
-    streamZipExtractorCommandPromise = firstAvailableCommand(['bsdtar', 'unzip']);
+    // True stream extraction from stdin is reliably supported by bsdtar.
+    // Keep fallback-to-temp-zip path when bsdtar is unavailable.
+    streamZipExtractorCommandPromise = firstAvailableCommand(['bsdtar']);
   }
 
   return streamZipExtractorCommandPromise;
+}
+
+async function getFileZipExtractorCommand() {
+  if (process.platform !== 'linux') {
+    return null;
+  }
+
+  if (!fileZipExtractorCommandPromise) {
+    fileZipExtractorCommandPromise = firstAvailableCommand(['bsdtar', 'unzip']);
+  }
+
+  return fileZipExtractorCommandPromise;
 }
 
 async function mergeDirectoryContents(sourceDir, targetDir, overwrite = true) {
@@ -1066,6 +1105,40 @@ async function extractZipStreamToFolderWithCommand(
     }
 
     await closePromise;
+    await mergeDirectoryContents(stagingDir, destinationDir, overwrite);
+    return { used: true, tool: extractorCommand };
+  } finally {
+    await fs.promises.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function extractZipFileToFolderWithCommand(
+  extractorCommand,
+  zipFilePath,
+  destinationDir,
+  options = {}
+) {
+  if (!extractorCommand) {
+    return { used: false, tool: null };
+  }
+
+  const tempRoot = options.tempRoot || os.tmpdir();
+  await fs.promises.mkdir(tempRoot, { recursive: true });
+  const stagingDir = await fs.promises.mkdtemp(path.join(tempRoot, 'media-file-'));
+  const overwrite = options.overwrite !== false;
+
+  try {
+    const args =
+      extractorCommand === 'bsdtar'
+        ? ['-xpf', zipFilePath, '-C', stagingDir]
+        : ['-o', '-qq', zipFilePath, '-d', stagingDir];
+
+    await execFileAsync(extractorCommand, args, {
+      timeout: 300000,
+      windowsHide: true,
+      maxBuffer: 20 * 1024 * 1024,
+    });
+
     await mergeDirectoryContents(stagingDir, destinationDir, overwrite);
     return { used: true, tool: extractorCommand };
   } finally {
@@ -2166,6 +2239,12 @@ async function createIsoExport(req, res) {
 
     let studiesWithMedia = 0;
     const streamZipExtractor = shouldIncludeImages ? await getStreamZipExtractorCommand() : null;
+    const fileZipExtractor = shouldIncludeImages ? await getFileZipExtractorCommand() : null;
+    if (shouldIncludeImages && !streamZipExtractor) {
+      console.warn(
+        'bsdtar not found on server; using temporary ZIP fallback for media extraction. Install libarchive-tools for direct stream extraction.'
+      );
+    }
 
     // Export DICOM media from Orthanc directly to disc root
     if (shouldIncludeImages) {
@@ -2256,10 +2335,27 @@ async function createIsoExport(req, res) {
                   timeoutMs: 300000,
                 });
                 await pipelineAsync(mediaStream, fs.createWriteStream(tempMediaZip));
+                let extractedFromFileCommand = false;
+                if (fileZipExtractor) {
+                  const fileResult = await extractZipFileToFolderWithCommand(
+                    fileZipExtractor,
+                    tempMediaZip,
+                    mediaRoot,
+                    { tempRoot: tempDir, overwrite: overwriteExisting }
+                  );
+                  extractedFromFileCommand = fileResult.used;
+                  if (fileResult.used) {
+                    console.log(
+                      `Extracted PACS media ZIP using ${fileResult.tool} for study ${studyInstanceUID}`
+                    );
+                  }
+                }
 
-                const mediaZip = new AdmZip(tempMediaZip);
-                mediaZip.getEntries(); // validate ZIP structure
-                mediaZip.extractAllTo(mediaRoot, overwriteExisting);
+                if (!extractedFromFileCommand) {
+                  const mediaZip = new AdmZip(tempMediaZip);
+                  mediaZip.getEntries(); // validate ZIP structure
+                  mediaZip.extractAllTo(mediaRoot, overwriteExisting);
+                }
               } catch (streamError) {
                 console.warn(
                   `Stream media export failed for study ${studyInstanceUID} (${orthancStudyId}), retrying buffered export: ${streamError.message}`
